@@ -128,19 +128,24 @@ class BatchDirectory(RSModule):
         if 'batch_flight_log_path' in self.params:
             return self.params['batch_flight_log_path'].get_value()
         else:
+            # Georeference writes the flight log next to the images it
+            # processed: its explicit input dir, or raw_images when it ran
+            # after Extract Images (whose output the search must cover too).
+            output_dir = self.params['output_dir'].get_value()
             if 'geo_input_image_dir' in self.params:
-                search_dir = self.params['geo_input_image_dir'].get_value()
+                search_dirs = [self.params['geo_input_image_dir'].get_value()]
             else:
-                search_dir = self.params['output_dir'].get_value()
+                search_dirs = [os.path.join(output_dir, "raw_images"), output_dir]
 
-            pattern = os.path.join(search_dir, "flight_log_*_UTM.txt")
-            matches = glob.glob(pattern)
-            if matches:
-                return matches[0]
+            for search_dir in search_dirs:
+                matches = glob.glob(os.path.join(search_dir, "flight_log_*_UTM.txt"))
+                if matches:
+                    return matches[0]
 
-            fallback = os.path.join(search_dir, "flight_log.txt")
-            if os.path.isfile(fallback):
-                return fallback
+            for search_dir in search_dirs:
+                fallback = os.path.join(search_dir, "flight_log.txt")
+                if os.path.isfile(fallback):
+                    return fallback
 
             return None
 
