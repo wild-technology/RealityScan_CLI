@@ -24,8 +24,13 @@ Exceptions that must NOT be renamed:
 ## Architecture
 
 - `main.py` — interactive orchestrator over the `RSModule` framework
-  (`module_base/rs_module.py`): Extract Images → Georeference → Batch
-  Directory → RealityScan Alignment.
+  (`module_base/rs_module.py`): Extract Images → Georeference → Preprocess
+  Images → Batch Directory → RealityScan Alignment.
+- `modules/preprocess_images/` — canonical CLAHE / white-balance
+  transforms + the pre-alignment preprocessing module (default CLAHE
+  2.0/8×8, validated on zone_9 — baseline aligns to nothing on this
+  imagery). `testing/preprocess_variants.py` imports the transforms from
+  here; keep it that way (no second implementation).
 - `modules/realityscan_interface/` — the ONLY place RealityScan is
   executed:
   - `realityscan_cli.py` — unified execution layer (`RealityScanCLI`).

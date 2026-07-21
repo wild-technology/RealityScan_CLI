@@ -23,16 +23,27 @@ generate textured models.
 
 | Path | Purpose |
 |---|---|
-| `main.py` | Interactive orchestrator: Extract Images → Georeference → Batch Directory → RealityScan Alignment |
+| `main.py` | Interactive orchestrator: Extract Images → Georeference → Preprocess Images → Batch Directory → RealityScan Alignment |
 | `geoall.py` | Standalone georeferencing (ROV nav CSV → RealityScan flight logs). The most up-to-date georeferencing implementation. |
 | `decimator.py` | Copy a percentage of images to a new folder (dataset thinning) |
 | `masking.py` | Rename `cam*_TIMESTAMP.jpg` → `TIMESTAMP_cam*.jpg` and validate JPEG integrity |
 | `organize_by_date.py` | Sort images into per-date subfolders (was `test.py`) |
 | `module_base/` | Framework: `RSModule` base class, `Parameter`, `SettingsStore` |
 | `modules/realityscan_interface/` | Everything that talks to RealityScan — see below |
-| `modules/extract_images/`, `modules/georeference/`, `modules/image_batcher/` | Pipeline modules used by `main.py` |
+| `modules/extract_images/`, `modules/georeference/`, `modules/preprocess_images/`, `modules/image_batcher/` | Pipeline modules used by `main.py` |
 | `archive/colmap/` | Retired COLMAP scripts (reference only) |
 | `flightlogs.xml`, `sensorsdb.xml` | RealityScan reference data |
+
+### Preprocessing default
+
+`Preprocess Images` applies CLAHE (clip 2.0, 8×8 tiles, L channel in LAB)
+to copies under `<output>/preprocessed_images`, leaving the originals in
+place — align on the processed copies, texture from the originals. The
+default was A/B-measured on a zone_9 400-image subset (2026-07-21,
+`testing/run_zone9_tests.py`): baseline registered 0% (no component at
+all), CLAHE 2.0/8×8 registered 59.8% and beat every neighboring clip/tile
+setting; gray-world white balance *reduced* registration (~34%) and is
+off by default.
 
 ### Known duplication
 

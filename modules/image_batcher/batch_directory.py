@@ -98,7 +98,7 @@ class BatchDirectory(RSModule):
             default_value=None,
             description='Directory containing the images to batch',
             prompt_user=True,
-            disable_when_module_active='Extract Images'
+            disable_when_module_active=['Extract Images', 'Preprocess Images']
         )
 
         additional_params['batch_flight_log_path'] = Parameter(
@@ -117,8 +117,12 @@ class BatchDirectory(RSModule):
     def __get_input_dir(self):
         if 'batch_input_image_dir' in self.params:
             return self.params['batch_input_image_dir'].get_value()
-        else:
-            return os.path.join(self.params['output_dir'].get_value(), "raw_images")
+        # Prefer the Preprocess Images output when that module ran (align on
+        # processed copies, keep raw_images originals for texturing)
+        preprocessed = os.path.join(self.params['output_dir'].get_value(), "preprocessed_images")
+        if os.path.isdir(preprocessed):
+            return preprocessed
+        return os.path.join(self.params['output_dir'].get_value(), "raw_images")
 
     def __get_flight_log_path(self):
         if 'batch_flight_log_path' in self.params:

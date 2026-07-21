@@ -4,15 +4,15 @@ Each variant is a dict of parameters; build_transform() turns it into a
 callable applied to every image (BGR numpy array in, BGR out). Variants
 with no parameters (baseline) return None = byte-for-byte copy.
 
-CLAHE is applied to the L channel in LAB space so contrast is enhanced
-without shifting color, which matters for feature matching on underwater
-imagery. Gray-world white balance counteracts the blue/green cast.
+The transforms themselves live in the pipeline module
+(modules/preprocess_images) - this file only defines the variant grid and
+refinement logic used by run_zone9_tests.py.
 """
 
 from __future__ import annotations
 
-import cv2
-import numpy as np
+from modules.preprocess_images.preprocess_images import (  # noqa: F401
+    build_transform, clahe_lab, gray_world_white_balance)
 
 # First test round: baseline plus the standard underwater-imagery treatments.
 ROUND1_VARIANTS = [
@@ -21,45 +21,6 @@ ROUND1_VARIANTS = [
     {'name': 'clahe_c4_t8', 'clahe_clip': 4.0, 'clahe_tile': 8},
     {'name': 'wb_clahe_c2_t8', 'white_balance': True, 'clahe_clip': 2.0, 'clahe_tile': 8},
 ]
-
-
-def gray_world_white_balance(img: np.ndarray) -> np.ndarray:
-    result = img.astype(np.float32)
-    means = result.reshape(-1, 3).mean(axis=0)
-    overall = means.mean()
-    for c in range(3):
-        if means[c] > 1e-6:
-            result[:, :, c] *= overall / means[c]
-    return np.clip(result, 0, 255).astype(np.uint8)
-
-
-def clahe_lab(img: np.ndarray, clip: float, tile: int) -> np.ndarray:
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l_channel, a_channel, b_channel = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(tile, tile))
-    l_channel = clahe.apply(l_channel)
-    return cv2.cvtColor(cv2.merge((l_channel, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
-
-
-def build_transform(params: dict):
-    """Returns a BGR->BGR callable for this variant, or None for a plain copy."""
-    steps = []
-    if params.get('white_balance'):
-        steps.append(gray_world_white_balance)
-    if params.get('clahe_clip'):
-        clip = float(params['clahe_clip'])
-        tile = int(params.get('clahe_tile', 8))
-        steps.append(lambda img, c=clip, t=tile: clahe_lab(img, c, t))
-
-    if not steps:
-        return None
-
-    def transform(img):
-        for step in steps:
-            img = step(img)
-        return img
-
-    return transform
 
 
 def refine_variants(best: dict, already_tested: set[str]) -> list[dict]:
