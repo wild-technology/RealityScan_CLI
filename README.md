@@ -1,4 +1,4 @@
-# RC_Main — ROV Photogrammetry Pipeline for RealityScan 2.2
+# RealityScan_CLI — ROV Photogrammetry Pipeline for RealityScan 2.2
 
 Processing pipeline for underwater ROV photogrammetry: extract and
 georeference dive imagery, batch it, and drive **RealityScan 2.2**

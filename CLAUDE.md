@@ -1,8 +1,15 @@
-# CLAUDE.md — project context for RC_Main
+# CLAUDE.md — project context for RealityScan_CLI
 
 ROV underwater photogrammetry pipeline driving **RealityScan 2.2** (Epic
 Games; the product formerly named RealityCapture) via its CLI. Runs on
 Windows with a multi-GPU CUDA setup.
+
+This repo is the continuation of `wild-technology/RC_Main` — it was
+created from RC_Main's `claude/realityscan-repo-cleanup-2gjmu5` branch
+(July 2026 overhaul) with full history preserved, so `git log` reaches all
+the way back. RC_Main is frozen; new work happens here. See `HANDOFF.md`
+for the state of the overhaul and what still needs on-machine
+verification.
 
 ## Naming
 
