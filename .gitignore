@@ -24,3 +24,6 @@
 /rs_settings.json.corrupt
 
 main.py.lprof
+/archive/colmap/__pycache__
+/testing/__pycache__
+/modules/realityscan_interface/RS_CLI/Errors/*.dmp.metadata

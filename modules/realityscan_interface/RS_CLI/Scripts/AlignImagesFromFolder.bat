@@ -128,11 +128,18 @@ if not "%flight_log_dir%" == "" (
 
 echo Aligning images
 call :run -align || goto :fail
-call :run -exportXMP || goto :fail
 
 echo Selecting maximal component and exporting
-call :run -mergeComponents || goto :fail
+:: No -mergeComponents here: it is a no-op with a single component, and its
+:: async re-reconstruction races the next command and clears the component
+:: selection (err:5605 on the rename). Select the maximal component instead.
+call :run -selectMaximalComponent || goto :fail
 call :run -renameSelectedComponent "Merged" || goto :fail
+:: exportXMPForSelectedComponent writes sidecars for the selected
+:: component's cameras (plain -exportXMP only covers the last alignment
+:: and silently skips components smaller than setMinComponentSize=5)
+call :run -setMinComponentSize 1 || goto :fail
+call :run -exportXMPForSelectedComponent || goto :fail
 call :run -exportSelectedComponentDir "%output_dir%" || goto :fail
 
 if not defined GENERATE_MODEL_BOOL goto :saveProject
@@ -220,34 +227,26 @@ exit /b 1
 :: to finish, and fail if RealityScan reported an error.
 ::
 :: Delegated commands are queued, and -waitCompleted can return prematurely
-:: when it runs before the instance has picked the queued command up. So we
-:: wait event-driven: RealityScan's process trigger appends one line to
-:: results_<instance>.log for every finished process (appProcessActionTime=0
-:: captures all of them), and we loop waitCompleted until the log grows.
-:: The loop is bounded so a command that never registers as a process
-:: cannot hang the workflow; errors_<instance>.txt is checked afterwards
-:: because it is written by RealityScan itself and is authoritative even
-:: when the delegating call returned 0.
+:: when it runs before the instance has picked the queued command up, so:
+:: grace delay for pickup, then two -waitCompleted calls with a second
+:: grace between them. Do NOT gate on results_<instance>.log growth as a
+:: completion signal: RealityScan 2.2 emits periodic internal heartbeat
+:: processes through the same trigger, so "the log grew" does not mean
+:: "our command finished" (observed racing ahead of a running -align).
+:: errors_<instance>.txt is checked afterwards because it is written by
+:: RealityScan itself and is authoritative even when the delegating call
+:: returned 0.
 :: ------------------------------------------------------------------
 :run
-set /a rsBefore=0
-if exist "%ResultsLog%" for /f %%C in ('type "%ResultsLog%" ^| find /c /v ""') do set /a rsBefore=%%C
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*
     exit /b 1
 )
-set /a rsWaits=0
-:runWait
+ping -n 3 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
-set /a rsAfter=0
-if exist "%ResultsLog%" for /f %%C in ('type "%ResultsLog%" ^| find /c /v ""') do set /a rsAfter=%%C
-if %rsAfter% GTR %rsBefore% goto :runDone
-set /a rsWaits+=1
-if %rsWaits% GEQ 15 goto :runDone
 ping -n 2 127.0.0.1 >nul
-goto :runWait
-:runDone
+%RealityScan% -waitCompleted %RS_INSTANCE%
 if exist "%ErrorsFile%" (
     for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
         echo ERROR: RealityScan reported a failure during: %*

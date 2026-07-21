@@ -34,44 +34,63 @@ Design rules live in `CLAUDE.md` (hard rules) and `README.md`
 (architecture + lessons learned). Read both before touching execution
 code.
 
-## Verification status — read before the first real run
+## Verification status
 
-Verified so far: `py_compile` on all Python, an adversarial code review
-(findings fixed), and functional smoke tests of the settings store. The
-batch scripts have **never executed on a real Windows machine with
-RealityScan installed** — this environment is Linux and cannot run them.
+**2026-07-21: first real-machine run completed on the Windows dual-5090
+box** via `testing/run_zone9_tests.py` (phases 0–1, from both a normal
+checkout path and one containing spaces). Checklist outcomes:
 
-First-run checklist on the Windows multi-GPU box:
+1. **Smoke test small** — DONE. 32-image smoke passes end to end
+   (boot → addFolder → importFlightLog → align → select/rename →
+   exportXMPForSelectedComponent → exportSelectedComponentDir → save →
+   verified shutdown), 17/32 registered on a contiguous subset.
+2. **Process trigger fires** — VERIFIED, including from a checkout path
+   with spaces. Several real bugs were found and fixed on the way:
+   - `RealityScanCLI` now invokes the .bat by absolute path *without*
+     `cmd /c` (bare names break under `NoDefaultCurrentDirectoryInExePath`
+     environments like Git Bash; a self-built `cmd /c "path with
+     spaces.bat"` line gets its quotes stripped by cmd).
+   - The `:run` line-count used bare `find`, which resolves to GNU find
+     when launched from Git Bash (scans the whole disk); now fully
+     qualified as `%SystemRoot%\System32\find.exe`.
+   - **The results-log-growth completion check was removed entirely**:
+     RealityScan 2.2 emits periodic internal heartbeat processes through
+     the same `appProcessExecCmd` trigger, so "the log grew" does not
+     mean "our command finished" — it raced ahead of a running `-align`.
+     `:run` now does delegate → grace → double `-waitCompleted`.
+   - `-mergeComponents` is a no-op with a single component and its async
+     re-reconstruction can clear the selection; replaced with
+     `-selectMaximalComponent`.
+   - `-exportXMP` only covers "the last alignment" and silently skips
+     components below `setMinComponentSize` (default 5); replaced with
+     `-setMinComponentSize 1` + `-exportXMPForSelectedComponent`.
+3. **`-align "%AlignmentParams%"`** — CONFIRMED NOT SUPPORTED. `-align`
+   takes no parameters in 2.x (local Help `allcommands.htm` + online
+   docs). `AlignZonesSequentially.bat` now parses the sfm*/lis* keys out
+   of `AlignmentParams.xml` and applies them via delegated `-set`
+   commands before a plain `-align`.
+4. **Process result code 1** — benign in practice: routine successful
+   operations (e.g. `-addFolder`) report result 1 through the trigger
+   while real failures report distinct codes (0x820000FF warning-class,
+   0x80070057 E_INVALIDARG). Whitelist of 0/1 kept.
+5. **Shutdown timing** — verified on small scenes only; the 15-min bound
+   on very large scenes is still untested.
+6. **Multi-GPU parallel instances** — still untested. Single-instance GPU
+   pinning via `rs_settings.json` `"gpu_devices"` exercised during the
+   phase-2 test runs.
+7. **Autosave keys** — no stale autosaves observed in any test run.
 
-1. **Smoke test small**: run `python main.py` on a tiny image set before
-   any 10-hour dataset.
-2. **Confirm the process trigger fires**: during the run,
-   `RS_CLI/Errors/results_RS1.log` must grow by one line per completed
-   operation. If it stays empty, error detection is dead — most likely
-   the `appProcessExecCmd` quoting (see `startRealityScan.bat`) or
-   RealityScan refusing `cmd /c` — fix before trusting any run. Test
-   from a checkout path containing spaces specifically.
-3. **`-align "%AlignmentParams%"`** (`AlignZonesSequentially.bat`):
-   pre-existing usage that was kept; confirm RealityScan 2.2 actually
-   accepts a params XML on `-align`, otherwise the custom alignment
-   settings are silently ignored.
-4. **Process result code 1**: `ErrorWriter.bat` whitelists it as benign
-   (inherited from the Epic sample). Verify what 1 means in 2.2 — if it
-   can mean user-abort/failure, remove it from the whitelist.
-5. **Shutdown timing**: closing very large scenes after `-quit` must
-   finish inside 15 min or the run is flagged failed; raise
-   `"realityscan": {"shutdown_timeout": ...}` in `rs_settings.json` if
-   needed.
-6. **Multi-GPU parallel instances**: when trying one-instance-per-GPU,
-   set unique `RS_INSTANCE` + `RS_GPU_DEVICES` per orchestrator (see
-   README "Multi-GPU"). Marker files and locks are per-instance; the
-   `Models/` folder and Metadata XMLs are shared.
-7. **`sfmMaxFailedTasks` / autosave keys**: the old
-   `RealityCaptureAutoSaveCliHandling=delete` setting was dropped because
-   its 2.x replacement key could not be verified from public docs;
-   autosave is disabled via `appAutoSaveMode=false` + `-deleteAutosave`
-   on attach. If stale autosaves ever resurface, research the current
-   key name.
+Other findings from the first runs:
+
+- `FlightLogParams.xml` declared UTM zone 4N (EPSG:32604) from an earlier
+  project; the NA173_H2103a flight logs are zone **57S** (EPSG:32757,
+  southern hemisphere). Fixed. Check this per-cruise before importing.
+- `-importFlightLog` reports a failed process (err:18002, 0x820000FF)
+  when the log references images that are not in the scene — even though
+  the trajectory itself imports fine. When aligning subsets, filter the
+  flight log to the images actually present (the zone_9 runner does).
+- `-exportRegistration` without a params XML blocks forever headless —
+  avoid it until a params file saved from the GUI dialog exists.
 
 ## Known loose ends
 

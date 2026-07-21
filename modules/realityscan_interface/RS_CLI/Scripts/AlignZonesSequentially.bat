@@ -144,9 +144,18 @@ echo.
 
 rem Run alignment
 echo [9/10] Running alignment with custom parameters...
+rem -align takes NO parameters in RealityScan 2.x (a params xml passed to it
+rem is silently ignored), so apply the sfm*/lis* keys from AlignmentParams.xml
+rem via -set first. Delegated commands queue FIFO on the instance, so the
+rem sets are guaranteed to execute before the align; they are instant and
+rem need no completion wait.
+for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%AlignmentParams%") do (
+    echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"sfm" /c:"lis" >nul
+    if not errorlevel 1 %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+)
 echo    This may take a significant amount of time...
 echo    Please wait...
-call :run -align "%AlignmentParams%" || goto :fail
+call :run -align || goto :fail
 echo    SUCCESS: Alignment completed
 echo.
 
@@ -186,34 +195,26 @@ exit /b 1
 :: to finish, and fail if RealityScan reported an error.
 ::
 :: Delegated commands are queued, and -waitCompleted can return prematurely
-:: when it runs before the instance has picked the queued command up. So we
-:: wait event-driven: RealityScan's process trigger appends one line to
-:: results_<instance>.log for every finished process (appProcessActionTime=0
-:: captures all of them), and we loop waitCompleted until the log grows.
-:: The loop is bounded so a command that never registers as a process
-:: cannot hang the workflow; errors_<instance>.txt is checked afterwards
-:: because it is written by RealityScan itself and is authoritative even
-:: when the delegating call returned 0.
+:: when it runs before the instance has picked the queued command up, so:
+:: grace delay for pickup, then two -waitCompleted calls with a second
+:: grace between them. Do NOT gate on results_<instance>.log growth as a
+:: completion signal: RealityScan 2.2 emits periodic internal heartbeat
+:: processes through the same trigger, so "the log grew" does not mean
+:: "our command finished" (observed racing ahead of a running -align).
+:: errors_<instance>.txt is checked afterwards because it is written by
+:: RealityScan itself and is authoritative even when the delegating call
+:: returned 0.
 :: ------------------------------------------------------------------
 :run
-set /a rsBefore=0
-if exist "%ResultsLog%" for /f %%C in ('type "%ResultsLog%" ^| find /c /v ""') do set /a rsBefore=%%C
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*
     exit /b 1
 )
-set /a rsWaits=0
-:runWait
+ping -n 3 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
-set /a rsAfter=0
-if exist "%ResultsLog%" for /f %%C in ('type "%ResultsLog%" ^| find /c /v ""') do set /a rsAfter=%%C
-if %rsAfter% GTR %rsBefore% goto :runDone
-set /a rsWaits+=1
-if %rsWaits% GEQ 15 goto :runDone
 ping -n 2 127.0.0.1 >nul
-goto :runWait
-:runDone
+%RealityScan% -waitCompleted %RS_INSTANCE%
 if exist "%ErrorsFile%" (
     for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
         echo ERROR: RealityScan reported a failure during: %*

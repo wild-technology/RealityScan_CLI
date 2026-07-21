@@ -61,13 +61,31 @@ def make_logger() -> logging.Logger:
 # ----------------------------------------------------------------------
 
 def list_images(directory: str) -> list[str]:
-    return sorted(f for f in os.listdir(directory)
-                  if f.lower().endswith(IMAGE_EXTENSIONS))
+    """Image files in directory, plus one level of camera subfolders
+    (zone_9 ships as camlower/cammid/camupper/zeuss dirs). Returns paths
+    relative to directory."""
+    found: list[str] = []
+    for entry in sorted(os.listdir(directory)):
+        full = os.path.join(directory, entry)
+        if os.path.isdir(full):
+            found.extend(os.path.join(entry, name) for name in sorted(os.listdir(full))
+                         if name.lower().endswith(IMAGE_EXTENSIONS))
+        elif entry.lower().endswith(IMAGE_EXTENSIONS):
+            found.append(entry)
+    return found
 
 
 def camera_of(filename: str) -> str:
-    match = CAMERA_RE.search(filename)
-    return match.group(1).lower() if match else 'unknown'
+    parent = os.path.basename(os.path.dirname(filename))
+    if parent:
+        return parent.lower()
+    base = os.path.basename(filename)
+    match = CAMERA_RE.search(base)
+    if match:
+        return match.group(1).lower()
+    # zeuss frames carry no camera prefix once flattened, but keep the
+    # HERC video-frame token, so they can still be attributed
+    return 'zeuss' if 'herc' in base.lower() else 'unknown'
 
 
 def find_flight_log(dataset_dir: str) -> str:
@@ -108,7 +126,8 @@ def materialize_images(source_dir: str, names: list[str], dest_dir: str,
     start = time.monotonic()
     for index, name in enumerate(names):
         src = os.path.join(source_dir, name)
-        dst = os.path.join(dest_dir, name)
+        # flatten camera subfolders; basenames are unique across cameras
+        dst = os.path.join(dest_dir, os.path.basename(name))
         if os.path.exists(dst):
             continue
         if transform is None:
@@ -121,7 +140,16 @@ def materialize_images(source_dir: str, names: list[str], dest_dir: str,
             cv2.imwrite(dst, transform(image), [cv2.IMWRITE_JPEG_QUALITY, 95])
         if index and index % 200 == 0:
             logger.info('  prepared %d/%d images', index, len(names))
-    shutil.copy2(flight_log, os.path.join(dest_dir, os.path.basename(flight_log)))
+    # Write a flight log restricted to the materialized images: rows for
+    # images not in the scene make importFlightLog report a failed process
+    # (err:18002), which would abort the workflow.
+    kept = {os.path.basename(n) for n in names}
+    with open(flight_log, encoding='utf-8-sig') as f:
+        header, *rows = f.read().splitlines()
+    filtered = [header] + [r for r in rows if r.split(';', 1)[0] in kept]
+    with open(os.path.join(dest_dir, os.path.basename(flight_log)), 'w',
+              encoding='utf-8', newline='') as f:
+        f.write('\n'.join(filtered) + '\n')
     logger.info('Prepared %d images in %s (%.1f s)', len(names), dest_dir,
                 time.monotonic() - start)
 
@@ -258,11 +286,27 @@ def phase_preflight(cli: RealityScanCLI, dataset_dir: str, logger) -> None:
     logger.info('Preflight OK')
 
 
+def contiguous_subset(images: list[str], target: int) -> list[str]:
+    """A consecutive block from the middle of each camera's sequence.
+    Unlike the stratified (every-Nth) subset, consecutive frames have real
+    overlap, so a tiny smoke set aligns reliably instead of depending on
+    borderline component formation."""
+    by_camera: dict[str, list[str]] = {}
+    for name in images:
+        by_camera.setdefault(camera_of(name), []).append(name)
+    per_camera = max(1, target // max(1, len(by_camera)))
+    subset = []
+    for names in by_camera.values():
+        start = max(0, (len(names) - per_camera) // 2)
+        subset.extend(names[start:start + per_camera])
+    return sorted(subset)
+
+
 def phase_smoke(cli: RealityScanCLI, dataset_dir: str, work_dir: str,
                 smoke_size: int, logger) -> dict:
     logger.info('=== Phase 1: smoke test (%d images) ===', smoke_size)
     images = list_images(dataset_dir)
-    subset = stratified_subset(images, smoke_size)
+    subset = contiguous_subset(images, smoke_size)
     smoke_dir = os.path.join(work_dir, 'smoke', 'images')
     materialize_images(dataset_dir, subset, smoke_dir, None,
                        find_flight_log(dataset_dir), logger)

@@ -353,8 +353,14 @@ class RealityScanCLI:
 			# display_output opens a visible console, so leave stdout attached
 			# to it; otherwise capture everything in the log file.
 			if display_output:
+				# Invoke the .bat by absolute path WITHOUT an explicit
+				# 'cmd /c' prefix: a bare script name fails to resolve when
+				# NoDefaultCurrentDirectoryInExePath is set (e.g. Git Bash),
+				# and prefixing cmd /c ourselves breaks when the checkout
+				# path contains spaces (cmd strips the outer quotes).
+				# Python's subprocess handles .bat quoting correctly.
 				process = subprocess.Popen(
-					['cmd', '/c', script_name] + list(args),
+					[script_path] + list(args),
 					cwd=SCRIPTS_DIR, env=env,
 					creationflags=creationflags,
 				)
@@ -363,7 +369,7 @@ class RealityScanCLI:
 			else:
 				with open(log_path, 'w', encoding='utf-8', errors='replace') as log_file:
 					process = subprocess.Popen(
-						['cmd', '/c', script_name] + list(args),
+						[script_path] + list(args),
 						cwd=SCRIPTS_DIR, env=env,
 						stdout=log_file, stderr=subprocess.STDOUT,
 						creationflags=creationflags,
