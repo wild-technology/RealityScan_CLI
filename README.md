@@ -34,6 +34,7 @@ generate textured models.
 | `modules/extract_images/`, `modules/georeference/`, `modules/preprocess_images/`, `modules/image_batcher/` | Pipeline modules used by `main.py` |
 | `archive/colmap/` | Retired COLMAP scripts (reference only) |
 | `flightlogs.xml`, `sensorsdb.xml` | RealityScan reference data |
+| `docs/code-review-2026-07.md` | What the first-machine validation changed and why (read before trusting older assumptions about the CLI layer) |
 
 ### Preprocessing default
 

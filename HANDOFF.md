@@ -36,6 +36,9 @@ code.
 
 ## Verification status
 
+Full write-up of what changed and why:
+[`docs/code-review-2026-07.md`](docs/code-review-2026-07.md).
+
 **2026-07-21: first real-machine run completed on the Windows dual-5090
 box** via `testing/run_zone9_tests.py` (phases 0–1, from both a normal
 checkout path and one containing spaces). Checklist outcomes:
