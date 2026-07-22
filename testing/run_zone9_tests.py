@@ -47,8 +47,10 @@ from testing.preprocess_variants import ROUND1_VARIANTS, build_transform, refine
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
 CAMERA_RE = re.compile(r'(cam[a-z0-9]+)', re.IGNORECASE)
 
-DEFAULT_DATASET = r'C:\Users\jonat\Desktop\NA173_H2103a\batched_images_by_zone\zone_9'
-DEFAULT_WORK_DIR = r'C:\Users\jonat\Desktop\NA173_H2103a\rs_cli_tests'
+# Seeds for the SettingsStore prompts only - the stored answer from the
+# last run wins (repo hard rule 5: never hardcode data paths).
+DEFAULT_DATASET = r'M:\NA173_H2103a\batched_images_by_zone\zone_9'
+DEFAULT_WORK_DIR = r'M:\NA173_H2103a\rs_cli_tests'
 
 
 def make_logger() -> logging.Logger:
