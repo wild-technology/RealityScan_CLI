@@ -71,18 +71,18 @@ def get_valid_directory(settings: SettingsStore, key: str, prompt: str,
 
 def get_decimation_ratio(settings: SettingsStore) -> int:
     """
-    Prompt user to select decimation ratio in 20% increments.
+    Prompt user to select the decimation ratio.
     The last-entered choice is offered as the default.
 
     Returns:
-        Percentage of images to keep (20, 40, 60, 80, or 100)
+        Percentage of images to keep (10, 20, 30, 40, or 50)
     """
     print("\nSelect decimation ratio (percentage of images to keep):")
     print("  1) 10%")
     print("  2) 20%")
     print("  3) 30%")
     print("  4) 40%")
-    print("  5) 50% (no decimation)")
+    print("  5) 50%")
 
     ratio_map = {1: 10, 2: 20, 3: 30, 4: 40, 5: 50}
 
@@ -104,7 +104,7 @@ def select_images_to_copy(image_files: List[Path], keep_percentage: int) -> List
 
     Args:
         image_files: List of all image file paths
-        keep_percentage: Percentage of images to keep (20, 40, 60, 80, or 100)
+        keep_percentage: Percentage of images to keep (10, 20, 30, 40, or 50)
 
     Returns:
         List of image paths to copy

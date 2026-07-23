@@ -332,7 +332,7 @@ def phase_smoke(cli: RealityScanCLI, dataset_dir: str, work_dir: str,
 
 
 def phase_iterate(cli: RealityScanCLI, dataset_dir: str, work_dir: str,
-                  subset_size: int, rounds: int, logger) -> list[dict]:
+                  subset_size: int, rounds: int, logger) -> tuple[list[dict], dict[str, dict]]:
     logger.info('=== Phase 2: preprocessing iteration (subset of %d) ===', subset_size)
     images = list_images(dataset_dir)
     subset = stratified_subset(images, subset_size)
@@ -341,6 +341,11 @@ def phase_iterate(cli: RealityScanCLI, dataset_dir: str, work_dir: str,
     all_metrics: list[dict] = []
     tested: set[str] = set()
     variants = list(ROUND1_VARIANTS)
+    # Every variant ever generated, by name - phase 3 needs the winner's
+    # parameters even when the winner came from a refinement round (a
+    # ROUND1-only lookup silently ran the FULL zone unpreprocessed when a
+    # refined variant won)
+    params_by_name: dict[str, dict] = {v['name']: v for v in ROUND1_VARIANTS}
 
     for round_number in range(1, rounds + 1):
         logger.info('--- Round %d: %s ---', round_number,
@@ -364,26 +369,30 @@ def phase_iterate(cli: RealityScanCLI, dataset_dir: str, work_dir: str,
             logger.error('No variant aligned successfully; stopping iteration')
             break
         best = max(successful, key=lambda m: (m['registration_rate'], -m['duration_s']))
-        best_params = next((v for v in ROUND1_VARIANTS + variants
-                            if v['name'] == best['label']), {'name': best['label']})
+        best_params = params_by_name.get(best['label'], {'name': best['label']})
         logger.info('Round %d best: %s (%.1f%%)', round_number, best['label'],
                     100 * best['registration_rate'])
         variants = refine_variants(best_params, tested)
+        params_by_name.update({v['name']: v for v in variants})
         if not variants:
             logger.info('Nothing further to refine (baseline won or neighbors exhausted)')
             break
-    return all_metrics
+    return all_metrics, params_by_name
 
 
 def phase_full(cli: RealityScanCLI, dataset_dir: str, work_dir: str,
-               all_metrics: list[dict], logger) -> None:
+               all_metrics: list[dict], params_by_name: dict[str, dict],
+               logger) -> None:
     logger.info('=== Phase 3: full zone_9 run with winning variant ===')
     successful = [m for m in all_metrics if m['success']]
     if not successful:
         raise SystemExit('No successful subset run - refusing the full-zone run')
     best = max(successful, key=lambda m: (m['registration_rate'], -m['duration_s']))
-    params = next((v for v in ROUND1_VARIANTS if v['name'] == best['label']),
-                  {'name': best['label']})
+    params = params_by_name.get(best['label'])
+    if params is None:
+        raise SystemExit(
+            f"Winning variant '{best['label']}' has no recorded parameters - "
+            'refusing to run the full zone with an unknown transform')
     logger.info('Winning variant: %s - this run can take many hours', best['label'])
 
     images = list_images(dataset_dir)
@@ -422,16 +431,17 @@ def main() -> None:
 
     cli = RealityScanCLI(logger, settings)
     all_metrics: list[dict] = []
+    params_by_name: dict[str, dict] = {v['name']: v for v in ROUND1_VARIANTS}
 
     if args.phase in ('0', '1', '2', '3', 'all'):
         phase_preflight(cli, dataset_dir, logger)
     if args.phase in ('1', 'all'):
         phase_smoke(cli, dataset_dir, work_dir, args.smoke_size, logger)
     if args.phase in ('2', 'all'):
-        all_metrics = phase_iterate(cli, dataset_dir, work_dir,
-                                    args.subset_size, args.rounds, logger)
+        all_metrics, params_by_name = phase_iterate(cli, dataset_dir, work_dir,
+                                                    args.subset_size, args.rounds, logger)
     if args.phase == '3' or (args.full and args.phase == 'all'):
-        phase_full(cli, dataset_dir, work_dir, all_metrics, logger)
+        phase_full(cli, dataset_dir, work_dir, all_metrics, params_by_name, logger)
 
     logger.info('Done. Results: %s', os.path.join(work_dir, 'REPORT.md'))
 

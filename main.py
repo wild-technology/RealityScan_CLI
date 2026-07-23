@@ -15,7 +15,7 @@ from modules.preprocess_images.preprocess_images import PreprocessImages
 from modules.image_batcher.batch_directory import BatchDirectory
 from modules.realityscan_interface.realityscan_interface import RealityScanAlignment
 
-def intialize_logger() -> logging.Logger:
+def initialize_logger() -> logging.Logger:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     return logger
@@ -125,8 +125,8 @@ def parse_arguments(argv, params, logger) -> None:
             if last_value is not None:
                 prompt += f' [{last_value}]'
             try:
-                inp = input(f'{prompt}: ')
-                if not inp.strip() and last_value is not None:
+                inp = input(f'{prompt}: ').strip()
+                if not inp and last_value is not None:
                     val = last_value
                 elif p.get_type() is bool:
                     val = inp.lower() in ('true', 't', 'yes', 'y')
@@ -161,7 +161,7 @@ def log_output_data(logger, output_data: dict[str, object], indent: int = 0) -> 
             logger.info(f'{pad}{key}: {val}')
 
 def main(argv) -> None:
-    logger = intialize_logger()
+    logger = initialize_logger()
     modules = initialize_modules(logger)
     params = initialize_parameters(modules)
     parse_arguments(argv, params, logger)

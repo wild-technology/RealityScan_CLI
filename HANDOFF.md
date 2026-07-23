@@ -1,5 +1,45 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-07-22 fix pass + NA167 end-to-end verification
+
+A full-code review found and fixed (all verified by a 47-check synthetic
+suite plus a live NA167_H2075 run — see `git log` for the commit):
+
+- **Chaining was broken**: alignment read `batched_images` while the
+  batcher wrote `batched_images_by_zone`, and every stage expected
+  `flight_log.txt` while producers write `flight_log_<zone>_UTM.txt`.
+  All discovery now goes through `modules/flight_logs.find_flight_log`.
+- **Extractor timestamps were one interval early** (60 s at 1 fpm): the
+  frame read and the frame timestamped were different frames. Any
+  dataset extracted with the old `__extract_video_cv2` carries that
+  offset — re-extract before trusting its georeferencing.
+- **`FlightLogParams.xml` is now auto-generated per run** from the zone
+  tag in the flight-log filename (`flight_log_53N_UTM.txt` →
+  EPSG:32653). Never hand-edit the template's zone again.
+- **XMP calibration priors never loaded**: they were written as
+  `image.jpg.xmp`; RealityScan only reads `image.xmp`. Naming fixed,
+  but generation is now **opt-in** (`batch_xmp_priors`, default off) —
+  an NA167 zone_13 A/B measured the current prior content *reducing*
+  registration (96.3% → 89.6% on Zeuss). Validate per-rig first.
+- **Per-camera zone subfolders were aligned as separate scenes**,
+  defeating mixed-camera co-registration. `-addFolder` recurses
+  (verified live), so a zone tree is now one alignment scene.
+- Plus: georeference image check is header-only (full `.verify()` was
+  ~720 GB of reads on NA167), binary-search nav matching, batcher file
+  indexing (O(N·M) → one walk), geoall prefers `*final_datatable.csv`,
+  PNG support in both georeferencers, warn-once unknown-camera handling,
+  PID-exact lock liveness, contiguous match-delta buckets, CRLF-safe
+  prompts, tabs→4-space everywhere.
+
+**NA167_H2075 verification** (D:\na167_h2075, WCA U*/C* stills + Zeuss):
+29,620 images georeferenced in ~5 min (18,944 matched ≤2 s; the 10.4k
+out-of-dive-window WCA files correctly rejected — the legacy
+`flight_log.txt` had clamped those to garbage). 18 zones @ target 1000
+built in 6.6 min. zone_13 (34 wca + 904 zeuss, one scene) aligned
+93.4% registered in 11.5 min on GPU 0, flight log + auto-generated 53N
+CRS imported clean, verified shutdown. Basename flight logs match
+images in camera subfolders.
+
 This repo was created on 2026-07-21 from `wild-technology/RC_Main`
 (branch `claude/realityscan-repo-cleanup-2gjmu5`, full history preserved).
 That branch also still exists on RC_Main; no pull request was opened

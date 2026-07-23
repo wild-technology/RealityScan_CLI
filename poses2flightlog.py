@@ -57,11 +57,22 @@ def read_xmp_positions(images_dir: str) -> dict[str, np.ndarray]:
     """Image stem -> local camera position from the XMP sidecars."""
     positions = {}
     for path in glob.glob(os.path.join(images_dir, '*.xmp')):
-        match = POSITION_RE.search(open(path, encoding='utf-8').read())
+        with open(path, encoding='utf-8') as f:
+            match = POSITION_RE.search(f.read())
         if match:
             stem = os.path.splitext(os.path.basename(path))[0]
             positions[stem] = np.array([float(v) for v in match.group(1).split()])
     return positions
+
+
+def row_xyz(row: list[str]) -> list[float] | None:
+    """X/Y/Alt of a flight-log row as floats, or None when the row has no
+    usable position (the georeference module legitimately writes empty
+    fields for images matched in time but missing GPS)."""
+    try:
+        return [float(row[1]), float(row[2]), float(row[3])]
+    except (ValueError, IndexError):
+        return None
 
 
 def read_flight_log(path: str) -> tuple[str, list[list[str]]]:
@@ -127,26 +138,38 @@ def main() -> None:
 
     by_stem = {os.path.splitext(r[0])[0]: r for r in rows}
     common = sorted(set(positions) & set(by_stem))
-    if len(common) < MIN_CAMERAS:
-        sys.exit(f'Only {len(common)} registered images match the flight log - '
-                 f'need at least {MIN_CAMERAS} to estimate the transform')
 
-    local = np.array([positions[s] for s in common])
-    utm = np.array([[float(by_stem[s][1]), float(by_stem[s][2]), float(by_stem[s][3])]
-                    for s in common])
+    # Fit only on rows that actually carry a position prior; registered
+    # images with empty X/Y/Alt still get refined coordinates from the
+    # transform, they just cannot help estimate it.
+    fit_stems = [s for s in common if row_xyz(by_stem[s]) is not None]
+    skipped_no_prior = len(common) - len(fit_stems)
+    if skipped_no_prior:
+        print(f'{skipped_no_prior} matched rows have no position prior - '
+              'excluded from the transform fit')
+    if len(fit_stems) < MIN_CAMERAS:
+        sys.exit(f'Only {len(fit_stems)} registered images have usable flight-log '
+                 f'positions - need at least {MIN_CAMERAS} to estimate the transform')
+
+    local = np.array([positions[s] for s in fit_stems])
+    utm = np.array([row_xyz(by_stem[s]) for s in fit_stems])
 
     scale, R, t = umeyama_rigid(local, utm, with_scale=args.allow_scale)
-    refined = scale * (R @ local.T).T + t
-    residuals = refined - utm
+    # Refined output positions for EVERY matched stem; residuals only where
+    # a prior exists to compare against
+    all_local = np.array([positions[s] for s in common])
+    refined_all = scale * (R @ all_local.T).T + t
+    refined_fit = scale * (R @ local.T).T + t
+    residuals = refined_fit - utm
     norms = np.linalg.norm(residuals, axis=1)
-    print(f'Rigid fit over {len(common)} cameras'
+    print(f'Rigid fit over {len(fit_stems)} cameras'
           + (f' (scale={scale:.5f})' if args.allow_scale else '')
           + f': residual vs prior [m] mean {norms.mean():.2f}, '
             f'median {np.median(norms):.2f}, p95 {np.percentile(norms, 95):.2f}, '
             f'max {norms.max():.2f}')
     print('(residual magnitude ~ USBL/DVL navigation error estimate)')
 
-    refined_by_stem = dict(zip(common, refined))
+    refined_by_stem = dict(zip(common, refined_all))
     acc = f'{args.position_accuracy:.6f}'
     written = kept = 0
     with open(output, 'w', encoding='utf-8', newline='') as f:
@@ -169,7 +192,7 @@ def main() -> None:
     with open(qc_path, 'w', encoding='utf-8', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['filename', 'd_east_m', 'd_north_m', 'd_up_m', 'distance_m'])
-        for stem, delta, norm in sorted(zip(common, residuals, norms),
+        for stem, delta, norm in sorted(zip(fit_stems, residuals, norms),
                                         key=lambda item: -item[2]):
             writer.writerow([by_stem[stem][0]] + [f'{v:.3f}' for v in delta] + [f'{norm:.3f}'])
     print(f'Per-image residual QC: {qc_path}')

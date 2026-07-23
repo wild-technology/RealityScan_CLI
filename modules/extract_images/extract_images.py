@@ -1,25 +1,17 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import sys
-import csv
-import time
-import logging
-from datetime import datetime
-from tqdm import tqdm
+
+import os
+import shutil
+from datetime import datetime, timedelta
+
+import cv2
+import numpy as np
 
 from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
-
-import os
-import cv2
-import shutil
-from datetime import datetime, timedelta
 from ..file_metadata_parser import parse_timestamp_str, parse_timestamp
-import numpy as np
 
-
-# from decord import VideoReader
-# from decord import cpu, gpu
 
 class ExtractImages(RSModule):
     def __init__(self, logger):
@@ -79,103 +71,22 @@ class ExtractImages(RSModule):
 
         return video_timestamp
 
-    def __extract_video_decord(self, video_path, output_folder, output_fpm, output_mpx) -> dict[str, any]:
-        """
-        Extracts a video using the decord library.
-        https://medium.com/@haydenfaulkner/extracting-frames-fast-from-a-video-using-opencv-and-python-73b9b7dc9661
-        """
-        video_path = os.path.normpath(video_path)
-        output_folder = os.path.normpath(output_folder)
-
-        video_dir, video_filename = os.path.split(video_path)
-        video_filename, video_extension = os.path.splitext(video_filename)
-
-        video_timestamp_str = self.__get_video_timestamp_str(video_path)
-        video_timestamp = self.__get_video_timestamp(video_path)
-
-        vr = VideoReader(video_path, ctx=cpu(0))
-
-        video_frame_count = len(vr)
-        video_fps = vr.get_avg_fps()
-
-        output_fps = output_fpm / 60
-        skip_frames = round(video_fps / output_fps)
-
-        if skip_frames < 1:
-            skip_frames = 1
-
-        overall_frames_list = list(range(0, video_frame_count, skip_frames))
-
-        saved_count = 0
-
-        add_frame_index = output_fps > 1
-
-        # initialize the loading bar
-        bar = self._initialize_loading_bar(len(overall_frames_list) - 1, "Extracting Frames from Video")
-
-        def __process_frame(index):
-            nonlocal saved_count
-
-            current_overall_frame_number = (index - 1) * skip_frames
-
-            # get the timestamp of the current frame (in seconds since the start of the video)
-            frame_seconds_arr = vr.get_frame_timestamp(current_overall_frame_number).tolist()
-            time_difference = (frame_seconds_arr[0] + frame_seconds_arr[1]) / 2
-
-            # get timestamp of the current frame (in datetime format)
-            new_timestamp = video_timestamp + timedelta(seconds=time_difference)
-            new_timestamp_str = new_timestamp.strftime("%Y%m%dT%H%M%SZ")
-
-            # the index of the frame within the current second (if the video is 30fps, this will be between 0 and 29)
-            frame_index_in_second = int(current_overall_frame_number % output_fps)
-
-            # output image info
-            image_name = video_filename.replace(video_timestamp_str, new_timestamp_str)
-
-            if add_frame_index:
-                image_name = image_name + f"_frame{frame_index_in_second}"
-
-            image_name = image_name + ".png"
-
-            image_path = os.path.join(output_folder, image_name)
-
-            frame = vr.get_batch([index]).asnumpy()[0]
-
-            # compress frame to input_mpx if necessary
-            input_height, input_width, _ = frame.shape
-            input_mpx = input_height * input_width / 1000000
-
-            if input_mpx > output_mpx:
-                output_height = int(input_height * np.sqrt(output_mpx / input_mpx))
-                output_width = int(input_width * np.sqrt(output_mpx / input_mpx))
-                frame = cv2.resize(frame, (output_width, output_height), interpolation=cv2.INTER_AREA)
-
-            cv2.imwrite(image_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # save the extracted image
-            saved_count += 1  # increment our counter by one
-            self._update_loading_bar(bar, 1)
-
-        for i in range(0, len(overall_frames_list)):
-            __process_frame(i)
-
-        self._finish_loading_bar(bar)
-
-        output_data = {}
-        output_data['Success'] = True
-        output_data['Input Frame Count'] = video_frame_count
-        output_data['Extracted Frame Count'] = saved_count
-        output_data['Input FPM'] = round(video_fps * 60, 1)
-
-        return output_data
-
-    # Old method, uses OpenCV. Slower than decord on large videos. Faster when extracting a small amount of frames.
     def __extract_video_cv2(self, video_path, output_folder, output_fpm, output_mpx) -> dict[str, any]:
+        """Extract frames at output_fpm, timestamping each output image with
+        the wall-clock time of the frame it actually contains.
+
+        The frame READ and the frame TIMESTAMPED must be the same frame:
+        the pre-fix code sought to frame N+skip, read it, but stamped it
+        with frame N's time, so every image carried a timestamp one output
+        interval early (60 s at the default 1 fpm) and georeferencing
+        paired it with a position from a minute before it was taken.
+        """
         output_data = {}
 
         # Attempt to open video file
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             self.logger.error(f"Video file {video_path} could not be opened")
-            # --- FIXED LINE ---
             output_data['Success'] = False
             return output_data
 
@@ -186,46 +97,42 @@ class ExtractImages(RSModule):
         # Parse the metadata from the video filename
         video_filename = os.path.splitext(os.path.basename(video_path))[0]
 
-        # Video's original FPS
+        # Video's original frame count and FPS
         video_frame_count = round(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         video_fps = cap.get(cv2.CAP_PROP_FPS)
 
-        # Calculate how many frames to skip to get the desired output FPS
+        if video_fps <= 0 or video_frame_count <= 0:
+            self.logger.error(
+                f"Video file {video_path} reports no usable FPS/frame count "
+                f"(fps={video_fps}, frames={video_frame_count})")
+            cap.release()
+            output_data['Success'] = False
+            return output_data
+
+        # Calculate how many source frames to skip between extractions
         output_fps = output_fpm / 60
-        output_frame_duration = timedelta(seconds=1) / output_fps
-        skip_frames = round(video_fps / output_fps)
+        skip_frames = max(1, round(video_fps / output_fps))
 
-        # If the video's FPS is less than the desired output FPS, skip every frame
-        if skip_frames < 1:
-            skip_frames = 1
+        # Frame 0 is included: extraction starts at the video's own timestamp
+        frame_numbers = range(0, video_frame_count, skip_frames)
 
-        current_frame_number = 0
         extracted_count = 0
+        bar = self._initialize_loading_bar(len(frame_numbers), "Extracting Frames from Video")
 
-        expected_frame_count = video_frame_count // skip_frames
-
-        # initialize the loading bar
-        bar = self._initialize_loading_bar(expected_frame_count, "Extracting Frames from Video")
-
-        while cap.isOpened():
-            # Skip to the next frame to extract, saves some time when extracting at a low FPS
-            next_frame_number = current_frame_number + skip_frames
-            cap.set(cv2.CAP_PROP_POS_FRAMES, next_frame_number)
-
+        for frame_number in frame_numbers:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # Skip frames between desired output FPS
-            if current_frame_number % skip_frames != 0:
-                current_frame_number += 1
-                continue
-
-            # Calculate the new timecode based on the current frame
-            new_timestamp = video_timestamp + ((current_frame_number // skip_frames) * output_frame_duration)
+            # Timestamp of the frame just read (seconds from video start)
+            new_timestamp = video_timestamp + timedelta(seconds=frame_number / video_fps)
             new_timestamp_str = new_timestamp.strftime("%Y%m%dT%H%M%SZ")
 
-            frame_index_in_second = int(current_frame_number % output_fps)
+            # Index of this extracted frame within its second - nonzero only
+            # when extracting more than one frame per second
+            fps_int = max(1, round(video_fps))
+            frame_index_in_second = int((frame_number % fps_int) // skip_frames)
 
             # Generate the filename for the current frame
             # replace the timestamp in the filename with the new timestamp
@@ -233,7 +140,7 @@ class ExtractImages(RSModule):
                                                 new_timestamp_str) + f"_frame{frame_index_in_second}.jpg"
             image_path = os.path.join(output_folder, image_name)
 
-            # compress frame to input_mpx if necessary
+            # compress frame to output_mpx if necessary
             input_height, input_width, _ = frame.shape
             input_mpx = input_height * input_width / 1000000
 
@@ -244,8 +151,6 @@ class ExtractImages(RSModule):
 
             # Save the frame as an image
             cv2.imwrite(image_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-
-            current_frame_number = next_frame_number
             extracted_count += 1
 
             self._update_loading_bar(bar, 1)
@@ -262,13 +167,7 @@ class ExtractImages(RSModule):
         return output_data
 
     def run(self):
-        # Validate parameters
-        success, message = self.validate_parameters()
-        if not success:
-            self.logger.error(message)
-            return
-
-        # Get parameters
+        # Get parameters (validated by the orchestrator before run())
         input_path = self.params['image_input_video'].get_value()
         output_folder = os.path.join(self.params['output_dir'].get_value(), 'raw_images')
         output_fpm = self.params['image_output_fpm'].get_value()
@@ -306,7 +205,6 @@ class ExtractImages(RSModule):
             if not os.path.isfile(mov_path) or file_extension != '.mp4':
                 continue
 
-            # individual_output_data = self.__extract_video_decord(mov_path, output_folder, output_fpm, output_mpx)
             individual_output_data = self.__extract_video_cv2(mov_path, output_folder, output_fpm, output_mpx)
             self._update_loading_bar(bar, 1)
 
@@ -320,7 +218,7 @@ class ExtractImages(RSModule):
 
         return overall_output_data
 
-    def validate_parameters(self) -> (bool, str):
+    def validate_parameters(self) -> tuple[bool, str | None]:
         success, message = super().validate_parameters()
         if not success:
             return success, message
@@ -344,22 +242,24 @@ class ExtractImages(RSModule):
         output_fpm = self.params['image_output_fpm'].get_value()
         output_mpx = self.params['image_output_mpx'].get_value()
 
-        # input folder could either be a .mp4 file or a folder of .mp4 files
+        # input path is either a single .mp4 file or a folder of .mp4 files
         if is_input_folder:
-            if not os.listdir(input_video):
-                return False, 'Input folder is empty'
+            mp4s = [f for f in os.listdir(input_video)
+                    if os.path.splitext(f)[1].lower() == '.mp4']
+            if not mp4s:
+                return False, 'Input folder contains no .mp4 files'
         else:
             if not os.path.isfile(input_video):
                 return False, 'Input file does not exist'
 
             if os.path.splitext(input_video)[1].lower() != '.mp4':
-                return False, 'Input path is not an mov file'
+                return False, 'Input path is not an .mp4 file'
 
         if os.path.isdir(output_dir) and os.listdir(output_dir):
             self.logger.warning('Extracted images folder already exists. Overwrite? (y/n)')
             overwrite = input()
 
-            if overwrite.lower() != 'y':
+            if overwrite.strip().lower() != 'y':
                 return False, 'Extracted images folder not created'
             else:
                 shutil.rmtree(output_dir)

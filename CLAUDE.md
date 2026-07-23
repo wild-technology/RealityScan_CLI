@@ -31,16 +31,28 @@ Exceptions that must NOT be renamed:
   2.0/8×8, validated on zone_9 — baseline aligns to nothing on this
   imagery). `testing/preprocess_variants.py` imports the transforms from
   here; keep it that way (no second implementation).
+- `modules/flight_logs.py` — flight-log discovery (`find_flight_log`,
+  the ONLY way any stage locates a log on disk) and per-cruise CRS
+  generation (`write_flight_log_params`: UTM zone parsed from the log's
+  filename tag → EPSG → FlightLogParams XML; never hand-edit the
+  template's zone).
 - `modules/realityscan_interface/` — the ONLY place RealityScan is
   executed:
   - `realityscan_cli.py` — unified execution layer (`RealityScanCLI`).
     All new RealityScan-invoking code must go through it. It owns
-    executable discovery, per-instance lock files, marker-file hygiene,
-    progress tailing, stall warnings, and verified instance shutdown.
+    executable discovery, per-instance lock files, marker-file hygiene
+    (with a 60 s retry for the getStatus/teardown handle race),
+    progress tailing, stall warnings (`#timeout`-aware), and verified
+    instance shutdown.
   - `RS_CLI/Scripts/*.bat` — workflow definitions. Every operation runs
     through the shared `:run` subroutine: `-delegateTo %RS_INSTANCE%` →
     double `-waitCompleted` with a grace period → abort if
-    `RS_CLI/Errors/errors.txt` is non-empty.
+    `RS_CLI/Errors/errors.txt` is non-empty. Workflows:
+    `AlignImagesFromFolder` (folder tree = one scene),
+    `AlignImageList` (.imagelist input for shared-path components),
+    `SequentialAlignGrow` (incremental add→log→align),
+    `MergeZoneComponents` (.complist of in-place .rsalign paths;
+    merge|align mode; `key:value` settings), `AlignZonesSequentially`.
   - `RS_CLI/Errors/ErrorWriter.bat` — invoked by RealityScan itself
     (`appProcessAction=ExecuteProgram`); appends every completion to
     `results.log`, failures to `errors.txt`.
@@ -89,6 +101,17 @@ Exceptions that must NOT be renamed:
 6. `geoall.py` is the canonical georeferencing implementation; port
    improvements from it into `modules/georeference/` rather than letting
    the two diverge further.
+7. Import components (`-importComponent`) ONLY from their original
+   export location — a relocated `.rsalign` hangs the instance forever
+   in a `#timeout` state.
+8. Never pass delimited data as .bat arguments: cmd splits unquoted
+   `;` `,` `=` and Python's subprocess only quotes on whitespace. Lists
+   cross the boundary as files (`.complist`/`.imagelist`); settings as
+   `key:value` (converted inside the workflow).
+9. `testing/NA167_SESSION_NOTES.md` is the revised CLI documentation +
+   bug-findings reference (B1–B9); consult it before writing any new
+   RealityScan workflow. `testing/MERGE_TEST_PLAN.md` tracks the
+   component-merge test matrix.
 
 ## History notes
 

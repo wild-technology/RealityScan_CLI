@@ -7,21 +7,22 @@ Optimized with multiprocessing and binary search for speed.
 """
 
 from __future__ import annotations
-import os
+
+import bisect
 import csv
 import glob
-import shutil
-from datetime import datetime
-from PIL import Image
-from PIL.ExifTags import TAGS
-import utm
 import math
+import os
 import re
-from tqdm import tqdm
+import shutil
+import traceback
 from collections import defaultdict
-import bisect
+from datetime import datetime
 from multiprocessing import Pool, cpu_count
-from functools import partial
+
+import utm
+from PIL import Image
+from tqdm import tqdm
 
 try:
     from module_base.settings_store import SettingsStore
@@ -50,11 +51,6 @@ NUM_WORKERS = max(1, cpu_count() - 1)  # Leave one CPU free
 # Pre-compiled regex patterns for performance
 REGEX_WCA2025 = re.compile(r'(\d{8}T\d{6}Z)')
 REGEX_WCA_ZEUSS = re.compile(r'(\d{14})')
-
-
-def wrap180(angle_deg: float) -> float:
-    """Wrap angle to [-180, 180] range."""
-    return ((angle_deg + 180.0) % 360.0) - 180.0
 
 
 def wrap360(angle_deg: float) -> float:
@@ -179,19 +175,17 @@ def parse_timestamp_from_filename(filename: str) -> datetime | None:
 
     # Try WCA2025 format: YYYYMMDDTHHMMSSZ (e.g., 20250705T130954Z)
     try:
-        match = re.search(r'(\d{8}T\d{6}Z)', base_name)
+        match = REGEX_WCA2025.search(base_name)
         if match:
-            timestamp_str = match.group(1)
-            return datetime.strptime(timestamp_str, WCA2025_FILENAME_TIMESTAMP_FORMAT)
+            return datetime.strptime(match.group(1), WCA2025_FILENAME_TIMESTAMP_FORMAT)
     except ValueError as e:
         print(f"Debug: Failed to parse WCA2025 format from {filename}: {e}")
 
     # Try WCA/Zeuss format: YYYYMMDDHHMMSS (14 digits, e.g., 20250705130954)
     try:
-        match = re.search(r'(\d{14})', base_name)
+        match = REGEX_WCA_ZEUSS.search(base_name)
         if match:
-            timestamp_str = match.group(1)
-            return datetime.strptime(timestamp_str, WCA_FILENAME_TIMESTAMP_FORMAT)
+            return datetime.strptime(match.group(1), WCA_FILENAME_TIMESTAMP_FORMAT)
     except ValueError as e:
         print(f"Debug: Failed to parse WCA format from {filename}: {e}")
 
@@ -231,17 +225,35 @@ def find_all_edt_directories(base_dir: str) -> list[str]:
 
 
 def find_rov_datafiles(data_dir: str) -> dict[str, str]:
-    """Find all ROV datafiles and map dive numbers to file paths."""
-    dive_files = {}
-    csv_files = glob.glob(os.path.join(data_dir, "*.csv"))
+    """Find all ROV datafiles and map dive numbers to file paths.
 
-    for filepath in csv_files:
+    A dive directory typically holds several CSVs for the same dive
+    (USBL, DVL, kalman assessment, sensor merges...); the merged
+    ``*final_datatable.csv`` is the authoritative navigation source, so
+    it is preferred whenever more than one file matches a dive number.
+    """
+    candidates: dict[str, list[str]] = defaultdict(list)
+    for filepath in sorted(glob.glob(os.path.join(data_dir, "*.csv"))):
         filename = os.path.basename(filepath)
         dive_number = extract_dive_number(filename)
         if dive_number:
-            dive_files[dive_number] = filepath
+            candidates[dive_number].append(filepath)
         else:
             print(f"Warning: Could not extract dive number from {filename}")
+
+    dive_files = {}
+    for dive_number, paths in candidates.items():
+        finals = [p for p in paths if 'final_datatable' in os.path.basename(p).lower()]
+        if finals:
+            chosen = finals[0]
+        else:
+            chosen = paths[0]
+        dive_files[dive_number] = chosen
+        if len(paths) > 1:
+            ignored = [os.path.basename(p) for p in paths if p != chosen]
+            print(f"Note: {dive_number}: using {os.path.basename(chosen)}; "
+                  f"ignoring {len(ignored)} other CSV(s): {', '.join(ignored[:4])}"
+                  + ('...' if len(ignored) > 4 else ''))
 
     return dive_files
 
@@ -292,7 +304,7 @@ def read_image_filenames(edt_dirs: list[str]) -> list[dict]:
     a pre-dive camera timestamp summary. No validation performed.
     """
     image_data = []
-    jpeg_extensions = {'.jpg', '.jpeg'}
+    jpeg_extensions = {'.jpg', '.jpeg', '.png'}
     all_jpeg_files = []
 
     seen_files = set()
@@ -352,16 +364,15 @@ def read_image_filenames(edt_dirs: list[str]) -> list[dict]:
     return image_data
 
 
-def find_closest_timestamp_index(data_rows: list[dict], target_time: datetime) -> int:
+def find_closest_timestamp_index(times: list[datetime], target_time: datetime) -> int:
     """
-    Binary search to find the index of the closest timestamp in sorted data_rows.
-    Assumes data_rows is sorted by TIME.
+    Binary search for the index of the closest timestamp in a pre-sorted
+    list. The caller extracts ``times`` ONCE per dive - rebuilding it here
+    per lookup (as an earlier version did) degenerates the whole search
+    back to O(N) per image.
     """
-    if not data_rows:
+    if not times:
         return -1
-
-    # Extract timestamps for binary search
-    times = [row["TIME"] for row in data_rows]
 
     # Find insertion point
     idx = bisect.bisect_left(times, target_time)
@@ -386,8 +397,8 @@ def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_ca
     stats = {
         'matches_made': 0,
         'exact_matches': 0,
-        'matches_1_4': 0,
-        'matches_5_15': 0,
+        'matches_0_4': 0,
+        'matches_4_15': 0,
         'matches_gt15': 0,
         'rejected_time': 0,
         'accepted_missing_utm': 0,
@@ -398,16 +409,17 @@ def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_ca
     matched_images = []
     rejection_examples = []
 
-    # Ensure data_rows is sorted by time for binary search
-    if data_rows:
-        data_rows.sort(key=lambda row: row["TIME"])
+    # Sort once, extract the timestamp key list once - the binary search
+    # below assumes both
+    data_rows.sort(key=lambda row: row["TIME"])
+    times = [row["TIME"] for row in data_rows]
 
     for image in tqdm(image_data, desc="Estimating Location"):
         if not data_rows:
             continue
 
         # Use binary search instead of linear scan
-        closest_idx = find_closest_timestamp_index(data_rows, image["TIMESTAMP"])
+        closest_idx = find_closest_timestamp_index(times, image["TIMESTAMP"])
         if closest_idx < 0:
             continue
 
@@ -415,13 +427,15 @@ def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_ca
         time_diff = abs(closest_match["TIME"] - image["TIMESTAMP"])
         diff_sec = time_diff.total_seconds()
 
+        # Contiguous buckets - the old ==0 / 1-4 / 5-15 / >15 split dropped
+        # deltas in (0,1) and (4,5)
         if diff_sec == 0:
             stats['exact_matches'] += 1
-        elif 1 <= diff_sec <= 4:
-            stats['matches_1_4'] += 1
-        elif 5 <= diff_sec <= 15:
-            stats['matches_5_15'] += 1
-        elif diff_sec > 15:
+        elif diff_sec <= 4:
+            stats['matches_0_4'] += 1
+        elif diff_sec <= 15:
+            stats['matches_4_15'] += 1
+        else:
             stats['matches_gt15'] += 1
 
         if diff_sec > MATCH_THRESHOLD_SEC:
@@ -602,7 +616,7 @@ def validate_and_cleanup_images(output_dir: str, dive_numbers: list[str]) -> dic
                 continue
 
             jpeg_files = [os.path.join(camera_path, f) for f in os.listdir(camera_path)
-                         if f.lower().endswith(('.jpg', '.jpeg'))]
+                         if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
 
             for filepath in jpeg_files:
                 all_image_files.append(filepath)
@@ -757,8 +771,8 @@ def print_dive_summary(dive_number: str, csv_rows: int, examined: int, stats: di
     print(f"Rejected (>2s):           {stats['rejected_time']}")
     print(f"\nTime-Delta Buckets (all pairs, pre-threshold):")
     print(f"  Exact matches:          {stats['exact_matches']}")
-    print(f"  1-4 seconds:            {stats['matches_1_4']}")
-    print(f"  5-15 seconds:           {stats['matches_5_15']}")
+    print(f"  0-4 seconds:            {stats['matches_0_4']}")
+    print(f"  4-15 seconds:           {stats['matches_4_15']}")
     print(f"  >15 seconds:            {stats['matches_gt15']}")
     print(f"\nAccepted Field Completeness:")
     print(f"  Missing UTM:            {stats['accepted_missing_utm']}")
@@ -899,7 +913,6 @@ def main():
 
         except Exception as e:
             print(f"Error processing dive {dive_number}: {e}")
-            import traceback
             traceback.print_exc()
             continue
 

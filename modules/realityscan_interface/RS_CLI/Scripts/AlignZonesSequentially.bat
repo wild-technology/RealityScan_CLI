@@ -159,11 +159,13 @@ call :run -align || goto :fail
 echo    SUCCESS: Alignment completed
 echo.
 
-rem Export components
-echo [10/10] Exporting aligned components...
-call :run -selectAllComponents || goto :fail
+rem Export the maximal component (-selectAllComponents does NOT exist in
+rem RealityScan 2.2 - it fails with 0x82000060; verified 2026-07-23)
+echo [10/10] Exporting aligned component...
+call :run -setMinComponentSize 1 || goto :fail
+call :run -selectMaximalComponent || goto :fail
 call :run -exportSelectedComponentDir "%zone_output%" || goto :fail
-echo    SUCCESS: Components exported to %zone_output%
+echo    SUCCESS: Component exported to %zone_output%
 echo.
 
 rem Save project

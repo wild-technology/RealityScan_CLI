@@ -85,7 +85,8 @@ class RSModule(abc.ABC):
         bar.refresh()
 
     def get_progress(self) -> float:
-        if not self.loading_bars:
-            return 0.0
-        total = sum(bar.n / bar.total for bar in self.loading_bars)
-        return total / len(self.loading_bars)
+        # bars created with total=0 (nothing to do) count as complete
+        bars = [bar for bar in self.loading_bars if bar.total]
+        if not bars:
+            return 1.0 if self.loading_bars else 0.0
+        return sum(bar.n / bar.total for bar in bars) / len(bars)

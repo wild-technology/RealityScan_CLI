@@ -1,22 +1,25 @@
 from __future__ import annotations
-from module_base.rs_module import RSModule
-from module_base.parameter import Parameter
 
 import os
 import shutil
+import warnings
+
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from sklearn.cluster import KMeans
-from sklearn.neighbors import KernelDensity
-from scipy.spatial import cKDTree, ConvexHull
-from shapely.geometry import Point
-from sklearn.preprocessing import StandardScaler
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
-import warnings
-import glob
+from scipy.spatial import cKDTree, ConvexHull
+from shapely.geometry import Point
+from sklearn.cluster import KMeans
+from sklearn.neighbors import KernelDensity
+from sklearn.preprocessing import StandardScaler
+
+from module_base.rs_module import RSModule
+from module_base.parameter import Parameter
+from module_base.settings_store import SettingsStore
+from ..flight_logs import find_flight_log
 
 
 class BatchDirectory(RSModule):
@@ -26,6 +29,11 @@ class BatchDirectory(RSModule):
         super().__init__("Batch Directory", logger)
         self.logger.info(f"Matplotlib {matplotlib.__version__}, Seaborn {sns.__version__}")
         self.utm_zone_suffix = None
+        # Last-entered run-time answers (zone sizes etc.) persist as the
+        # next run's defaults, like every other prompt in the pipeline
+        self.settings = SettingsStore()
+        self._unknown_camera_example: str | None = None
+        self._unknown_camera_count = 0
 
     def get_parameters(self) -> dict[str, Parameter]:
         additional_params = {}
@@ -112,6 +120,20 @@ class BatchDirectory(RSModule):
             disable_when_module_active='Georeference Images'
         )
 
+        additional_params['batch_xmp_priors'] = Parameter(
+            name='Write XMP Calibration Priors',
+            cli_short='b_x',
+            cli_long='b_xmp_priors',
+            type=bool,
+            default_value=False,
+            description=('Write per-camera XMP calibration priors into the zones. '
+                         'Off by default: a naming bug meant historical runs never '
+                         'actually loaded them, and the NA167 zone_13 A/B showed the '
+                         'current prior content REDUCING registration (96.3% -> 89.6%). '
+                         'Validate per-rig before enabling.'),
+            prompt_user=False
+        )
+
         return {**super().get_parameters(), **additional_params}
 
     def __get_input_dir(self):
@@ -127,27 +149,13 @@ class BatchDirectory(RSModule):
     def __get_flight_log_path(self):
         if 'batch_flight_log_path' in self.params:
             return self.params['batch_flight_log_path'].get_value()
-        else:
-            # Georeference writes the flight log next to the images it
-            # processed: its explicit input dir, or raw_images when it ran
-            # after Extract Images (whose output the search must cover too).
-            output_dir = self.params['output_dir'].get_value()
-            if 'geo_input_image_dir' in self.params:
-                search_dirs = [self.params['geo_input_image_dir'].get_value()]
-            else:
-                search_dirs = [os.path.join(output_dir, "raw_images"), output_dir]
-
-            for search_dir in search_dirs:
-                matches = glob.glob(os.path.join(search_dir, "flight_log_*_UTM.txt"))
-                if matches:
-                    return matches[0]
-
-            for search_dir in search_dirs:
-                fallback = os.path.join(search_dir, "flight_log.txt")
-                if os.path.isfile(fallback):
-                    return fallback
-
-            return None
+        # Georeference writes the flight log next to the images it
+        # processed: its explicit input dir, or raw_images when it ran
+        # after Extract Images (whose output the search must cover too).
+        output_dir = self.params['output_dir'].get_value()
+        if 'geo_input_image_dir' in self.params:
+            return find_flight_log(self.params['geo_input_image_dir'].get_value())
+        return find_flight_log(os.path.join(output_dir, "raw_images"), output_dir)
 
     def __read_flight_log_gdf(self, flight_log_path):
         if flight_log_path is None:
@@ -495,8 +503,10 @@ class BatchDirectory(RSModule):
         plt.close(fig2)
         self.logger.info(f"Batch zones plot saved to: {zones_plot_path}")
 
-    def __determine_camera_subfolder(self, filename):
-        """Determine camera subfolder based on filename."""
+    def __determine_camera_subfolder(self, filename, source_path=None):
+        """Camera subfolder from the filename; when the filename carries no
+        camera token, fall back to the source file's parent directory (a
+        dataset like WCA/C001C0012_<ts>.png is organized by folder)."""
         if "HERC" in filename:
             return "zeuss"
         elif filename.startswith("camlower"):
@@ -505,46 +515,57 @@ class BatchDirectory(RSModule):
             return "cammid"
         elif filename.startswith("camupper"):
             return "camupper"
-        else:
-            return "other"
 
-    def __copy_files(self, input_dir, batch_folder_dir, files):
+        if source_path:
+            parent = os.path.basename(os.path.dirname(source_path))
+            if parent:
+                return parent.lower()
+        return "other"
+
+    @staticmethod
+    def __index_files(input_dir):
+        """One walk over the input tree: filename -> full path, and
+        stem -> filename for extension-mismatch diagnostics. Replaces the
+        previous per-file os.walk (O(images x tree size))."""
+        by_name: dict[str, str] = {}
+        by_stem: dict[str, str] = {}
+        for root, _dirs, filenames in os.walk(input_dir):
+            for fn in filenames:
+                by_name.setdefault(fn, os.path.join(root, fn))
+                by_stem.setdefault(os.path.splitext(fn)[0], fn)
+        return by_name, by_stem
+
+    def __copy_files(self, input_dir, batch_folder_dir, files, file_index=None):
         """Copy files to camera-specific subfolders and generate XMP sidecars."""
-        for file in files:
-            camera_subfolder = self.__determine_camera_subfolder(file)
-            camera_dir = os.path.join(batch_folder_dir, camera_subfolder)
-            os.makedirs(camera_dir, exist_ok=True)
+        if file_index is None:
+            file_index = self.__index_files(input_dir)
+        by_name, by_stem = file_index
 
-            # Search recursively for the file in input_dir
-            file_path = None
-            for root, dirs, filenames in os.walk(input_dir):
-                if file in filenames:
-                    file_path = os.path.join(root, file)
-                    break
+        for file in files:
+            file_path = by_name.get(file)
 
             if file_path is None:
                 # Check if it's an extension mismatch
                 base_name = os.path.splitext(file)[0]
-                found_with_diff_ext = False
-                for root, dirs, filenames in os.walk(input_dir):
-                    for fn in filenames:
-                        if os.path.splitext(fn)[0] == base_name:
-                            self.logger.warning(f"File '{file}' not found, but found '{fn}' - flight log may have wrong extension")
-                            found_with_diff_ext = True
-                            break
-                    if found_with_diff_ext:
-                        break
-
-                if not found_with_diff_ext:
+                other_ext = by_stem.get(base_name)
+                if other_ext:
+                    self.logger.warning(f"File '{file}' not found, but found '{other_ext}' - flight log may have wrong extension")
+                else:
                     self.logger.warning(f"File not found: {file} - flight log filename does not match any files in directory")
                 continue
+
+            camera_subfolder = self.__determine_camera_subfolder(file, file_path)
+            camera_dir = os.path.join(batch_folder_dir, camera_subfolder)
+            os.makedirs(camera_dir, exist_ok=True)
 
             output_path = os.path.join(camera_dir, file)
             if not os.path.exists(output_path):
                 shutil.copy(file_path, output_path)
 
-            # Generate XMP sidecar file with camera calibration priors
-            self.__generate_xmp_sidecar(file, camera_dir, camera_subfolder)
+            # Optionally generate XMP sidecar with camera calibration priors
+            if self.params.get('batch_xmp_priors') is not None and \
+                    self.params['batch_xmp_priors'].get_value():
+                self.__generate_xmp_sidecar(file, camera_dir, camera_subfolder)
 
     def __generate_xmp_sidecar(self, image_filename: str, output_path: str, camera_type: str) -> None:
         """
@@ -555,7 +576,11 @@ class BatchDirectory(RSModule):
             output_path: Full path where the image is located
             camera_type: Camera type (zeuss, cammid, camupper, camlower, other)
         """
-        xmp_path = os.path.join(output_path, f"{image_filename}.xmp")
+        # RealityScan's sidecar convention is <stem>.xmp (image.jpg ->
+        # image.xmp). The previous f"{image_filename}.xmp" produced
+        # image.jpg.xmp, which RealityScan silently ignores - every
+        # calibration prior written that way was never loaded.
+        xmp_path = os.path.join(output_path, f"{os.path.splitext(image_filename)[0]}.xmp")
 
         # Define camera-specific settings
         if camera_type == "zeuss":
@@ -583,8 +608,16 @@ class BatchDirectory(RSModule):
             lens_prior = "Unknown"  # Fisheye requires Unknown
             distortion_model = "division"
         else:
-            # Unknown camera type
-            self.logger.warning(f"Unknown camera type '{camera_type}' for {image_filename}, skipping XMP generation")
+            # Unknown camera type - no calibration priors to write. Warn
+            # once; per-image warnings would flood the log on a dataset
+            # with an unrecognized naming scheme.
+            self._unknown_camera_count += 1
+            if self._unknown_camera_example is None:
+                self._unknown_camera_example = image_filename
+                self.logger.warning(
+                    f"Unknown camera type '{camera_type}' (e.g. {image_filename}) - "
+                    "skipping XMP calibration sidecars for these images. "
+                    "Further warnings suppressed; total reported in summary.")
             return
 
         # Build XMP content
@@ -631,13 +664,16 @@ class BatchDirectory(RSModule):
 
         bar = self._initialize_loading_bar(len(zones), 'Creating Batch Folders')
 
+        # Index the input tree once for all zones
+        file_index = self.__index_files(input_dir)
+
         for i, zone_files in enumerate(zones):
             batch_folder_name = f"zone_{i + 1}"
             batch_folder_dir = os.path.join(output_dir, batch_folder_name)
             os.makedirs(batch_folder_dir, exist_ok=True)
 
             unique_zone_files = list(dict.fromkeys(zone_files))
-            self.__copy_files(input_dir, batch_folder_dir, unique_zone_files)
+            self.__copy_files(input_dir, batch_folder_dir, unique_zone_files, file_index)
 
             # Create flight log per zone
             if flight_log_df is not None:
@@ -666,12 +702,42 @@ class BatchDirectory(RSModule):
             self._update_loading_bar(bar, 1)
 
 
-    def run(self):
-        success, message = self.validate_parameters()
-        if not success:
-            self.logger.error(message)
-            return {'Success': False}
+    def _prompt_int(self, key: str, message: str, fallback: int) -> int:
+        """Integer prompt whose last-entered value persists as the next
+        run's default (rs_settings.json, section "batch")."""
+        stored = self.settings.get('batch', key, fallback)
+        while True:
+            raw = input(f"{message} [{stored}]: ").strip()
+            if not raw:
+                value = int(stored)
+                break
+            try:
+                value = int(raw)
+                break
+            except ValueError:
+                print("Please enter an integer.")
+        self.settings.set('batch', key, value)
+        return value
 
+    def _prompt_float(self, key: str, message: str, fallback: float,
+                      lo: float = None, hi: float = None) -> float:
+        stored = self.settings.get('batch', key, fallback)
+        while True:
+            raw = input(f"{message} [{stored}]: ").strip()
+            try:
+                value = float(stored) if not raw else float(raw)
+            except ValueError:
+                print("Please enter a number.")
+                continue
+            if lo is not None and value < lo or hi is not None and value > hi:
+                print(f"Please enter a value between {lo} and {hi}.")
+                continue
+            break
+        self.settings.set('batch', key, value)
+        return value
+
+    def run(self):
+        # Parameters are validated by the orchestrator before run()
         output_dir = os.path.join(self.params['output_dir'].get_value(), 'batched_images_by_zone')
         input_dir = self.__get_input_dir()
         flight_log_path = self.__get_flight_log_path()
@@ -683,25 +749,17 @@ class BatchDirectory(RSModule):
 
         self.logger.info(f"Total number of georeferenced points: {len(gdf)}")
 
-        # Prompt for min/max zone size based on total image count
+        # Prompt for min/max zone size based on total image count; the
+        # last-entered values are offered as defaults on the next run
         self.logger.info(f"Recommended min zone size: {max(100, len(gdf) // 10)}")
         self.logger.info(f"Recommended max zone size: {max(1000, len(gdf) // 2)}")
 
-        min_zone = input(f"Minimum zone size (default {self.params['batch_min_zone_size'].get_value()}): ").strip()
-        if min_zone:
-            try:
-                self.params['batch_min_zone_size'].set_value(int(min_zone))
-            except ValueError:
-                self.logger.error("Invalid minimum zone size")
-                return {'Success': False}
-
-        max_zone = input(f"Maximum zone size (default {self.params['batch_max_zone_size'].get_value()}): ").strip()
-        if max_zone:
-            try:
-                self.params['batch_max_zone_size'].set_value(int(max_zone))
-            except ValueError:
-                self.logger.error("Invalid maximum zone size")
-                return {'Success': False}
+        self.params['batch_min_zone_size'].set_value(self._prompt_int(
+            'min_zone_size', 'Minimum zone size',
+            self.params['batch_min_zone_size'].get_value()))
+        self.params['batch_max_zone_size'].set_value(self._prompt_int(
+            'max_zone_size', 'Maximum zone size',
+            self.params['batch_max_zone_size'].get_value()))
 
         target_size = int(self.params['batch_target_images_per_zone'].get_value())
         min_size = int(self.params['batch_min_zone_size'].get_value())
@@ -748,32 +806,20 @@ class BatchDirectory(RSModule):
 
             self.__plot_results(gdf_processed, final_zones, output_dir)
 
-            user_input = input("Accept these batches? (a)ccept, (r)eject and set new params: ").lower()
+            user_input = input("Accept these batches? (a)ccept, (r)eject and set new params: ").strip().lower()
             if user_input == 'a':
                 self.logger.info("Batches accepted. Proceeding to copy files.")
                 break
             elif user_input == 'r':
                 while True:
-                    try:
-                        new_target = int(input(f"Enter new target images per zone (current: {target_size}): "))
-                        if new_target >= 100:
-                            target_size = new_target
-                            break
-                        else:
-                            print("Please enter a value >= 100.")
-                    except ValueError:
-                        print("Invalid input. Please enter an integer.")
+                    new_target = self._prompt_int('target_images', 'New target images per zone', target_size)
+                    if new_target >= 100:
+                        target_size = new_target
+                        break
+                    print("Please enter a value >= 100.")
 
-                while True:
-                    try:
-                        new_overlap = float(input(f"Enter new overlap percentage (current: {overlap_percent}): "))
-                        if 0.0 <= new_overlap <= 100.0:
-                            overlap_percent = new_overlap
-                            break
-                        else:
-                            print("Please enter a value between 0 and 100.")
-                    except ValueError:
-                        print("Invalid input. Please enter a number.")
+                overlap_percent = self._prompt_float(
+                    'overlap_percent', 'New overlap percentage', overlap_percent, 0.0, 100.0)
 
                 # Update min/max based on new target
                 min_size = max(100, int(target_size * 0.2))
@@ -791,7 +837,7 @@ class BatchDirectory(RSModule):
 
             avg_zone_size = total_in_batches / len(final_zones) if final_zones else 0
 
-            return {
+            output = {
                 'Success': True,
                 'Number of Zones': len(final_zones),
                 'Target Zone Size': target_size,
@@ -802,11 +848,15 @@ class BatchDirectory(RSModule):
                 'Output Directory': output_dir,
                 'UTM Zone': self.utm_zone_suffix or 'N/A'
             }
+            if self._unknown_camera_count:
+                output['Images Without Calibration XMP'] = (
+                    f"{self._unknown_camera_count} (e.g. {self._unknown_camera_example})")
+            return output
         except ValueError as e:
             self.logger.error(e)
             return {'Success': False}
 
-    def validate_parameters(self) -> (bool, str):
+    def validate_parameters(self) -> tuple[bool, str | None]:
         success, message = super().validate_parameters()
         if not success:
             return success, message
@@ -840,7 +890,7 @@ class BatchDirectory(RSModule):
         if os.path.isdir(output_dir) and os.listdir(output_dir):
             self.logger.warning('Batched images folder already exists and may contain old plots. Overwrite? (y/n)')
             overwrite = input()
-            if overwrite.lower() != 'y':
+            if overwrite.strip().lower() != 'y':
                 return False, 'Batched images folder not created'
             else:
                 shutil.rmtree(output_dir)

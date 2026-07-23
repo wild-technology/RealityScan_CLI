@@ -1,13 +1,15 @@
 from __future__ import annotations
-import os
-import csv
-from datetime import datetime, timedelta
-from PIL import Image
-import sys
-import utm
-import math
 
-from ..file_metadata_parser import parse_timestamp_str, parse_timestamp
+import bisect
+import csv
+import math
+import os
+from datetime import datetime
+
+import utm
+from PIL import Image
+
+from ..file_metadata_parser import parse_timestamp
 from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
 
@@ -22,6 +24,19 @@ class GeoreferenceImages(RSModule):
         super().__init__("Georeference Images", logger)
         self.utm_zone = None
         self.stats: dict[str, int | float] = {}
+        # Unknown-camera warnings fire once per run (a dataset with an
+        # unrecognized naming scheme would otherwise emit one per image)
+        self._unknown_camera_example: str | None = None
+        self._unknown_camera_count = 0
+
+    def _note_unknown_camera(self, filename: str, context: str) -> None:
+        self._unknown_camera_count += 1
+        if self._unknown_camera_example is None:
+            self._unknown_camera_example = filename
+            self.logger.warning(
+                f"Unknown camera type (e.g. '{filename}'): {context}. "
+                "Further unknown-camera warnings are suppressed; the total "
+                "is reported in the run summary.")
 
     def get_parameters(self) -> dict[str, Parameter]:
         additional_params = {}
@@ -70,11 +85,6 @@ class GeoreferenceImages(RSModule):
         return {**super().get_parameters(), **additional_params}
 
     @staticmethod
-    def _wrap180(angle_deg: float) -> float:
-        """Wrap angle to [-180, 180] range."""
-        return ((angle_deg + 180.0) % 360.0) - 180.0
-
-    @staticmethod
     def _wrap360(angle_deg: float) -> float:
         """Wrap angle to [0, 360) range."""
         return angle_deg % 360.0
@@ -92,30 +102,11 @@ class GeoreferenceImages(RSModule):
             return 10.0
         elif filename_lower.startswith('camlower'):
             return 5.0
-        elif '_herc_' in filename_lower:
+        elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
             return 30.0
         else:
-            self.logger.warning(f"Unknown camera type for {filename}, using default pitch accuracy 10°")
+            self._note_unknown_camera(filename, "using default pitch accuracy 10°")
             return 10.0
-
-
-    def _get_camera_pitch_offset(self, filename: str) -> float:
-        """
-        Return camera pitch offset (degrees down from vehicle forward axis).
-        Positive values = camera pointing down relative to vehicle.
-        """
-        filename_lower = filename.lower()
-        if 'cammid' in filename_lower:
-            return 20.0  # pointing down 20°
-        elif 'camupper' in filename_lower:
-            return 70.0  # pointing down 70°
-        elif 'camlower' in filename_lower:
-            return 10.0  # pointing down 10°
-        elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
-            return 30.0  # Zeuss pointing down 30°
-        else:
-            self.logger.warning(f"Unknown camera type for {filename}, assuming 0° pitch offset")
-            return 0.0
 
     def _apply_camera_position_offset(self, utm_x: float | None, utm_y: float | None,
                                       altitude: float | None, heading_deg: float | None,
@@ -245,10 +236,15 @@ class GeoreferenceImages(RSModule):
             return None, None
 
     def __is_image_file(self, filename, image_folder):
+        """Header-only structural check. A full .verify() walks every byte
+        for the CRCs - roughly 720 GB of reads on a dive of 18k 39MB
+        stills - while opening the header rejects non-images in
+        milliseconds. Deep corruption still surfaces at preprocessing/
+        alignment, where the pixels are read anyway."""
         try:
             with Image.open(os.path.join(image_folder, filename)) as im:
-                im.verify()
-            return True
+                width, height = im.size
+            return width > 0 and height > 0
         except Exception:
             return False
 
@@ -285,14 +281,14 @@ class GeoreferenceImages(RSModule):
             return timestamp
 
     def __read_image_filenames(self, image_folder, data_type):
-        """Read all JPEG image filenames from a folder and subdirectories, extracting their timestamps."""
+        """Read all image filenames from a folder and subdirectories, extracting their timestamps."""
         image_data = []
-        jpeg_extensions = {'.jpg', '.jpeg'}
+        image_extensions = {'.jpg', '.jpeg', '.png'}
 
         jpeg_files = []
         for root, dirs, files in os.walk(image_folder):
             for filename in files:
-                if os.path.splitext(filename.lower())[1] in jpeg_extensions:
+                if os.path.splitext(filename.lower())[1] in image_extensions:
                     rel_path = os.path.relpath(os.path.join(root, filename), image_folder)
                     jpeg_files.append(rel_path)
 
@@ -322,19 +318,38 @@ class GeoreferenceImages(RSModule):
 
         return image_data
 
+    @staticmethod
+    def _find_closest_row_index(times: list[datetime], target_time: datetime) -> int:
+        """Binary search for the index of the closest timestamp in a sorted
+        list. Assumes times is sorted ascending."""
+        idx = bisect.bisect_left(times, target_time)
+        if idx == 0:
+            return 0
+        if idx == len(times):
+            return len(times) - 1
+        before, after = times[idx - 1], times[idx]
+        if abs(target_time - before) <= abs(target_time - after):
+            return idx - 1
+        return idx
+
     def __estimate_location(self, image_data, data_rows, input_type) -> int:
         """Estimate location and orientation for each image. Accept only matches within 2 seconds."""
         MATCH_THRESHOLD_SEC = 2.0
 
         matches_made = 0
         exact_matches = 0
-        matches_1_4 = 0
-        matches_5_15 = 0
+        matches_0_4 = 0
+        matches_4_15 = 0
         matches_gt15 = 0
         rejected_time = 0
         rejected_no_csv = 0
         accepted_missing_utm = 0
         accepted_missing_orientation = 0
+
+        # Sort once and binary-search per image instead of a linear scan
+        # over the whole nav table per image (O(N log M) vs O(N*M))
+        data_rows = sorted(data_rows, key=lambda row: row["TIME"])
+        times = [row["TIME"] for row in data_rows]
 
         bar = self._initialize_loading_bar(len(image_data), "Estimating Location")
         for image in image_data:
@@ -342,17 +357,19 @@ class GeoreferenceImages(RSModule):
             image["ACCEPTED"] = False
 
             if data_rows:
-                closest_match = min(data_rows, key=lambda row: abs(row["TIME"] - image["TIMESTAMP"]))
+                closest_match = data_rows[self._find_closest_row_index(times, image["TIMESTAMP"])]
                 time_diff = abs(closest_match["TIME"] - image["TIMESTAMP"])
                 diff_sec = time_diff.total_seconds()
 
+                # Contiguous buckets: the old ==0 / 1-4 / 5-15 / >15 split
+                # silently dropped deltas in (0,1) and (4,5)
                 if diff_sec == 0:
                     exact_matches += 1
-                elif 1 <= diff_sec <= 4:
-                    matches_1_4 += 1
-                elif 5 <= diff_sec <= 15:
-                    matches_5_15 += 1
-                elif diff_sec > 15:
+                elif diff_sec <= 4:
+                    matches_0_4 += 1
+                elif diff_sec <= 15:
+                    matches_4_15 += 1
+                else:
                     matches_gt15 += 1
 
                 if diff_sec > MATCH_THRESHOLD_SEC:
@@ -404,11 +421,12 @@ class GeoreferenceImages(RSModule):
         self.stats['rejected_time'] = rejected_time
         self.stats['rejected_no_csv'] = rejected_no_csv
         self.stats['bucket_exact'] = exact_matches
-        self.stats['bucket_1_4'] = matches_1_4
-        self.stats['bucket_5_15'] = matches_5_15
+        self.stats['bucket_0_4'] = matches_0_4
+        self.stats['bucket_4_15'] = matches_4_15
         self.stats['bucket_gt15'] = matches_gt15
         self.stats['accepted_missing_utm'] = accepted_missing_utm
         self.stats['accepted_missing_orientation'] = accepted_missing_orientation
+        self.stats['unknown_camera_images'] = self._unknown_camera_count
         total_rejected = rejected_time + rejected_no_csv
         self.stats['total_rejected'] = total_rejected
         self.stats['accept_rate_pct'] = (100.0 * matches_made / len(image_data)) if image_data else 0.0
@@ -419,13 +437,16 @@ class GeoreferenceImages(RSModule):
         print(f"  Rejected >2s:    {self.stats['rejected_time']}")
         print(f"  Rejected no CSV: {self.stats['rejected_no_csv']}")
         print("  Time-delta buckets (all pairs, pre-threshold):")
-        print(f"    Exact: {self.stats['bucket_exact']}")
-        print(f"    1–4s:  {self.stats['bucket_1_4']}")
-        print(f"    5–15s: {self.stats['bucket_5_15']}")
-        print(f"    >15s:  {self.stats['bucket_gt15']}")
+        print(f"    Exact:  {self.stats['bucket_exact']}")
+        print(f"    0–4s:   {self.stats['bucket_0_4']}")
+        print(f"    4–15s:  {self.stats['bucket_4_15']}")
+        print(f"    >15s:   {self.stats['bucket_gt15']}")
         print("  Accepted field completeness:")
         print(f"    Missing UTM:         {self.stats['accepted_missing_utm']}")
         print(f"    Missing orientation: {self.stats['accepted_missing_orientation']}")
+        if self._unknown_camera_count:
+            print(f"  Unknown-camera images: {self._unknown_camera_count} "
+                  f"(e.g. {self._unknown_camera_example}) - default offsets/accuracies used")
 
         return matches_made
 
@@ -448,10 +469,10 @@ class GeoreferenceImages(RSModule):
             return (1.0, 0.0, 1.0)  # 1m forward, 1m down
         elif filename_lower.startswith('camlower'):
             return (1.0, 0.0, 1.0)  # 1m forward, 1m down
-        elif '_herc_' in filename_lower:
+        elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
             return (0.5, 0.0, 0.5)  # 0.5m forward, 0.5m down
         else:
-            self.logger.warning(f"Unknown camera type for {filename}, assuming no offset")
+            self._note_unknown_camera(filename, "assuming no position offset")
             return (0.0, 0.0, 0.0)
 
     def _get_camera_pitch_offset(self, filename: str) -> float:
@@ -468,31 +489,11 @@ class GeoreferenceImages(RSModule):
             return 20.0  # pointing down 20°
         elif filename_lower.startswith('camlower'):
             return 10.0  # pointing down 10°
-        elif '_herc_' in filename_lower:
+        elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
             return 30.0  # Zeuss pointing down 30°
         else:
-            self.logger.warning(f"Unknown camera type for {filename}, assuming 0° pitch offset")
+            self._note_unknown_camera(filename, "assuming 0° pitch offset")
             return 0.0
-
-    def _get_camera_accuracy(self, filename: str) -> tuple[float, float, float]:
-        """
-        Return yaw, pitch, roll accuracy (degrees) for a camera based on its name.
-        Default values: upper=10, mid=10, lower=5, zeuss=30
-        """
-        filename_lower = filename.lower()
-
-        # Check specific camera types first (most specific to least specific)
-        if filename_lower.startswith('camupper'):
-            return 10.0, 10.0, 10.0
-        elif filename_lower.startswith('cammid'):
-            return 10.0, 10.0, 10.0
-        elif filename_lower.startswith('camlower'):
-            return 5.0, 5.0, 5.0
-        elif '_herc_' in filename_lower:
-            return 30.0, 30.0, 30.0
-        else:
-            self.logger.warning(f"Unknown camera type for {filename}, using default accuracy 10°")
-            return 10.0, 10.0, 10.0
 
     def __generate_flight_log(self, image_data, image_folder):
         """Generate a flight log file with position and orientation accuracy."""
@@ -557,10 +558,7 @@ class GeoreferenceImages(RSModule):
         return flight_log_filename
 
     def run(self):
-        success, message = self.validate_parameters()
-        if not success:
-            self.logger.error(message)
-            return {"Success": False}
+        # Parameters are validated by the orchestrator before run()
         flight_log = self.params['geo_input_flight_log'].get_value()
         if 'geo_input_image_dir' in self.params:
             input_dir = self.params['geo_input_image_dir'].get_value()
@@ -590,10 +588,11 @@ class GeoreferenceImages(RSModule):
             output_data['Acceptance Rate %'] = float(f"{self.stats.get('accept_rate_pct', 0.0):.2f}")
             output_data['Delta Buckets'] = {
                 "Exact": int(self.stats.get('bucket_exact', 0)),
-                "1–4s": int(self.stats.get('bucket_1_4', 0)),
-                "5–15s": int(self.stats.get('bucket_5_15', 0)),
+                "0–4s": int(self.stats.get('bucket_0_4', 0)),
+                "4–15s": int(self.stats.get('bucket_4_15', 0)),
                 ">15s": int(self.stats.get('bucket_gt15', 0))
             }
+            output_data['Unknown Camera Images'] = int(self.stats.get('unknown_camera_images', 0))
             output_data['Accepted Field Gaps'] = {
                 "Missing UTM": int(self.stats.get('accepted_missing_utm', 0)),
                 "Missing Orientation": int(self.stats.get('accepted_missing_orientation', 0))
@@ -650,7 +649,10 @@ class GeoreferenceImages(RSModule):
         if 'geo_input_type' not in self.params:
             return False, 'Data type parameter not found'
 
-        dtype = self.params['geo_input_type'].get_value().lower()
+        dtype_value = self.params['geo_input_type'].get_value()
+        if not dtype_value:
+            return False, 'No data type specified (Zeuss, WCA, WCA2025, or All)'
+        dtype = dtype_value.lower()
         if dtype not in ["zeuss", "wca", "wca2025", "all"]:
             return False, 'Invalid data type specified'
 
