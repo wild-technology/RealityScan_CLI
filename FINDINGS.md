@@ -369,6 +369,19 @@ frozen as the NA167 raw log; all new findings go HERE.
 
 ## Rig & data
 
+- **H2023 contains TWO discrete physical features — the bow and the
+  main hull of the wreck, surveyed as separate chunks in one dive**
+  (owner-stated 2026-07-24). Zones are batched on image DENSITY, not
+  features, so zone boundaries are blind to feature boundaries; a
+  discrete feature's component may simply be smaller than the main
+  hull's and can NEVER fuse with it visually. Consequences (owner
+  intent, governs all component handling): a multi-component terminal
+  state is a CORRECT outcome; "as big as it can get" is judged
+  PER FEATURE, not per scene; no deletion/export/success logic may be
+  size-based — only containment-based (no unique images) deletion is
+  ever legal; a maximal-fraction success target misreads disjoint
+  features as merge failure. Expect this pattern in other dives.
+  [H2023, owner] (2026-07-24)
 - **Four physical cameras** (owner-confirmed): Zeuss rect 23 mm; Port
   (aka cammid) fisheye 14 mm; Cinema (aka camlower) rect 17 mm;
   Starboard (aka camupper) fisheye 14 mm. NA156 mounts: Port 0 deg,

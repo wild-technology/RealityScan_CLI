@@ -1,5 +1,36 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## NEW-SESSION ONBOARDING (prepared 2026-07-24, session end)
+
+The repo now lives at `C:\Users\jonat\OneDrive\Desktop\CoyoteThings\
+RealityScan_CLI` (relocated out of DataProcessing\, owner-approved;
+an empty locked leftover folder may linger at the old path — ignore).
+Origin is synced through this session's final commit.
+
+Read order: CLAUDE.md -> FINDINGS.md -> this section + the merge
+section below -> testing/MERGE_STRATEGY_REPORT.md -> docs/
+merge-growth-strategy-2026-07.md -> testing/ALIGN_MERGE_HARDENING_
+PLAN.md + testing/MERGE_TEST_PLAN.md. COLMAP material: docs/
+COLMAP_CROSSOVER.md only (different workflow — do not mix).
+
+Session-start self-tests (standing): (1) hook-chain liveness —
+results_<inst>.log must grow during the first run (CRLF normalization
+touched ErrorWriterLaunch.vbs/ErrorWriter.bat on 07-24); (2) confirm
+rs_settings.json paths still resolve after the repo move.
+
+**GOVERNING INTENT (owner, 2026-07-24 — reshapes the component
+workflow):** H2023 has two discrete physical features (bow + main
+hull) surveyed in one dive; zones are density-batched and blind to
+feature boundaries. Therefore: a multi-component final state is a
+CORRECT outcome; "as big as it can get" is per FEATURE; deletion is
+only ever containment-based (no unique images), never size-based; a
+maximal-fraction success target misreads disjoint features as merge
+failure. End state = ONE project holding every feature component at
+its own maximum, georeferenced, owner-evaluated before models (with
+an opt-in auto-proceed). The workflow-evaluation queue below is
+updated to this intent — the next session should onboard, then
+produce implementation recommendations against that queue.
+
 ## 2026-07-24 TWO-MACHINE MERGE — read this first in a fresh session
 
 Read order: CLAUDE.md -> FINDINGS.md (consolidated fact base, both
@@ -56,8 +87,11 @@ with the data behind each step:**
    grow step (a grow can fragment [NA167 #29]).
 5. **Georeference the merged scene explicitly** (union flight log +
    CRS + -update — a merged component is NOT georeferenced otherwise
-   [H2023]), then GenerateModel.bat once, on the merged component only
-   (owner recipe; texture after closeHoles).
+   [H2023]), then models per SURVIVING FEATURE COMPONENT the owner
+   approves at the evaluation gate — not "the merged component only";
+   discrete features (e.g. H2023 bow vs hull) legitimately end as
+   separate components and each gets its own model (owner recipe;
+   texture after closeHoles).
 
 **Consolidated priority queue (both machines):**
 
@@ -93,27 +127,52 @@ placeholders; SHOULD-FIX/NITS backlog below; Claude Skill +
 documentation guide task (FINDINGS.md is the fact base, docs/ the
 rationale base).
 
-**Workflow-evaluation queue (owner-requested audit, 2026-07-24 —
-end goal: ALL components as big as possible in ONE final project,
-user evaluation gate before models, optional auto-proceed):**
+**Workflow-evaluation queue (owner-requested audit 2026-07-24,
+REVISED same day for the feature-aware intent — see GOVERNING INTENT
+in the onboarding section; end goal: every FEATURE component at its
+own maximum, all in ONE final georeferenced project, owner evaluation
+gate before models, optional auto-proceed):**
+
+Size-based hazards the bow/hull case exposes in current code (audit
+result; none deletes data on disk, but three misshape the deliverable):
+- MergeZoneComponents.bat merge mode exports the MAXIMAL component
+  only -> a bow-sized feature component is absent from the output set.
+- merge_zones.py judges success as maximal-fraction >= --target -> a
+  correct bow+hull outcome (two components, both saturated) reads as
+  FAILURE and drives pointless ladder escalation; the "no attempt
+  reached target" exit is wrong for disjoint features.
+- GenerateModel runs on one selected/maximal component -> the bow
+  never gets a model.
+Confirmed SAFE (containment-only, feature-preserving): grow_zone
+cleanup_stale; component_analysis twin drop (kept-union coverage — a
+feature component always has unique images); AlignZone
+exportLatestComponents (exports ALL comps >= min_size; keep min_size
+well below the smallest plausible feature).
 
 1. D7 on smoke BEFORE production merge_v2 (which merge attempt is
    trustworthy).
-2. Merge-driver rework (merge_zones.py + MergeZoneComponents.bat):
-   deliverable becomes a saved .rsproj containing ALL surviving
-   components (merge mode currently exports maximal only); success
-   metric = total registered + maximal size, not maximal-fraction
-   `--target` alone; add input-union shrink accounting (align-mode
-   attempts can shrink and still "pass" today — manifests to check
-   against already exist); terminal state "EVALUATION READY" with
-   report (per-component members/counts/bboxes/twin decisions/orphans/
-   georef check) then owner gate or --auto_model (EOF-safe).
+2. Merge-driver rework (merge_zones.py + MergeZoneComponents.bat),
+   feature-aware: deliverable = saved .rsproj containing ALL surviving
+   components, every one exported + censused (not maximal-only);
+   success/termination = convergence ("no fusable candidate pairs
+   remain" via manifest border-gating from component_analysis, and no
+   pass gained), NOT a maximal-fraction target — retire --target as
+   the success gate, keep it only as an informational stat; add
+   input-union shrink accounting (align-mode attempts can shrink and
+   still "pass" today); terminal state "EVALUATION READY" with report
+   (per-component members/counts/bboxes/twin decisions/orphans/georef
+   check) then owner gate or --auto_model (EOF-safe). Ladder attempts
+   that cannot help disjoint features must not run against them
+   (border-gate the escalation, don't brute-force it).
 3. Port AlignZone's successive-difference identity harvest to a dated
    COPY of the final merge project (merged-stage exports are ordinal =
-   count-only today; evaluation gate needs per-component membership).
+   count-only today; the evaluation gate and feature accounting need
+   per-component membership).
 4. Final orphan-pickup growth pass in the merged project (add all
    images + union log + align under checkpoint/invariant) — merge
-   never adds images; cross-zone context is what rescued zone_14's.
+   never adds images; cross-zone context is what rescued zone_14's;
+   for feature components this is exactly per-feature "as big as it
+   gets".
 5. Fix GrowZone re-enable-all-before-save; CHECK zone_1 scene for
    the disabled-images state (gates "keep final zone projects").
 6. Manifest<->scene name correlation by image set (selectComponent
@@ -122,12 +181,19 @@ user evaluation gate before models, optional auto-proceed):**
 7. grow_zone: consider accepting zero-gain passes that REDUCE
    component count (consolidation serves merging; invariant otherwise
    unchanged — never-shrink stays the automated default).
-8. HYPOTHESIS to verify (then promote to FINDINGS): -align fuses via
+8. GenerateModel: per-component model generation driven from the
+   evaluation gate (owner selects which surviving components get
+   models, or all >= min size on auto-proceed).
+9. HYPOTHESIS to verify (then promote to FINDINGS): -align fuses via
    image CONTENT (duplicated overlap frames match visually without
    path identity), unlike -mergeComponents which needs path identity —
    would make attempt-2 align_rematch the mechanistically sound rung
    for duplicate-path zones and argue for inverting the attempt
    ladder. NA167 D3 is not a counterexample (zero content overlap).
+10. FUTURE: optional feature tagging at the evaluation gate (owner
+   labels components "bow"/"hull"/etc. in the report; manifests carry
+   the label forward into model naming) — cheap, makes per-feature
+   accounting explicit across sessions.
 
 ## 2026-07-24 (earlier) H2023 SESSION END STATE
 
