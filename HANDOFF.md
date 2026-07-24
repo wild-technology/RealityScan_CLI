@@ -1,5 +1,28 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-07-25 MORNING STATE — deliverable ready (read this first)
+
+**The fresh end-to-end run COMPLETED overnight.** Full record:
+`docs/FRESH_RUN_2026-07-24.md`. Headlines:
+
+- **`D:\na156_h2023_fresh\merged\assembly\H2023_Fresh_Merged.rsproj`
+  is OPEN in a RealityScan GUI window on the desktop** (plain app
+  session — RS1 stays free). 4 georeferenced components: hull 3,026 +
+  hull strip 714 + bow 665 + west pocket 102 = **4,507/4,598 unique
+  images (98.0%)** — the best H2023 result to date.
+- Evaluation gate: `D:\na156_h2023_fresh\merged\EVALUATION_READY.txt`.
+  ONE DECISION WAITING: the hull pair fuses at a reproducible cost of
+  2 cameras (3,740 → 3,738 on all three rungs); the never-shrink gate
+  auto-rejected it, so hull is currently two overlapping components.
+  Options: keep as-is / fuse interactively in the GUI / add a
+  bounded-loss acceptance flag to merge_zones.py.
+- Please ALSO glance at: georeferencing of the open project (U7 is
+  still GUI-only) and the hull seam between c0/c1.
+- Optional next automation: cross-zone orphan pickup (91 orphans) on a
+  COPY of the merged project; per-component models via
+  `--auto_model` / GenerateModel from the gate.
+- Everything is committed locally; NOT pushed (say the word).
+
 ## 2026-07-24 (evening) FULL FRESH RUN IN FLIGHT — owner deliverable
 
 **Owner directives (2026-07-24 afternoon):** iterate until the workflow

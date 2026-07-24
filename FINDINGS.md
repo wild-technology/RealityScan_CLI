@@ -454,6 +454,30 @@ frozen as the NA167 raw log; all new findings go HERE.
   moved to expected_peelend_<inst>.txt as evidence). Same pattern as
   the tolerated 18002 flight-log import. [H2023] (2026-07-24)
 
+- **Calibration XMP sidecars at align time cut zone_1 fragmentation
+  from 9 components to 3** at equal-or-better registration (fresh run
+  4,405/4,540 = 97.0% vs production 4,392 = 96.7%; same imagery, same
+  box). Discovered: 2026-07-24 fresh end-to-end run — the production
+  zones were batched BEFORE the calibration-sidecar work, the fresh
+  zones with it. Confirms the camera-registry design decision; details
+  docs/FRESH_RUN_2026-07-24.md. [H2023] (2026-07-24)
+- **Component fusion can DROP a small number of cameras: hull c0+c1
+  (3,026+714=3,740) fused to 3,738 on ALL three ladder rungs** —
+  reproducible −2, not noise. Exact-additivity attribution therefore
+  cannot assume fusions conserve cameras; the driver's acceptance
+  (never-shrink + exact membership) auto-rejected and carried the
+  intact inputs forward. Bounded-loss acceptance is an OWNER decision,
+  not a driver default. Discovered: fresh-run production merge,
+  peel [3738, 3026, 714] × 3 attempts. [H2023] (2026-07-24)
+- **Fresh-run end-to-end result (2026-07-24): 4,507/4,598 unique
+  images (98.0%) across four feature components** (hull 3,026 + hull
+  strip 714 + bow 665 + west pocket 102), assembled georeferenced in
+  one project; zone_2 (852 imgs, 11.9% reg) is transit imagery whose
+  only aligned part twins the west pocket (twin-dropped, zero loss).
+  The feature-aware pipeline (cluster partition → ladder → convergence
+  → assembly → evaluation gate) ran end to end unattended. [H2023]
+  (2026-07-24)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT
