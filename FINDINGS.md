@@ -250,6 +250,19 @@ testing/NA167_SESSION_NOTES.md B1-B11).
   visual ties; georef-fusion is reserved for the cross-zone stage).
   (2026-07-24)
 
+- **Zone_1 growth ground truth: EVERY re-solve pass shrinks a
+  weakly-connected fragment set.** Global re-align + all 8 component
+  passes were rejected and rolled back (e.g. c7's pass lost 51
+  previously-registered images); the invariant preserved the original
+  state throughout. Final report: 4,429/4,540 (97.6%) registered, 148
+  orphans. NOTE the final census reads +37 vs the 4,392 manifest
+  baseline - the rigid merge stage was the only accepted mutation;
+  attribution of the delta (merge effect vs census-mapping nuance) is
+  an open question for the next session. Implication: for
+  fragmentation like zone_1's, visual growth is exhausted immediately
+  and the cross-zone georeferenced merge is the productive path.
+  Discovered: first full zone_1 grow run, 2026-07-24. (2026-07-24)
+
 ## Rig & data
 
 - **Four physical cameras** (owner-confirmed): Zeuss rect 23 mm; Port
