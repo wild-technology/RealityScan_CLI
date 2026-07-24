@@ -262,7 +262,7 @@ ping -n 2 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
 if exist "%ErrorsFile%" (
     for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
-        %SystemRoot%\System32indstr.exe /c:"2147942487" "%ErrorsFile%" >nul
+        %SystemRoot%\System32\findstr.exe /c:"2147942487" "%ErrorsFile%" >nul
         if errorlevel 1 (
             echo ERROR: RealityScan reported a failure during: %*
             exit /b 1
