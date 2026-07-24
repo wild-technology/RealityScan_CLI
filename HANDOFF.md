@@ -1,11 +1,103 @@
 # HANDOFF — state of the July 2026 overhaul
 
-## 2026-07-24 SESSION END STATE — read this first in a fresh session
+## 2026-07-24 TWO-MACHINE MERGE — read this first in a fresh session
 
-Read order for a new session: CLAUDE.md -> FINDINGS.md (every verified
-fact + how discovered) -> this section -> docs/merge-growth-strategy-
-2026-07.md (the workflow spec) -> testing/ALIGN_MERGE_HARDENING_PLAN.md
-(open unknowns).
+Read order: CLAUDE.md -> FINDINGS.md (consolidated fact base, both
+research lines) -> this section -> testing/MERGE_STRATEGY_REPORT.md
+(NA167 empirical strategy comparison) -> docs/merge-growth-strategy-
+2026-07.md (workflow spec) -> testing/ALIGN_MERGE_HARDENING_PLAN.md +
+testing/MERGE_TEST_PLAN.md (open unknowns).
+
+**What happened:** the two parallel research lines — this machine's
+NA156/H2023 production + hardening work and the Honeybadger box's
+NA167 merge-strategy matrix — were merged (git merge 400e5b1 from the
+divergence at 6069d95). Findings logs consolidated into root
+FINDINGS.md (testing/FINDINGS.md frozen as NA167 raw provenance).
+COLMAP material isolated into docs/COLMAP_CROSSOVER.md. QA: 31 tests
+pass, active code compiles, hook-chain scripts re-normalized to CRLF
+(*.vbs now pinned in .gitattributes) — **re-verify hook liveness
+(results_<inst>.log grows) at the next run on the processing box.**
+
+**CURRENT PROPOSED PRODUCTION WORKFLOW (align → components → merge),
+with the data behind each step:**
+
+1. **Per-zone align via AlignZone.bat** — pinned AlignmentParams
+   (never instance defaults), appIncSubdirs=true, per-camera XMP
+   calibration groups, auto-CRS flight log, exportLatestComponents +
+   identity-manifest harvest, no per-zone models. Data: zone regs
+   90.1–96.7% across NA167/H2023; settings rationale in
+   docs/settings-evaluation-2026-07.md §4; identity capture validated
+   end-to-end (FINDINGS, in-session successive-difference).
+   Zones run embarrassingly parallel across GPUs (NA167: 21–98
+   min/zone, ≤~60 GB each). Joint whole-dive align is OFF the table:
+   identical quality to chunked (94.5% vs 94.6%) but ~165 GB at 4k
+   images, extrapolating ~700 GB at 19k [NA167 #19].
+2. **Within-zone growth via GrowZone.bat under the never-shrink
+   invariant** (checkpoint/rollback; accept iff no unique image lost
+   and net cameras >= before). Data: align both grows and SHRINKS
+   nondeterministically (zone_1: every re-solve pass rejected; zone_2:
+   honest zero-gain convergence at 95.1%); rollback validated in anger.
+   Expect fast convergence — growth is cheap insurance, not the
+   registration engine.
+3. **Cross-zone merge via -mergeComponents over SHARED CAMERAS** —
+   the only mechanism proven headless [NA167 D6: "Finalizing 1
+   component" from halves sharing 390 images; D1–D3: zero-overlap
+   never fuses, silently, under any flag]. Budget ~1 h per merge;
+   verify EVERY merge by pose-XMP camera census, never exit status.
+   PREREQUISITE (batcher change queued): zones must reference a common
+   image pool (imagelists/same paths) — per-zone COPIES have no camera
+   identity. For existing duplicate-path datasets (H2023), the
+   merge_zones.py union-flight-log + -update path apparently fused
+   anyway — mechanism UNPROVEN, open cell D7; census + GUI seam
+   inspection mandatory until D7 settles.
+4. **Rescue failed zones by growing from an aligned neighbor**
+   (B-style add→log→align) — the verified workaround for solver-bug
+   zones [NA167 #17/#18/#27, MSS_STR001]; verify counts after every
+   grow step (a grow can fragment [NA167 #29]).
+5. **Georeference the merged scene explicitly** (union flight log +
+   CRS + -update — a merged component is NOT georeferenced otherwise
+   [H2023]), then GenerateModel.bat once, on the merged component only
+   (owner recipe; texture after closeHoles).
+
+**Consolidated priority queue (both machines):**
+
+P0 — production continuity (H2023, processing box):
+1. Zone_1 growth is DONE (see previous section) — proceed to cross-zone
+   merge_v2 with census + owner GUI seam verification (D7 caveat above).
+2. Hook-chain liveness self-test at next session start (CRLF
+   normalization touched ErrorWriter.bat/ErrorWriterLaunch.vbs).
+3. MUST-FIX review items before the merge/model run (next section):
+   MergeZoneComponents.bat exit /b in parens; grow_zone→merge
+   .complist handoff; GrowZone component-mode inpEnabled=false
+   persistence (CHECK the zone_1 scene for disabled images).
+
+P1 — research follow-ups queued by the reconciliation:
+4. **D7** (testing/MERGE_TEST_PLAN.md): does union-flight-log +
+   -update in the merge scene enable duplicate-path merging, and is it
+   fusion or rigid co-location? Decides merge_zones.py's escalation
+   ladder and the H2023 3,860-camera merge's trustworthiness.
+5. **Batcher common-image-pool change** (imagelists or hardlinks
+   instead of per-zone copies) so future dives merge by identity.
+6. Copy the LilyJean/COLMAP fact base off Honeybadger
+   (C:\Users\jonat\itsmagicIswear\FINDINGS.md — absent here); then the
+   Q-05 CLAHE reconciliation matrix (docs/COLMAP_CROSSOVER.md).
+7. Zone_1 +37 census delta attribution (merge effect vs
+   census-mapping nuance) — open from the growth run.
+8. Report MSS_STR001 to Epic with testing/results/z14_forensic_rslog.txt.
+9. Hardening cells still open: U4–U14, U17 (U7 CLI-observable georef
+   check matters most); selectImage regexp-vs-Help forum-mine; D6
+   export re-run if the fused .rsalign artifact is ever needed.
+
+P2 — hygiene: retire process_h2023.py; simplify presets are
+placeholders; SHOULD-FIX/NITS backlog below; Claude Skill +
+documentation guide task (FINDINGS.md is the fact base, docs/ the
+rationale base).
+
+## 2026-07-24 (earlier) H2023 SESSION END STATE
+
+**Zone_1 growth completed after this was written — final: 4,429/4,540
+(97.6%), all re-solve passes rolled back (see FINDINGS). Details below
+kept for workspace paths and commands.**
 
 **Where H2023 processing stands (workspace D:\na156_h2023):**
 - Zone aligns DONE with manifests + RC_projects daily saves:

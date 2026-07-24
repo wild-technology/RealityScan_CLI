@@ -1,4 +1,10 @@
-# Findings log — append-only, one entry per finding
+# Findings log — NA167 line, FROZEN 2026-07-24
+
+**Do not append here.** This is the raw NA167/Honeybadger numbered log
+(#1–31), preserved verbatim for provenance. It was consolidated into
+the repo-root `FINDINGS.md` at the 2026-07-24 two-machine merge —
+entries there cite these numbers as [NA167 #n]. All NEW findings go to
+the root log.
 
 Format: **finding** → *how it was discovered*. Newest at the bottom.
 Companion docs: `NA167_SESSION_NOTES.md` (revised CLI docs + bug list),
