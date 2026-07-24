@@ -1,5 +1,17 @@
 # Alignment & merge hardening test plan — 2026-07-23
 
+STATUS UPDATE (2026-07-24 evening): D7 SETTLED — fusion is
+content-driven (FINDINGS "D7 RESOLVED"; probe cells in
+MERGE_TEST_PLAN.md "D7 probe wave"). New CLI facts: merge scenes retain
+source components beside the fusion; peel-terminal = tolerated
+E_INVALIDARG rename. Closed from the review backlog by fix or by
+measurement: MergeZoneComponents argument exit codes (fixed, :argfail),
+:run abort contract (measured LIVE), startRealityScan timeout exit shape
+(measured correct), GrowZone re-enable-before-save (fixed),
+grow->merge complist handoff (grow_zone writes final.complist).
+U7 remains OPEN — tonight's proxy is owner/GUI screenshot verification
+of the assembly project.
+
 STATUS UPDATE (2026-07-23, 9-boot probe session; details in FINDINGS.md):
 U1/U19/U2 RESOLVED (selectImage = literal paths only; editInputSelection
 works; align honors enable/disable). U15/U16 PASS (scene byte-stable;
