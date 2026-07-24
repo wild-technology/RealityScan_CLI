@@ -276,9 +276,10 @@ class RealityScanCLI:
         # -getStatus can report an instance gone a few seconds before its
         # process fully exits and releases the progress-file handle
         # (observed 2026-07-23: next workflow's marker clear raced the
-        # teardown). Retry briefly before declaring the instance alive.
-        deadline = time.monotonic() + 60
+        # teardown). Retry briefly (per file) before declaring the
+        # instance alive.
         for kind in ('progress', 'errors', 'results'):
+            deadline = time.monotonic() + 60
             path = self._marker(kind)
             while os.path.isfile(path):
                 try:

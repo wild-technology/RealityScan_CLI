@@ -106,20 +106,31 @@ Controls:
 |---|---|---|---|---|
 | A1_align_z6/z14/z4 | zone folders (duplicated overlap paths) | per-zone `-align` | defaults | ≥90% registration each (zone_13 precedent) — z6 DONE(95.2%, 1533/1610, 1 comp, 61.6 min); z14 **FAILED** (0x8000FFFF @54.6 min, no dump → transient theory; wave-1b retry queued); z4 DONE(90.1%, 1438/1596, 1 comp, 24.3 min) |
 | A1_merge_full (wave 1b) | retried z14 + z6 + z4 | `-mergeComponents` | defaults | replaces A1_merge if z14 retry recovers; without z14 the wave-1 A1_merge cell degrades to a zero-overlap negative control (z6+z4 share no images) |
-| A1_merge | 3 components, duplicate paths | `-mergeComponents` | defaults | **fails or partial** — no shared camera identity. RESULT: never reached the merge — `-importComponent` of a **relocated** .rsalign HUNG ≥6 h in a `#timeout` state (no error, no dump). Finding: import components from their original export paths only; stall detector fixed to flag `#timeout`; wave 1c re-runs all merge cells in place with a 45-min merge watchdog |
+| A1_merge | 3 components, duplicate paths | `-mergeComponents` | defaults | **fails or partial** — no shared camera identity. RESULT (wave 1f, z6+z4 zero-overlap control): workflow exits SUCCESS but **nothing fuses** — maximal component = zone_6 exactly (1,533 cameras). `-mergeComponents` is **silent** when it cannot merge; verify by camera count, never exit status. (Earlier attempts: relocated-import hang B1; `=`-split voids B5.) In-place imports: ~2 s per 0.7 GB component |
 | A2_align_z6/z14/z4 | pool imagelists (shared paths) | per-zone `-align` | defaults | same registration as A1 — z6 DONE(95.3%, 1534 posed, 1 comp, 97.8 min; registration identical to A1's 95.2%, so path form doesn't affect alignment); z14 **FAILED again** (0x8000FFFF @30.8 min — 2/2 across path forms → scene-specific internal RS failure, NOT transient, NOT data corruption: all 1,476 images deep-decode clean, log has no degeneracies, motion profile normal vs neighbors). Localization comes from the retry + whether B/C survive z14's images; z4 DONE(91.0%, 1453 posed, 1 comp, 20.8 min — matches A1's 90.1%) |
 | A2_merge | 3 components, shared paths | `-mergeComponents` | defaults | **single component ≈ sum of zones** via 312/239 shared cameras |
-| B_sequential | incremental lists, one scene | `add→log→align` ×3 | defaults | one component grows without merge step |
-| C_joint | union list | single `-align` | defaults | ceiling registration; longest single-op runtime |
+| B_sequential | incremental lists, one scene | `add→log→align` ×3 | defaults | one component grows without merge step — **DONE: SUCCESS. Single component, 3,906/4,131 posed (94.6%), 444 min.** Transitive 6→14→4 stitching proven; zone_14's images registered fine inside the grown scene (B8 is a standalone-scene solver failure, not bad data). Runtime premium ~3.5× vs separate zone aligns |
+| C_joint | union list | single `-align` | defaults | ceiling registration; longest single-op runtime — **DONE: single component, 3,904/4,131 (94.5%), 168.8 min, peak memory ~165 GB (27 GB commit headroom left on a 192 GB box)**. Registration identical to B (94.6%); 2.6× faster than B but 2.7× the memory. Joint alignment does NOT scale to a full dive (~19k images ⇒ ~700 GB extrapolated) |
 
-### Wave 2 — flag variants + growth pattern (QUEUED, launches after wave 1)
+### Wave 2 — flag variants + growth pattern (ALL DONE 2026-07-24)
 
-| Cell | Inputs | Mechanism | Flags | Hypothesis |
+| Cell | Inputs | Mechanism | Flags | RESULT |
 |---|---|---|---|---|
-| D1_geo_merge | duplicate-path comps | `-mergeComponents` | georef=**true**, rematch=false | georeferencing substitutes for identity → fuse succeeds |
-| D2_geo_rematch_align | duplicate-path comps | `-align` | georef=**true**, rematch=**true** | best-quality rescue of identity-less comps |
-| D3_align_sharedpath | shared-path comps | `-align` | both pinned false | equivalent or better than A2_merge |
-| D4_step1/step2 | shared-path comps, pairwise | `-mergeComponents` ×2 | both pinned false | (6+14)→M1, (M1+4)→M2 ≈ A2_merge quality → pattern scales |
+| D1_geo_merge | duplicate-path comps (z6+z4, zero overlap) | `-mergeComponents` | georef=**true**, rematch=false | **No fuse** — 1,533 = zone_6 alone; the flag does not change `-mergeComponents` |
+| D2_geo_rematch_align | duplicate-path comps | `-align` | georef=**true**, rematch=**true** | **No fuse** — 1,533; georef merging never manifested headless (finding 25 caveat: prior-weighted vs GCP-locked georeferencing) |
+| D3_align_sharedpath | shared-path comps (z6+z4, zero overlap) | `-align` | both pinned false | **No fuse** — 1,534; align-as-merge needs shared cameras too |
+| D4 | — | — | — | Skipped (zone_14 solo comp unproducible, B8); superseded by D5/D5-alt/D6 |
+| D5_step1 grow z6+z14 | incremental lists | `add→log→align` ×2 | defaults | **Fragmented**: maximal 870 < z6's solo 1,533 (finding 29 — growth is state-sensitive); step 2 merge therefore inconclusive (1,453 = z4 alone) |
+| D5-alt | grown_b (3,906) + z4 comp (1,453), massive identity | `-mergeComponents` | pinned false | 56-min real merge reconstruction, "Finalizing 11 components", full 3,906 retained — behaviorally positive, count-ambiguous |
+| **D6 split-zone (decisive)** | two z6 halves (749 + 342 cams, 390 shared images) | `-mergeComponents` | pinned false | **FUSED: "Finalizing 1 component"** after 56 min (app log; workflow export step then hit a one-off cmd anomaly, so no .rsalign artifact — verdict stands on the log). **Positive proof of align-then-merge.** |
+
+### D5 — rebuilt positive merge test (PLANNED; zone_14 solo comp is unproducible)
+
+Grow z6+z14 sequentially (proven to digest zone_14), export the two-zone
+component, then `-mergeComponents` it with zone_4's solo shared-path
+component — 239 shared pool images provide camera identity across the
+two components. This is the align-then-merge production pattern under
+test despite B8.
 
 ### Wave 3 — conditional follow-ups (PLANNED, gated on waves 1–2)
 

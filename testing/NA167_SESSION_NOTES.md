@@ -129,11 +129,17 @@ documented; the reliable selection primitive (see Section 2 on
 
 **`-mergeComponents`**
 - Official: "Merge already created components. No new images are added."
-- Revised: operates on the scene's components (no selection command for
-  "all" exists). Merge basis: shared cameras by identity / control
-  points / georeference (with `sfmMergeGeoreferencedComponents=true`).
-  Behavior with zero shared cameras and flags off: see matrix cell
-  A1_merge_inplace (wave 1f) once complete.
+- Revised (fully verified): operates on the scene's components (no
+  "select all" command exists). **Fuses ONLY through cameras shared by
+  identity** — same image path present in more than one component
+  (D6: two half-zone components sharing 390 images → 56 min merge
+  reconstruction → "Finalizing 1 component"). With zero shared cameras
+  it exits SUCCESS and silently leaves components separate, under every
+  flag combination — verify merges by camera count, never exit status.
+  `sfmMergeGeoreferencedComponents=true` did NOT enable overlap-free
+  merging headless (neither via -mergeComponents nor via -align), at
+  least for flight-log-prior components. A working merge takes real
+  time (~1 h for 1–4k-camera pairs), not seconds.
 
 ### Settings keys (`-set "key=value"`)
 
@@ -215,14 +221,30 @@ not automatically beneficial: zone_13 A/B measured 96.3% (no priors) →
 89.6% (priors on), so prior content must be validated per rig
 (`batch_xmp_priors` now defaults off).
 
-**B8 (RS, OPEN) — zone_14 standalone align fails with 0x8000FFFF.**
-2/2 reproduction at different elapsed times and path forms. Input data
-formally exonerated (full decode, zero hash duplicates, zero
-black/featureless frames, clean nav, normal motion profile vs sibling
-zones that align fine). Pending localization: third solo retry with
-app-log snapshot; B-sequential and C-joint cells contain the same
-images inside larger scenes — their outcomes decide whether it is a
-scene-specific solver failure, a poison subset, or nondeterminism.
+**B8 (RS, PARTIALLY RESOLVED) — zone_14 standalone align fails with
+0x8000FFFF.** 2/2 reproduction at different elapsed times and path
+forms. Input data formally exonerated (full decode, zero hash
+duplicates, zero black/featureless frames, clean nav, normal motion
+profile). **Localized 2026-07-23: B_sequential aligned the same 1,476
+images successfully inside the growing 3-zone scene (94.6% overall,
+single component) — the failure is specific to solving zone_14 as a
+standalone scene, not to its data.** Practical workaround: grow a
+failing zone from an already-aligned neighbor instead of aligning it
+solo. Remaining open: the internal reason line (solo retry + app-log
+snapshot still queued).
+
+**B10 (INT) — LF-only .bat files break `call :label` nondeterministically.**
+cmd's label search is byte-offset sensitive; with LF endings the same
+`call :run` resolved ten times then failed ("The system cannot find the
+batch label specified - run") at a later callsite. All workflow .bat
+files must be CRLF; `.gitattributes` now pins `*.bat text eol=crlf`.
+
+**B11 (RS) — observed during the first valid merge cell:** in-place
+`-importComponent` takes ~2 s per 0.7 GB component (relocation was the
+entire hang story); `-setMinComponentSize` is officially deprecated
+("will be removed in the next release" warning); `-mergeComponents` on
+two zero-overlap components logged "Finalizing 9 components" (fragment
+behavior under analysis in the matrix cells).
 
 **B9 (INT) — piped stdin quirks.** PowerShell native piping prepends a
 BOM (first prompt answer corrupted) and CRLF endings reach `input()` as
@@ -232,32 +254,38 @@ instead of stdin pipes.
 
 ---
 
-## Resume state (2026-07-23, last update before push)
+## Resume state (2026-07-24 — merge investigation COMPLETE)
 
-For a fresh session picking this up:
+For a fresh session picking this up: **the merge-strategy investigation
+is finished.** Read `FINDINGS.md` (31 entries with provenance) and
+`MERGE_STRATEGY_REPORT.md` (headline numbers + production
+recommendation). Nothing is running on the machine.
 
-- **Dataset/workspace**: `D:\na167_h2075\rs_test\` — georeferenced
-  flight log in `images\`, 18 target-1000 zones in
-  `batched_images_by_zone\`, merge fixtures + all results in
-  `merge_test\` (`strategy_results.json` is the scoreboard).
-- **In flight at push time**: wave 1e driver
-  (scratchpad `run_wave1e.py`, log `merge_test\wave1e.log/err`) running
-  B_sequential → C_joint → zone_14 retry. Its merge cells are VOID
-  (B5 `=`-split) — wave 1f (`run_wave1f.py`, colon settings, per-cell
-  RS-log snapshots) must run after 1e to produce the real merge/flag
-  results. A log-snatcher waits to capture `RealityScan.log` after the
-  zone_14 retry (`merge_test\z14_retry_rslog.txt`).
-- **Open questions**: B8 (zone_14 0x8000FFFF — retry + B/C outcomes
-  localize it); every merge-mechanism cell (A1/A2 merges, D1–D4) still
-  needs its wave-1f run; wave-3 conditional cells in
-  `MERGE_TEST_PLAN.md` §4.
-- **Completed & trustworthy**: all wave-1 aligns except zone_14
-  (scoreboard in `MERGE_TEST_PLAN.md`), zone_13 mixed-camera align
-  (93.4%), the priors A/B (off > on), the full fix-pass verification.
-- Session drivers live in the Claude scratchpad (path in
-  `MERGE_TEST_PLAN.md` §2 fixtures / wave logs); they are test scaffolding,
-  deliberately not committed. Rebuild from this file + the plan if lost —
-  every workflow they call is committed in `RS_CLI/Scripts/`.
-- Machine notes: RS1 on GPU 0 (`rs_settings.json`), RAM headroom huge
-  (192 GB, never below ~130 free), an unrelated user COLMAP python job
-  may be running — leave it alone.
+- **Answered**: three zones fuse into one component two proven ways —
+  B sequential growth (94.6%, 444 min, ≤60 GB) and C joint align
+  (94.5%, 169 min, ~165 GB — does not scale); align-then-merge
+  CONFIRMED via D6 ("Finalizing 1 component" from two half-zone
+  components sharing 390 images); shared cameras are the ONLY merge
+  glue headless (georef flag inert); merges are silent no-ops without
+  glue — always verify by camera count.
+- **zone_14**: RealityScan solver bug `MSS_STR001` (4/4 deterministic,
+  data fully exonerated; evidence `testing/results/z14_forensic_rslog.txt`)
+  — report to Epic; grow-from-neighbor is the workaround.
+- **Loose ends for the next session** (ranked):
+  1. Batcher production change: canonical-pool zones (imagelists or
+     hardlinks) instead of per-zone copies, so components can merge
+     (report §recommendation 4). Then wire zone-align → chain-merge into
+     the alignment module.
+  2. Multi-GPU parallel zone aligns (RS2 on GPU 1) — still untested.
+  3. One-off unexplained: `%RealityScan%` expanded empty once after a
+     56-min blocked waitCompleted (finding 31 parenthetical) — watch
+     for recurrence; re-run the D6 merge if the fused .rsalign artifact
+     is wanted (the verdict itself is solid from the app log).
+  4. Optional wave-3 cells (`MERGE_TEST_PLAN.md` §4): overlap-breadth
+     key, refine-then-merge with poses2flightlog.
+- **Artifacts on D:**: `D:\na167_h2075\rs_test\merge_test\` — all
+  components, per-cell logs + RS-log snapshots, `strategy_results.json`
+  (every cell's raw record). The 18 zones and georeferenced flight log
+  remain under `rs_test\`.
+- Machine notes: RS1 on GPU 0 (`rs_settings.json`); an unrelated user
+  COLMAP python job may be running — leave it alone.
