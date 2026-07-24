@@ -224,6 +224,27 @@ app-log snapshot; B-sequential and C-joint cells contain the same
 images inside larger scenes — their outcomes decide whether it is a
 scene-specific solver failure, a poison subset, or nondeterminism.
 
+**B10 (RS) — XMP export of an imported-component scene writes ORDINAL
+sidecars.** `-exportXMPForSelectedComponent` on a component built from
+`-importComponent`-ed .rsalign files writes `00000.xmp`, `00001.xmp`, ...
+next to the images instead of `<stem>.xmp` (observed NA156 smoke merge,
+2026-07-23). Count remains a valid registration census; per-camera
+identity is only available when exporting from the original aligned
+scene. Ordinal sidecars are inert as priors (no image has an ordinal
+stem); `camera_registry.sanitize_and_census` deletes them quietly.
+
+**B11 (RS) — the merge feature-source trio IS CLI-accessible.** Contrary
+to the earlier "GUI-only" conclusion, `-setFeatureSource 0|1|2` (0=merge
+using overlaps, 1=component features, 2=all image features) exists under
+"Commands for Selected Images" and composes with `-selectImage
+<imagePath|regexp> [set|union|sub|intersect|toggle]` /
+`-selectAllImages` — per-camera merge-mode experiments are scriptable
+(e.g. `-selectImage "P231C.*"` then `-setFeatureSource 2`). Also found:
+`-exportLatestComponents <dir>` exports ALL components of the last
+alignment (gated by `-setMinComponentSize`), and
+`-selectComponentWithLeastReprojectionError` /
+`-deleteComponent <idx>` / `-deleteAllComponents` exist.
+
 **B9 (INT) — piped stdin quirks.** PowerShell native piping prepends a
 BOM (first prompt answer corrupted) and CRLF endings reach `input()` as
 trailing `\r`. Mitigation: all interactive prompts `.strip()` before

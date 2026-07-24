@@ -11,6 +11,15 @@ the way back. RC_Main is frozen; new work happens here. See `HANDOFF.md`
 for the state of the overhaul and what still needs on-machine
 verification.
 
+## Findings log
+
+`FINDINGS.md` at the repo root is the running log of every discovered
+fact — CLI behaviors, merge semantics, rig data, process conventions —
+each with HOW it was discovered. Append to it whenever a new fact is
+established (a failed run diagnosed, a Help/forum fact verified, an
+owner-confirmed rig detail); keep entries short and dated. It is the
+quick reference; deep rationale lives in docs/.
+
 ## Naming
 
 Everything in this repo says **RealityScan** (`RS`), never RealityCapture.
@@ -25,7 +34,18 @@ Exceptions that must NOT be renamed:
 
 - `main.py` — interactive orchestrator over the `RSModule` framework
   (`module_base/rs_module.py`): Extract Images → Georeference → Preprocess
-  Images → Batch Directory → RealityScan Alignment.
+  Images → Batch Directory → RealityScan Alignment. `RS_MODULES` /
+  `RS_NO_INTERACTIVE` env vars select modules without a TTY; a module
+  reporting Success=False stops the chain (exit 1).
+- `modules/camera_registry.py` — single source of truth for the FOUR
+  physical rig cameras (Zeuss rect 23mm, Port fisheye 14mm, Cinema rect
+  17mm, Starboard fisheye 14mm; legacy cammid/camlower/camupper and WCA
+  P/C/S###C filename families). Calibration XMP content and the
+  pose-sidecar sanitize/census live here. Mount geometry stays per-cruise
+  in the georeference module.
+- `merge_zones.py` — iterative component-merge driver (escalating
+  mechanism/flags, per-attempt RealityScan.log snapshots + census,
+  merge_report.json).
 - `modules/preprocess_images/` — canonical CLAHE / white-balance
   transforms + the pre-alignment preprocessing module (default CLAHE
   2.0/8×8, validated on zone_9 — baseline aligns to nothing on this
@@ -47,12 +67,22 @@ Exceptions that must NOT be renamed:
   - `RS_CLI/Scripts/*.bat` — workflow definitions. Every operation runs
     through the shared `:run` subroutine: `-delegateTo %RS_INSTANCE%` →
     double `-waitCompleted` with a grace period → abort if
-    `RS_CLI/Errors/errors.txt` is non-empty. Workflows:
-    `AlignImagesFromFolder` (folder tree = one scene),
-    `AlignImageList` (.imagelist input for shared-path components),
-    `SequentialAlignGrow` (incremental add→log→align),
+    `RS_CLI/Errors/errors.txt` is non-empty. Production workflows
+    (2026-07-23 consolidation, see docs/settings-evaluation-2026-07.md):
+    `AlignZone` (canonical per-zone align: applies AlignmentParams.xml,
+    then saves the scene and runs the destructive in-session identity
+    loop - per lap -exportXMP stems are harvested to identity_r<K> and
+    the maximal component is renamed <zone>_c<K>, exported, and deleted;
+    membership = successive difference, census = manifest sum; quits
+    WITHOUT saving. NO model generation),
     `MergeZoneComponents` (.complist of in-place .rsalign paths;
-    merge|align mode; `key:value` settings), `AlignZonesSequentially`.
+    merge|align mode; min size; `key:value` settings — driven iteratively
+    by `merge_zones.py`),
+    `GenerateModel` (mesh/cull/texture/simplify ONCE, on the merged
+    component). Supporting/testing: `AlignImageList` (.imagelist input),
+    `SequentialAlignGrow` (incremental add→log→align),
+    `AlignImagesFromFolder` (DEPRECATED; kept for run_zone9_tests.py).
+    Boot honors `RS_HEADLESS=0` for a GUI-visible instance.
   - `RS_CLI/Errors/ErrorWriter.bat` — invoked by RealityScan itself
     (`appProcessAction=ExecuteProgram`); appends every completion to
     `results.log`, failures to `errors.txt`.
@@ -109,9 +139,12 @@ Exceptions that must NOT be renamed:
    cross the boundary as files (`.complist`/`.imagelist`); settings as
    `key:value` (converted inside the workflow).
 9. `testing/NA167_SESSION_NOTES.md` is the revised CLI documentation +
-   bug-findings reference (B1–B9); consult it before writing any new
+   bug-findings reference (B1–B11); consult it before writing any new
    RealityScan workflow. `testing/MERGE_TEST_PLAN.md` tracks the
-   component-merge test matrix.
+   component-merge test matrix;
+   `testing/ALIGN_MERGE_HARDENING_PLAN.md` tracks every
+   design assumption not settled by documentation (cells graduate into
+   FINDINGS.md with results).
 
 ## History notes
 

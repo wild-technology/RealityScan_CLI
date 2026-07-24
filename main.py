@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import sys
 import logging
 import argparse
@@ -23,6 +24,13 @@ def initialize_logger() -> logging.Logger:
 def initialize_modules(logger) -> dict[str, RSModule]:
     """
     Initializes the modules and returns a dict of the active modules.
+
+    Honors optional environment variables (restored from RC_Main; the
+    inquirer checkbox requires a real terminal, which automated drivers
+    do not have):
+    - RS_MODULES: comma-separated list of module display names to enable
+    - RS_NO_INTERACTIVE: truthy value enables all modules (or the
+      RS_MODULES selection) without prompting
     """
     available_modules: dict[str, RSModule] = {
         'Extract Images': ExtractImages(logger),
@@ -31,6 +39,20 @@ def initialize_modules(logger) -> dict[str, RSModule]:
         'Batch Directory': BatchDirectory(logger),
         'RealityScan Alignment': RealityScanAlignment(logger)
     }
+
+    no_interactive = os.environ.get('RS_NO_INTERACTIVE', '').strip().lower() in ('1', 'true', 'yes', 'y')
+    modules_env = os.environ.get('RS_MODULES')
+    if no_interactive or modules_env:
+        if modules_env:
+            wanted = [m.strip() for m in modules_env.split(',') if m.strip()]
+            unknown = [m for m in wanted if m not in available_modules]
+            if unknown:
+                logger.error(f'RS_MODULES names unknown modules: {unknown}. '
+                             f'Valid names: {list(available_modules.keys())}')
+                sys.exit(1)
+            return {name: mod for name, mod in available_modules.items()
+                    if name in wanted}
+        return dict(available_modules)
 
     module_choices = [
         inquirer.Checkbox(
@@ -183,6 +205,17 @@ def main(argv) -> None:
         mod.finish()
         logger.info(f'Finished module: {mod.get_name()}')
         overall_data[mod.get_name()] = out or {}
+
+        # A failed module must stop the chain: running downstream modules
+        # against its missing/partial output wastes hours and produces
+        # results that look complete (observed: georeference failure ->
+        # preprocess ran anyway -> batcher aborted on a missing flight log).
+        if isinstance(out, dict) and out.get('Success') is False:
+            logger.error(f'Module {mod.get_name()} reported failure; '
+                         'stopping the pipeline here.')
+            logger.info("Output Data:")
+            log_output_data(logger, overall_data)
+            sys.exit(1)
 
         if not params['continue_automatically'].get_value() and idx < len(modules) - 1:
             input("Press enter to continue...")

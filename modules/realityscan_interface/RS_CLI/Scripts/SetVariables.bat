@@ -31,6 +31,12 @@ if not defined RealityScan (
 :: RS_INSTANCE to run several instances in parallel (e.g. one per GPU).
 if not defined RS_INSTANCE set RS_INSTANCE=RS1
 
+:: Headless toggle: set RS_HEADLESS=0 to boot the instance with its GUI
+:: visible (delegation and monitoring work identically); any other value
+:: (or unset) keeps the default headless boot.
+set RS_HEADLESS_FLAG=-headless
+if /I "%RS_HEADLESS%"=="0" set RS_HEADLESS_FLAG=
+
 :: Root path to work folders where all the datasets are stored
 set RootFolder=%~dp0..\
 

@@ -1,5 +1,124 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-07-24 SESSION END STATE — read this first in a fresh session
+
+Read order for a new session: CLAUDE.md -> FINDINGS.md (every verified
+fact + how discovered) -> this section -> docs/merge-growth-strategy-
+2026-07.md (the workflow spec) -> testing/ALIGN_MERGE_HARDENING_PLAN.md
+(open unknowns).
+
+**Where H2023 processing stands (workspace D:\na156_h2023):**
+- Zone aligns DONE with manifests + RC_projects daily saves:
+  zone_1 = 4,392 registered / 9 components (nondeterministic
+  fragmentation - see FINDINGS; first run gave 2 components, same
+  registration); zone_2 = 928/976 (95.1%) / 3 components.
+- Within-zone growth: zone_2 DONE (clean run, zero real gains - the 48
+  orphans are genuinely unregistrable; 3 components remain by design,
+  northern strip is visually disjoint). zone_1 growth was IN FLIGHT at
+  session end (grow_zone.py, output D:\na156_h2023\growth\zone_1,
+  report grow_report.json when done; scene checkpoints under
+  growth\zone_1\checkpoints - "initial" restores the pre-growth scene
+  if anything went wrong).
+- NEXT STEPS in order: (1) check zone_1 grow_report.json; (2) cross-zone
+  merge: py -3.13 merge_zones.py --components_root
+  D:/na156_h2023/aligned_components --images_root
+  D:/na156_h2023/batched_images_by_zone --output D:/na156_h2023/merged_v2
+  --name H2023_Merged --min_size 50 --target 0.83 --project_label
+  NA156_H2023  (twin resolution via manifests is automatic; union
+  flight log + -update georeference the merged component - VERIFY
+  georeferencing in the GUI, U7 automation still open); (3) model:
+  GenerateModel.bat on the merged .rsproj (owner recipe baked in;
+  simplify presets are placeholders - see plan self-audit).
+- The old non-georeferenced merge outputs live at D:\na156_h2023\merged
+  (reference only). Smoke fixtures at D:\na156_h2023\smoke_test.
+
+**Known open items:**
+- GrowZone export mode cannot rebuild identity manifests (in-session
+  harvest only exists in AlignZone.bat) - post-growth manifests are
+  approximate; rebuild identity by re-running AlignZone.bat OR accept
+  approximate until the merge (merge twin-resolution treats
+  approximate manifests conservatively).
+- grow_zone report's components dict lists stale export paths
+  (cosmetic).
+- Determinism test queued: third zone_1 align to confirm fragmentation
+  nondeterminism (FINDINGS) - run when GPU is free.
+- Hardening cells open: U4-U14, U17 (see plan STATUS UPDATE);
+  U7 (CLI-observable georeferencing check) matters most for merge
+  automation.
+- selectImage regexp/glob discrepancy vs Help - forum-mine follow-up.
+- Clean-sweep code review findings (three review agents, 2026-07-24):
+  triaged into the sections below / applied where safe - check git log.
+- Claude Skill + documentation guide (task queued): FINDINGS.md is the
+  fact base, docs/ the rationale base.
+
+**Review backlog (2026-07-24 clean-sweep; applied items in FINDINGS):**
+MUST-FIX BEFORE NEXT MERGE/MODEL RUN:
+- MergeZoneComponents.bat complist-validation `exit /b 1` inside a
+  multi-statement block returns 0 (hoist to a subroutine/goto flow).
+- grow_zone <-> merge handoff: merge_zones cannot consume
+  grow_report.json's scattered final exports - build a .complist from
+  the report (or merge the PRE-growth aligned_components when growth
+  gained nothing, which is the H2023 zone_2 case).
+- GrowZone.bat component-mode saves the scene with most images
+  DISABLED (inpEnabled=false persists) - re-enable all before save, and
+  CHECK the zone_1 scene after its growth run for this state.
+SHOULD-FIX:
+- Manifest component names vs in-scene names never match (scene saved
+  pre-rename): cleanup_stale selectComponent silently no-ops; key
+  correlation by image set instead. AlignImageList/SequentialAlignGrow:
+  no AlignmentParams application, no deselect before exports.
+  startRealityScan timeout exit-code shape; PowerShell harvest line in
+  AlignZone.bat unchecked; :try_delete_model wait shape;
+  identity-loop 20-cap absorbs remainder into the last manifest.
+NITS: stale AlignImagesFromFolder rationale pointers; pre-B10 comments
+in camera_registry/component_manifest; ProbeSubsetAlign headers need a
+SUPERSEDED note; MergeZoneComponents delayedexpansion flag; kv colon
+replace-all; dead component_manifest helpers (scan_pose_sidecars +
+members_from_sidecars now only used by realityscan_interface - verify
+before deleting); merge_zones ascii complist crash path.
+
+## 2026-07-23 NA156 H2023 session: settings evaluation + workflow consolidation
+
+Full rationale: `docs/settings-evaluation-2026-07.md`. Summary:
+
+- **Camera registry** (`modules/camera_registry.py`): four physical
+  cameras (Zeuss rect 23mm / Port fisheye 14mm / Cinema rect 17mm /
+  Starboard fisheye 14mm; owner-confirmed), per-camera calibration/lens
+  groups, calibration-only XMP content, pose-sidecar sanitize+census.
+  The WCA rendered JPGs are EXIF-identical — XMP groups are the ONLY way
+  RealityScan can separate the cameras. Old batcher values (camlower as
+  "12mm fisheye") were wrong and plausibly explain the earlier
+  "priors hurt" A/B.
+- **Workflow consolidation**: `AlignZone.bat` (per-zone canonical:
+  always applies AlignmentParams.xml, appIncSubdirs=true, exports ALL
+  components >= min size via -exportLatestComponents, XMP census, no
+  models) + `merge_zones.py`/`MergeZoneComponents.bat` (iterative merge,
+  escalating georef-merge → align+rematch → +High overlap) +
+  `GenerateModel.bat` (models once, on the merged component).
+  `AlignZonesSequentially.bat` retired to archive/legacy_scripts;
+  `AlignImagesFromFolder.bat` deprecated (kept for run_zone9_tests.py).
+- **Settings changes**: sfmDistortionModel Division→Brown3 (global
+  fallback; real models per-camera via XMP), sfmImagesOverlap
+  Low→Medium. sfmEnableCameraPrior=true IS the GUI "use camera priors
+  for georeferencing"; sfmMergeGeoreferencedComponents is the
+  component-level no-overlap merge flag — they compose.
+- **New CLI facts**: B10 (ordinal XMP exports from imported-component
+  scenes), B11 (-setFeatureSource/-selectImage regexp ARE CLI;
+  -exportLatestComponents; -selectComponentWithLeastReprojectionError).
+  This 2.2 build does NOT recurse -addFolder without appIncSubdirs=true
+  ("Added 0 layer images" → err:18002 cascade).
+- **Smoke-verified end to end** (NA156 H2023 subsets): mini_a 118/120
+  registered, mini_b 62/120, georef -mergeComponents fused both into one
+  180-camera component in 66 s (supports matrix cell D1). Orchestrator
+  now stops on module failure; alignment module aggregates per-zone
+  success; overwrite prompts removed from the unattended path.
+- **NA156 H2023 state**: 4,598 Port+Cinema images at
+  D:\na156_h2023\raw_images (Starboard excluded by owner instruction),
+  georeferenced 100%, CLAHE'd, batched into zone_1 (4,540) + zone_2
+  (976) — NOTE batched BEFORE the calibration-XMP work: re-run Batch
+  Directory with --b_xmp_priors true (or write sidecars into the zone
+  folders) before the production zone aligns.
+
 ## 2026-07-22 fix pass + NA167 end-to-end verification
 
 A full-code review found and fixed (all verified by a 47-check synthetic

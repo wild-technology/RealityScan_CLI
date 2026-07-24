@@ -76,6 +76,12 @@ ERRORS_DIR = os.path.join(_THIS_DIR, 'RS_CLI', 'Errors')
 
 DEFAULT_INSTANCE_NAME = 'RS1'
 
+# Console-subsystem children (tasklist, cmd) each pop a visible console
+# window when their parent has none - over a long run that is hundreds of
+# flashing windows stealing focus (owner report, 2026-07-23). Suppress on
+# every helper subprocess; harmless for GUI-subsystem RealityScan.exe.
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+
 # Newest install locations first; extend when Epic ships a new version.
 EXECUTABLE_CANDIDATES = [
     r'C:\Program Files\Epic Games\RealityScan_2.2\RealityScan.exe',
@@ -88,11 +94,57 @@ EXECUTABLE_CANDIDATES = [
 # How long progress may stay silent before we log a stall warning. This is
 # a warning only — large datasets can legitimately be quiet for a long time.
 STALL_WARNING_SECONDS = 2 * 60 * 60
+# Near-OOM, RealityScan slows to a crawl WITHOUT crashing and without
+# spilling to disk (owner-observed, 2026-07-24) — in the progress feed
+# that is indistinguishable from a hang or a quiet compute phase, so the
+# monitor samples available RAM and warns when it gets low.
+LOW_MEMORY_WARN_GB = 4.0
+
+
+def _available_ram_gb() -> float | None:
+    """Available physical RAM in GiB (Windows), or None."""
+    if os.name != 'nt':
+        return None
+    import ctypes
+
+    class _MemoryStatusEx(ctypes.Structure):
+        _fields_ = [
+            ('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
+            ('ullTotalPhys', ctypes.c_uint64), ('ullAvailPhys', ctypes.c_uint64),
+            ('ullTotalPageFile', ctypes.c_uint64), ('ullAvailPageFile', ctypes.c_uint64),
+            ('ullTotalVirtual', ctypes.c_uint64), ('ullAvailVirtual', ctypes.c_uint64),
+            ('ullAvailExtendedVirtual', ctypes.c_uint64)]
+
+    status = _MemoryStatusEx()
+    status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+    if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return status.ullAvailPhys / (1024 ** 3)
+    return None
 PROGRESS_POLL_SECONDS = 2.0
 # Closing a very large scene after -quit can take a long time; override via
 # "realityscan"/"shutdown_timeout" in rs_settings.json if 15 min is not enough.
 SHUTDOWN_VERIFY_TIMEOUT_SECONDS = 900
 STATUS_CALL_TIMEOUT_SECONDS = 60
+
+
+def set_project_save_env(zone_images_root: str, label: str) -> str:
+    """Arm the daily project-save schema for the workflow scripts.
+
+    Projects live in RC_projects ONE LEVEL UP from the zone image
+    directory, one copy per day per scene named
+    {expedition_dive}_{zone|merged}_YYYYMMDD.rsproj (owner requirement
+    2026-07-23). The scripts compose the filename from
+    RS_PROJECT_LABEL/RS_PROJECT_DATE; scenes re-saved later the same day
+    overwrite that day's copy, a new day starts a fresh copy.
+
+    Returns the RC_projects directory path.
+    """
+    projects_dir = os.path.join(
+        os.path.dirname(os.path.normpath(zone_images_root)), 'RC_projects')
+    os.environ['RS_PROJECTS_DIR'] = projects_dir
+    os.environ['RS_PROJECT_LABEL'] = label
+    os.environ['RS_PROJECT_DATE'] = time.strftime('%Y%m%d')
+    return projects_dir
 
 
 @dataclass
@@ -156,7 +208,8 @@ class RealityScanCLI:
             result = subprocess.run(
                 [exe, '-getStatus', self.instance_name],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=STATUS_CALL_TIMEOUT_SECONDS
+                timeout=STATUS_CALL_TIMEOUT_SECONDS,
+                creationflags=_NO_WINDOW
             )
         except subprocess.TimeoutExpired:
             # A hung -getStatus means the instance exists but is unresponsive;
@@ -168,7 +221,7 @@ class RealityScanCLI:
         """Block until the instance is gone. Returns False on timeout —
         callers must treat that as 'do not start the next workflow'."""
         if timeout is None:
-            timeout = self.settings.get('realityscan', 'shutdown_timeout', SHUTDOWN_VERIFY_TIMEOUT_SECONDS)
+            timeout = float(self.settings.get('realityscan', 'shutdown_timeout', SHUTDOWN_VERIFY_TIMEOUT_SECONDS))
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if not self.is_instance_running():
@@ -185,7 +238,8 @@ class RealityScanCLI:
             subprocess.run(
                 [exe, '-delegateTo', self.instance_name, '-quit'],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=STATUS_CALL_TIMEOUT_SECONDS
+                timeout=STATUS_CALL_TIMEOUT_SECONDS,
+                creationflags=_NO_WINDOW
             )
         except subprocess.TimeoutExpired:
             pass
@@ -206,7 +260,8 @@ class RealityScanCLI:
             # memory column) and treat a stale lock as live.
             result = subprocess.run(
                 ['tasklist', '/FI', f'PID eq {pid}', '/NH', '/FO', 'CSV'],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                creationflags=_NO_WINDOW
             )
             for row in csv.reader(io.StringIO(result.stdout)):
                 if len(row) >= 2 and row[1].strip() == str(pid):
@@ -430,9 +485,24 @@ class RealityScanCLI:
         last_errors = ''
         last_activity = time.monotonic()
         stall_warned = False
+        low_memory_warned = False
 
         while process.poll() is None:
             time.sleep(PROGRESS_POLL_SECONDS)
+
+            # Near-OOM crawl detection (owner-observed): RealityScan slows
+            # drastically without crashing or spilling to disk. Warn once
+            # per workflow when available RAM gets low so a later stall/
+            # #timeout can be attributed correctly.
+            if not low_memory_warned:
+                avail = _available_ram_gb()
+                if avail is not None and avail < LOW_MEMORY_WARN_GB:
+                    low_memory_warned = True
+                    self.logger.warning(
+                        'Available RAM is down to %.1f GB - RealityScan is '
+                        'known to slow to a crawl near OOM without crashing; '
+                        'treat upcoming stalls/#timeout as probable memory '
+                        'pressure, not hangs.', avail)
 
             line = self._tail_line(progress_path)
             if line and line != last_progress_line:
@@ -455,19 +525,23 @@ class RealityScanCLI:
 
             if not stall_warned and time.monotonic() - last_activity > STALL_WARNING_SECONDS:
                 stall_warned = True
+                avail = _available_ram_gb()
+                ram_note = ('' if avail is None
+                            else f' Available RAM: {avail:.1f} GB.')
                 if last_progress_line.rstrip().endswith('#timeout'):
                     self.logger.warning(
                         'RealityScan [%s] has been stuck in a #timeout state for '
-                        'over %.1f hours - the current operation is most likely '
-                        'hung (observed with -importComponent on a relocated '
-                        '.rsalign). Intervention is probably required.',
-                        self.instance_name, STALL_WARNING_SECONDS / 3600)
+                        'over %.1f hours - either a hung operation (observed with '
+                        '-importComponent on a relocated .rsalign) or a near-OOM '
+                        'crawl (owner-observed; RealityScan slows drastically '
+                        'without crashing).%s Intervention is probably required.',
+                        self.instance_name, STALL_WARNING_SECONDS / 3600, ram_note)
                 else:
                     self.logger.warning(
                         'RealityScan [%s] has reported no progress for over %.1f hours. '
                         'Long silences are normal for very large datasets; check the '
-                        'instance manually if this persists.',
-                        self.instance_name, STALL_WARNING_SECONDS / 3600)
+                        'instance manually if this persists.%s',
+                        self.instance_name, STALL_WARNING_SECONDS / 3600, ram_note)
 
     @staticmethod
     def _tail_line(path: str) -> str:

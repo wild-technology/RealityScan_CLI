@@ -27,12 +27,19 @@ echo Starting new RealityScan instance %RS_INSTANCE%
 :: CUDA devices visible to this instance. Unset = use all GPUs.
 if defined RS_GPU_DEVICES set CUDA_VISIBLE_DEVICES=%RS_GPU_DEVICES%
 
-:: The ErrorWriter path is wrapped in escaped quotes (\") because checkout
-:: paths routinely contain spaces; without them the process trigger would
-:: silently launch nothing and all error detection would vanish. cmd /c is
-:: required for CreateProcess to run a .bat. The hook writes its marker
-:: files next to itself, so no other path has to survive this command line.
-start "" %RealityScan% -headless -stdConsole -silent "%ErrorPath%" -setInstanceName %RS_INSTANCE% -set "appAutoSaveMode=false" -set "appQuitOnError=false" -set "appProcessActionTime=0" -set "appProcessAction=ExecuteProgram" -set "appProcessExecCmd=cmd /c \"%ErrorWriter%\" $(processResult) $(processId) $(processDuration:d) %RS_INSTANCE%" -writeProgress "%ErrorPath%\progress_%RS_INSTANCE%.txt" 600
+:: The hook runs through the wscript VBS shim, NOT cmd /c directly: the
+:: process trigger fires for EVERY completed process (heartbeats
+:: included) and a direct cmd /c pops a visible console window each time
+:: - hundreds of flashing terminal windows over a long run (owner
+:: report, 2026-07-23). wscript is GUI-subsystem (no console); the shim
+:: runs ErrorWriter.bat hidden and synchronously. Paths are wrapped in
+:: escaped quotes (\") because checkout paths routinely contain spaces;
+:: without them the trigger would silently launch nothing and all error
+:: detection would vanish.
+:: (-stdConsole removed 2026-07-23: it allocates a console window per
+:: instance boot; nothing reads instance stdout - progress comes from
+:: -writeProgress and results from the ErrorWriter hook.)
+start "" %RealityScan% %RS_HEADLESS_FLAG% -silent "%ErrorPath%" -setInstanceName %RS_INSTANCE% -set "appAutoSaveMode=false" -set "appQuitOnError=false" -set "appProcessActionTime=0" -set "appProcessAction=ExecuteProgram" -set "appProcessExecCmd=wscript.exe //B \"%ErrorPath%\ErrorWriterLaunch.vbs\" $(processResult) $(processId) $(processDuration:d) %RS_INSTANCE%" -writeProgress "%ErrorPath%\progress_%RS_INSTANCE%.txt" 600
 
 echo Waiting until the RealityScan instance %RS_INSTANCE% is ready
 

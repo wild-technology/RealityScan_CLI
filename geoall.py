@@ -767,7 +767,7 @@ def print_dive_summary(dive_number: str, csv_rows: int, examined: int, stats: di
     print(f"{'='*80}")
     print(f"CSV Rows Loaded:          {csv_rows}")
     print(f"Images Examined:          {examined}")
-    print(f"Matched (≤2s):            {stats['matches_made']} ({100.0 * stats['matches_made'] / examined:.1f}%)" if examined > 0 else "Matched (≤2s):            0 (0.0%)")
+    print(f"Matched (<=2s):           {stats['matches_made']} ({100.0 * stats['matches_made'] / examined:.1f}%)" if examined > 0 else "Matched (<=2s):           0 (0.0%)")
     print(f"Rejected (>2s):           {stats['rejected_time']}")
     print(f"\nTime-Delta Buckets (all pairs, pre-threshold):")
     print(f"  Exact matches:          {stats['exact_matches']}")

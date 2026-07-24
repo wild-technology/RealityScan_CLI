@@ -47,10 +47,11 @@ RealityScan_2.2\Help\en-US\`), which is authoritative for this build.
 > "**Use all image features** — slowest… recommended for a small number
 > of camera poses."
 
-CLI cells therefore run whatever RealityScan's headless default
-feature-source is; this is a documented **limitation**, not a testable
-axis. If merge quality ever hinges on it, the fallback is saving a GUI
-project with the mode set and driving it via CLI.
+CORRECTION (2026-07-23): the trio IS CLI-accessible after all —
+`-setFeatureSource 0|1|2` under "Commands for Selected Images", composed
+with `-selectImage <regexp>` / `-selectAllImages` (see
+NA167_SESSION_NOTES.md B11). The feature-source axis is therefore
+scriptable per camera/zone and available as a merge escalation step.
 
 ### Ambiguities the matrix resolves empirically
 
@@ -116,7 +117,7 @@ Controls:
 
 | Cell | Inputs | Mechanism | Flags | Hypothesis |
 |---|---|---|---|---|
-| D1_geo_merge | duplicate-path comps | `-mergeComponents` | georef=**true**, rematch=false | georeferencing substitutes for identity → fuse succeeds |
+| D1_geo_merge | duplicate-path comps | `-mergeComponents` | georef=**true**, rematch=false | georeferencing substitutes for identity → fuse succeeds. SUPPORTING EVIDENCE (NA156 smoke, 2026-07-23): two 120-image mini-zone components (40 duplicated overlap images, no shared paths) fused into one 180-camera component in 66 s via merge_zones.py attempt 1 — georef merge works on this pipeline's components |
 | D2_geo_rematch_align | duplicate-path comps | `-align` | georef=**true**, rematch=**true** | best-quality rescue of identity-less comps |
 | D3_align_sharedpath | shared-path comps | `-align` | both pinned false | equivalent or better than A2_merge |
 | D4_step1/step2 | shared-path comps, pairwise | `-mergeComponents` ×2 | both pinned false | (6+14)→M1, (M1+4)→M2 ≈ A2_merge quality → pattern scales |

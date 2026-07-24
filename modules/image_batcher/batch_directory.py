@@ -20,6 +20,7 @@ from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
 from module_base.settings_store import SettingsStore
 from ..flight_logs import find_flight_log
+from .. import camera_registry
 
 
 class BatchDirectory(RSModule):
@@ -504,17 +505,13 @@ class BatchDirectory(RSModule):
         self.logger.info(f"Batch zones plot saved to: {zones_plot_path}")
 
     def __determine_camera_subfolder(self, filename, source_path=None):
-        """Camera subfolder from the filename; when the filename carries no
-        camera token, fall back to the source file's parent directory (a
-        dataset like WCA/C001C0012_<ts>.png is organized by folder)."""
-        if "HERC" in filename:
-            return "zeuss"
-        elif filename.startswith("camlower"):
-            return "camlower"
-        elif filename.startswith("cammid"):
-            return "cammid"
-        elif filename.startswith("camupper"):
-            return "camupper"
+        """Camera subfolder from the filename via the shared camera
+        registry (modules/camera_registry.py -- one entry per physical
+        camera). When the filename carries no camera token, fall back to
+        the source file's parent directory."""
+        camera = camera_registry.identify(filename)
+        if camera is not None:
+            return camera.key
 
         if source_path:
             parent = os.path.basename(os.path.dirname(source_path))
@@ -582,32 +579,11 @@ class BatchDirectory(RSModule):
         # calibration prior written that way was never loaded.
         xmp_path = os.path.join(output_path, f"{os.path.splitext(image_filename)[0]}.xmp")
 
-        # Define camera-specific settings
-        if camera_type == "zeuss":
-            # Rectilinear camera, focal length unknown
-            calib_group = "1"
-            calib_prior = "Unknown"
-            focal_length = None  # Unknown
-            lens_group = "1"
-            lens_prior = "Approximate"  # Low distortion expected
-            distortion_model = "brown3"
-        elif camera_type in ["cammid", "camupper"]:
-            # Fisheye cameras with approximate 12mm focal length
-            calib_group = "2"
-            calib_prior = "Approximate"
-            focal_length = "12.0"  # 12mm approximate
-            lens_group = "2"
-            lens_prior = "Unknown"  # High distortion/fisheye requires Unknown
-            distortion_model = "division"
-        elif camera_type == "camlower":
-            # Fisheye camera
-            calib_group = "2"
-            calib_prior = "Approximate"
-            focal_length = "12.0"
-            lens_group = "2"
-            lens_prior = "Unknown"  # Fisheye requires Unknown
-            distortion_model = "division"
-        else:
+        # Camera-specific calibration values come from the shared registry
+        # (one entry per PHYSICAL camera; groups separate the EXIF-identical
+        # WCA units, focals/models are owner-confirmed 2026-07-23).
+        camera = camera_registry.identify(image_filename)
+        if camera is None:
             # Unknown camera type - no calibration priors to write. Warn
             # once; per-image warnings would flood the log on a dataset
             # with an unrecognized naming scheme.
@@ -620,30 +596,11 @@ class BatchDirectory(RSModule):
                     "Further warnings suppressed; total reported in summary.")
             return
 
-        # Build XMP content
-        xmp_content = ['<?xml version="1.0" encoding="UTF-8"?>']
-        xmp_content.append(
-            '<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">')
-        xmp_content.append('  <rdf:RDF>')
-        xmp_content.append(
-            '    <rdf:Description xmlns:Camera="http://www.capturingreality.com/ns/camera/1.0/" xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.0/">')
-        xmp_content.append(f'      <Camera:CalibrationGroup>{calib_group}</Camera:CalibrationGroup>')
-        xmp_content.append(f'      <Camera:CalibrationPrior>{calib_prior}</Camera:CalibrationPrior>')
-
-        if focal_length is not None:
-            xmp_content.append(f'      <xcr:FocalLength35mm>{focal_length}</xcr:FocalLength35mm>')
-
-        xmp_content.append(f'      <Camera:LensDistortionGroup>{lens_group}</Camera:LensDistortionGroup>')
-        xmp_content.append(f'      <Camera:LensDistortionPrior>{lens_prior}</Camera:LensDistortionPrior>')
-        xmp_content.append(f'      <Camera:DistortionModel>{distortion_model}</Camera:DistortionModel>')
-        xmp_content.append('    </rdf:Description>')
-        xmp_content.append('  </rdf:RDF>')
-        xmp_content.append('</x:xmpmeta>')
-
-        # Write XMP file
+        # Write XMP file (content shared with the post-align sidecar
+        # sanitizer via camera_registry.calibration_xmp)
         try:
             with open(xmp_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(xmp_content))
+                f.write(camera_registry.calibration_xmp(camera))
         except Exception as e:
             self.logger.error(f"Failed to write XMP file {xmp_path}: {e}")
 

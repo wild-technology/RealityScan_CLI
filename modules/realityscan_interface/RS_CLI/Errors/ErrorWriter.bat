@@ -18,9 +18,9 @@
 @echo off
 set "instance=%~4"
 if "%instance%" == "" set "instance=RS1"
-echo %date% %time% process %2 finished with result code %1 in %3 seconds >> "%~dp0results_%instance%.log"
-if /i "%1" NEQ "0" (
-    if /i "%1" NEQ "1" (
-        echo An error occurred: process %2 finished with result code %1 in %3 seconds. >> "%~dp0errors_%instance%.txt"
+echo %date% %time% process %~2 finished with result code %~1 in %~3 seconds >> "%~dp0results_%instance%.log"
+if /i "%~1" NEQ "0" (
+    if /i "%~1" NEQ "1" (
+        echo An error occurred: process %~2 finished with result code %~1 in %~3 seconds. >> "%~dp0errors_%instance%.txt"
     )
 )

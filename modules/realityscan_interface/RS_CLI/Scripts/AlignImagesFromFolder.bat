@@ -1,5 +1,10 @@
 @echo off
 setlocal
+:: DEPRECATED (2026-07-23): production zone alignment now uses
+:: AlignZone.bat (exports ALL components, applies AlignmentParams.xml)
+:: and model generation moved to GenerateModel.bat. This script remains
+:: only for testing/run_zone9_tests.py; do not build new workflows on it.
+::
 :: Align a folder of images in RealityScan and optionally generate, cull,
 :: texture, and simplify the model.
 ::
@@ -120,10 +125,24 @@ call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
 echo Adding images to project
+:: Subfolder recursion is NOT the default in this 2.2 build: without
+:: appIncSubdirs a zone tree whose images live in per-camera or
+:: preprocessed_images subfolders adds 0 layer images and the flight-log
+:: import then fails err:18002 (observed live on NA156 H2023). Instant
+:: -set, FIFO-ordered before the queued addFolder, no wait needed.
+%RealityScan% -delegateTo %RS_INSTANCE% -set "appIncSubdirs=true"
 call :run -addFolder "%input_dir%" || goto :fail
 
 if not "%flight_log_dir%" == "" (
     call :run -importFlightLog "%flight_log_dir%" "%flight_log_params_dir%" || goto :fail
+)
+
+echo Applying alignment settings from AlignmentParams.xml
+:: Never align on instance defaults (policy 2026-07-23): apply the
+:: sfm*/lis* keys via instant delegated -set, FIFO-ordered before -align.
+for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%MetadataDir%\AlignmentParams.xml") do (
+    echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"sfm" /c:"lis" >nul
+    if not errorlevel 1 %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
 )
 
 echo Aligning images

@@ -23,7 +23,9 @@ generate textured models.
 
 | Path | Purpose |
 |---|---|
-| `main.py` | Interactive orchestrator: Extract Images → Georeference → Preprocess Images → Batch Directory → RealityScan Alignment |
+| `main.py` | Interactive orchestrator: Extract Images → Georeference → Preprocess Images → Batch Directory → RealityScan Alignment (per-zone `AlignZone.bat`; `RS_MODULES`/`RS_NO_INTERACTIVE` env vars for non-interactive runs; a failed module stops the chain) |
+| `merge_zones.py` | Iterative component-merge driver: imports every per-zone component into a fresh scene and escalates mechanism/flags (georef merge → align+rematch → +High overlap) until the registration target is met; writes `merge_report.json` |
+| `modules/camera_registry.py` | Single source of truth for the four physical rig cameras (lens, calibration groups, XMP content, filename families) |
 | `geoall.py` | Standalone georeferencing (ROV nav CSV → RealityScan flight logs). The most up-to-date georeferencing implementation. |
 | `poses2flightlog.py` | Post-alignment: rewrite camera locations back to UTM from the computed poses (XMP sidecars), producing a refined flight log + per-image nav-error QC |
 | `decimator.py` | Copy a percentage of images to a new folder (dataset thinning) |
@@ -107,13 +109,15 @@ The design (informed by hard-won lessons — see
    - `-silent <Errors dir>` so crash dialogs can never hang an unattended
      run (a crash exits with code 3 and a minidump instead).
 3. Workflow scripts execute every operation through the `:run` subroutine:
-   `-delegateTo <instance> <cmd>` → loop `-waitCompleted` until
-   `results_<instance>.log` grows (event-driven completion via
-   RealityScan's own process trigger; `-waitCompleted` alone can return
-   prematurely before the instance picks the queued command up), bounded
-   so commands that never register as a process cannot hang → abort the
-   workflow if `errors_<instance>.txt` is non-empty. One command per
-   delegation, always.
+   `-delegateTo <instance> <cmd>` → grace delay → `-waitCompleted` twice
+   with a second grace between them (`-waitCompleted` alone can return
+   prematurely before the instance picks the queued command up) → abort
+   the workflow if `errors_<instance>.txt` is non-empty. Do NOT gate on
+   `results_<instance>.log` growth: RealityScan 2.2 emits heartbeat
+   processes through the same trigger, so "the log grew" does not mean
+   "our command finished" (that check raced ahead of a running `-align`
+   and was removed). The results log is history/diagnostics; the errors
+   marker is the abort trigger. One command per delegation, always.
 4. `RealityScanCLI.run_batch_script()` wraps the whole workflow:
    - a per-instance **lock file** (with PID liveness check) prevents two
      orchestrators from driving the same instance name concurrently;
@@ -178,16 +182,23 @@ git history — see `git log`):
 
 ## Typical workflows
 
-Full interactive pipeline:
+Full interactive pipeline (extraction through per-zone alignment):
 
 ```
 python main.py
 ```
 
+Merge the per-zone components, then build the model on the merged result:
+
+```
+python merge_zones.py --components_root D:\dive\aligned_components --images_root D:\dive\batched_images_by_zone --output D:\dive\merged
+RS_CLI\Scripts\GenerateModel.bat "D:\dive\merged\attempt_merge_georef\Merged.rsproj" "Merged"
+```
+
 Standalone zone alignment (from `RS_CLI/Scripts`):
 
 ```
-AlignZonesSequentially.bat "D:\zones\zone_01" "D:\zones\zone_01\components"
+AlignZone.bat "D:\zones\zone_01" "D:\dive\aligned_components\zone_01" "D:\zones\zone_01\flight_log_4Q_UTM.txt" "..\Metadata\FlightLogParams.xml" zone_01 50
 ```
 
 Standalone georeferencing:
@@ -197,3 +208,8 @@ python geoall.py
 ```
 
 All prompts default to your previous answers (see `rs_settings.json`).
+Set `RS_HEADLESS=0` to boot the RealityScan instance with its GUI
+visible; alignment settings always come from
+`RS_CLI/Metadata/AlignmentParams.xml`, never instance defaults. Design
+rationale for the settings and the merge strategy:
+`docs/settings-evaluation-2026-07.md`.

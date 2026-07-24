@@ -4,7 +4,11 @@
   <entry key="s251l" value="0.05"/>
   <entry key="sfmMaxFeaturesPerImage" value="0xc350"/>
   <entry key="sfmForceComponentRematch" value="false"/>
-  <entry key="sfmDistortionModel" value="Division"/>
+  <!-- Global fallback only: mixed rig, so the real distortion model is
+       per-camera via XMP sidecars (fisheye Port/Starboard: division;
+       rectilinear Cinema/Zeuss: brown3). Division was the NA167
+       fisheye-era global. See docs/settings-evaluation-2026-07.md. -->
+  <entry key="sfmDistortionModel" value="Brown3"/>
   <entry key="sfmCameraPriorAccuracyRoll" value="10.0"/>
   <entry key="sfmMaxFeatureReprojectionError" value="1.29999995"/>
   <entry key="sfmMaxFeaturesPerMpx" value="0x36b0"/>
@@ -15,7 +19,9 @@
   <entry key="sfmEnableCameraPrior" value="true"/>
   <entry key="lisPreferImagesAsFeatureSource" value="false"/>
   <entry key="sfmCameraPriorWeight" value="10.0"/>
-  <entry key="sfmImagesOverlap" value="Low"/>
+  <!-- Medium: 2-3 s frame spacing + interleaved cameras + track revisits
+       need the broader pair search for loop closures; Low was legacy. -->
+  <entry key="sfmImagesOverlap" value="Medium"/>
   <entry key="sfmCameraDepthmapWeight" value="0.05"/>
   <entry key="sfmControPointImageMeasAccuracy" value="4.0"/>
   <entry key="sfmPreselectorFeatures" value="0x4e20"/>

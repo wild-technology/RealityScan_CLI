@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from datetime import datetime, timedelta
 
@@ -10,7 +11,19 @@ import numpy as np
 
 from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
-from ..file_metadata_parser import parse_timestamp_str, parse_timestamp
+from ..file_metadata_parser import _TIMESTAMP_REGEX, parse_timestamp_str, parse_timestamp
+
+# Container formats the extractor accepts. ROV recorders deliver both
+# QuickTime (.mov, e.g. Nauticam S231C####_..._chf3_nyx2.mov) and .mp4;
+# cv2.VideoCapture reads either.
+VIDEO_EXTENSIONS = {'.mp4', '.mov'}
+
+# Split recordings: part files share the recording's START timestamp and
+# differ only in a _NNNN_ part counter (S231C0007_20231104020854_0001_...,
+# S231C0007_20231104020854_0002_...). Frames in part N start where part
+# N-1 ended, NOT at the filename timestamp.
+_PART_REGEX = re.compile(
+    r'^(?P<prefix>.+?_(?:\d{8}T\d{6}Z|\d{14}))_(?P<part>\d{4})(?P<suffix>_.*)?$')
 
 
 class ExtractImages(RSModule):
@@ -71,7 +84,8 @@ class ExtractImages(RSModule):
 
         return video_timestamp
 
-    def __extract_video_cv2(self, video_path, output_folder, output_fpm, output_mpx) -> dict[str, any]:
+    def __extract_video_cv2(self, video_path, output_folder, output_fpm, output_mpx,
+                            start_offset_sec: float = 0.0) -> dict[str, any]:
         """Extract frames at output_fpm, timestamping each output image with
         the wall-clock time of the frame it actually contains.
 
@@ -80,6 +94,11 @@ class ExtractImages(RSModule):
         with frame N's time, so every image carried a timestamp one output
         interval early (60 s at the default 1 fpm) and georeferencing
         paired it with a position from a minute before it was taken.
+
+        start_offset_sec shifts the whole video in wall-clock time: for
+        continuation parts of a split recording the filename carries the
+        recording's start, so the part's true start is that timestamp plus
+        the summed duration of all earlier parts.
         """
         output_data = {}
 
@@ -92,7 +111,7 @@ class ExtractImages(RSModule):
 
         # Get the video's timestamp
         video_timestamp_str = self.__get_video_timestamp_str(video_path)
-        video_timestamp = self.__get_video_timestamp(video_path)
+        video_timestamp = self.__get_video_timestamp(video_path) + timedelta(seconds=start_offset_sec)
 
         # Parse the metadata from the video filename
         video_filename = os.path.splitext(os.path.basename(video_path))[0]
@@ -134,9 +153,16 @@ class ExtractImages(RSModule):
             fps_int = max(1, round(video_fps))
             frame_index_in_second = int((frame_number % fps_int) // skip_frames)
 
-            # Generate the filename for the current frame
-            # replace the timestamp in the filename with the new timestamp
-            image_name = video_filename.replace(video_timestamp_str,
+            # Generate the filename for the current frame by replacing the
+            # timestamp in the filename with the new timestamp. Replace the
+            # RAW matched substring, not parse_timestamp_str()'s normalized
+            # form: for plain 14-digit filenames (e.g. S231C0007_
+            # 20231104020854_...) the normalized "...T...Z" form never
+            # matches, the replace was a no-op, and every frame of the video
+            # overwrote the same output file.
+            raw_ts_match = _TIMESTAMP_REGEX.search(video_filename)
+            raw_ts = raw_ts_match.group(1) if raw_ts_match else video_timestamp_str
+            image_name = video_filename.replace(raw_ts,
                                                 new_timestamp_str) + f"_frame{frame_index_in_second}.jpg"
             image_path = os.path.join(output_folder, image_name)
 
@@ -166,6 +192,62 @@ class ExtractImages(RSModule):
 
         return output_data
 
+    def __video_duration_sec(self, video_path) -> float | None:
+        """Duration of a video from its container metadata, or None."""
+        cap = cv2.VideoCapture(video_path)
+        try:
+            if not cap.isOpened():
+                return None
+            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if fps <= 0 or frame_count <= 0:
+                return None
+            return frame_count / fps
+        finally:
+            cap.release()
+
+    def __compute_part_offsets(self, input_path, video_files) -> dict[str, float]:
+        """Wall-clock start offsets for continuation parts of split
+        recordings. Parts share the recording-start timestamp in their
+        filename; part N actually starts after the summed duration of
+        parts 1..N-1. Files whose earlier-part durations cannot be read
+        are excluded (a wrong timestamp poisons georeferencing silently).
+        """
+        groups: dict[tuple[str, str], list[tuple[int, str]]] = {}
+        for filename in video_files:
+            stem = os.path.splitext(filename)[0]
+            match = _PART_REGEX.match(stem)
+            if match:
+                key = (match.group('prefix'), match.group('suffix') or '')
+                groups.setdefault(key, []).append((int(match.group('part')), filename))
+
+        offsets = {filename: 0.0 for filename in video_files}
+        for key, parts in groups.items():
+            if len(parts) < 2:
+                continue
+            parts.sort()
+            cumulative = 0.0
+            broken = False
+            for index, (part_no, filename) in enumerate(parts):
+                if broken:
+                    self.logger.error(
+                        f"Skipping {filename}: cannot determine its true start "
+                        "time because an earlier part of the same recording "
+                        "has unreadable duration metadata")
+                    offsets.pop(filename, None)
+                    continue
+                offsets[filename] = cumulative
+                if index > 0:
+                    self.logger.info(
+                        f"Continuation part {filename}: frames offset "
+                        f"+{cumulative:.1f}s past the filename timestamp")
+                duration = self.__video_duration_sec(os.path.join(input_path, filename))
+                if duration is None:
+                    broken = True
+                else:
+                    cumulative += duration
+        return offsets
+
     def run(self):
         # Get parameters (validated by the orchestrator before run())
         input_path = self.params['image_input_video'].get_value()
@@ -176,17 +258,21 @@ class ExtractImages(RSModule):
         mov_files = []
 
         if os.path.isfile(input_path):
-            # One .mp4 file was specified
-            # Separate the filename from the path, and add it to the list of .mp4 files
+            # One video file was specified
+            # Separate the filename from the path, and add it to the list of video files
             input_video = os.path.basename(input_path)
             mov_files.append(input_video)
 
-            # Set the input path to the directory of the .mp4 file
+            # Set the input path to the directory of the video file
             input_path = os.path.dirname(input_path)
         else:
-            # A directory of .mp4 files was specified
+            # A directory of video files was specified
             mov_files = [filename for filename in os.listdir(input_path) if
-                         os.path.splitext(filename)[1].lower() == ".mp4"]
+                         os.path.splitext(filename)[1].lower() in VIDEO_EXTENSIONS]
+
+        # True start offsets for continuation parts of split recordings
+        part_offsets = self.__compute_part_offsets(input_path, mov_files)
+        mov_files = [f for f in mov_files if f in part_offsets]
 
         bar = self._initialize_loading_bar(len(mov_files), "Extracting Videos")
 
@@ -202,10 +288,12 @@ class ExtractImages(RSModule):
             mov_path = os.path.join(input_path, mov_file)
             file_extension = os.path.splitext(mov_path)[1].lower()
 
-            if not os.path.isfile(mov_path) or file_extension != '.mp4':
+            if not os.path.isfile(mov_path) or file_extension not in VIDEO_EXTENSIONS:
                 continue
 
-            individual_output_data = self.__extract_video_cv2(mov_path, output_folder, output_fpm, output_mpx)
+            individual_output_data = self.__extract_video_cv2(
+                mov_path, output_folder, output_fpm, output_mpx,
+                start_offset_sec=part_offsets.get(mov_file, 0.0))
             self._update_loading_bar(bar, 1)
 
             if individual_output_data is not None and individual_output_data.get('Success') == True:
@@ -242,18 +330,18 @@ class ExtractImages(RSModule):
         output_fpm = self.params['image_output_fpm'].get_value()
         output_mpx = self.params['image_output_mpx'].get_value()
 
-        # input path is either a single .mp4 file or a folder of .mp4 files
+        # input path is either a single video file or a folder of video files
         if is_input_folder:
-            mp4s = [f for f in os.listdir(input_video)
-                    if os.path.splitext(f)[1].lower() == '.mp4']
-            if not mp4s:
-                return False, 'Input folder contains no .mp4 files'
+            videos = [f for f in os.listdir(input_video)
+                      if os.path.splitext(f)[1].lower() in VIDEO_EXTENSIONS]
+            if not videos:
+                return False, f'Input folder contains no video files ({"/".join(sorted(VIDEO_EXTENSIONS))})'
         else:
             if not os.path.isfile(input_video):
                 return False, 'Input file does not exist'
 
-            if os.path.splitext(input_video)[1].lower() != '.mp4':
-                return False, 'Input path is not an .mp4 file'
+            if os.path.splitext(input_video)[1].lower() not in VIDEO_EXTENSIONS:
+                return False, f'Input path is not a video file ({"/".join(sorted(VIDEO_EXTENSIONS))})'
 
         if os.path.isdir(output_dir) and os.listdir(output_dir):
             self.logger.warning('Extracted images folder already exists. Overwrite? (y/n)')

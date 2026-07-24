@@ -104,6 +104,9 @@ class GeoreferenceImages(RSModule):
             return 5.0
         elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
             return 30.0
+        elif filename_lower.startswith('p231c') or filename_lower.startswith('c231c'):
+            # WCA Port/Cinema: rigid mounts with known orientation
+            return 5.0
         else:
             self._note_unknown_camera(filename, "using default pitch accuracy 10°")
             return 10.0
@@ -433,13 +436,15 @@ class GeoreferenceImages(RSModule):
 
         print("Matching summary:")
         print(f"  Examined images: {self.stats['examined_images']}")
-        print(f"  Accepted ≤2s:    {self.stats['accepted_images']} ({self.stats['accept_rate_pct']:.1f}%)")
+        # ASCII only in console output: Windows cp1252 consoles (and
+        # redirected stdout) crash on characters like U+2264.
+        print(f"  Accepted <=2s:   {self.stats['accepted_images']} ({self.stats['accept_rate_pct']:.1f}%)")
         print(f"  Rejected >2s:    {self.stats['rejected_time']}")
         print(f"  Rejected no CSV: {self.stats['rejected_no_csv']}")
         print("  Time-delta buckets (all pairs, pre-threshold):")
         print(f"    Exact:  {self.stats['bucket_exact']}")
-        print(f"    0–4s:   {self.stats['bucket_0_4']}")
-        print(f"    4–15s:  {self.stats['bucket_4_15']}")
+        print(f"    0-4s:   {self.stats['bucket_0_4']}")
+        print(f"    4-15s:  {self.stats['bucket_4_15']}")
         print(f"    >15s:   {self.stats['bucket_gt15']}")
         print("  Accepted field completeness:")
         print(f"    Missing UTM:         {self.stats['accepted_missing_utm']}")
@@ -471,6 +476,12 @@ class GeoreferenceImages(RSModule):
             return (1.0, 0.0, 1.0)  # 1m forward, 1m down
         elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
             return (0.5, 0.0, 0.5)  # 0.5m forward, 0.5m down
+        elif filename_lower.startswith('p231c'):
+            # WCA Port: 1m forward of the point of rotation, 1m down
+            return (1.0, 0.0, 1.0)
+        elif filename_lower.startswith('c231c'):
+            # WCA Cinema: 1m forward of the point of rotation
+            return (1.0, 0.0, 0.0)
         else:
             self._note_unknown_camera(filename, "assuming no position offset")
             return (0.0, 0.0, 0.0)
@@ -491,6 +502,14 @@ class GeoreferenceImages(RSModule):
             return 10.0  # pointing down 10°
         elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
             return 30.0  # Zeuss pointing down 30°
+        # Widefield Camera Array (Z CAM E2-F6, NA156-era P/C/S231C names):
+        # Port is aligned with the vehicle's orientation; Cinema faces 45°
+        # downward with the vehicle's yaw/roll. (Starboard exists but is
+        # not used for photogrammetry.)
+        elif filename_lower.startswith('p231c'):
+            return 0.0
+        elif filename_lower.startswith('c231c'):
+            return 45.0
         else:
             self._note_unknown_camera(filename, "assuming 0° pitch offset")
             return 0.0
@@ -581,15 +600,15 @@ class GeoreferenceImages(RSModule):
             output_data['Timestamp Parse Failures'] = int(self.stats.get('timestamp_parse_failures', 0))
             output_data['Images With Valid Timestamps'] = int(self.stats.get('images_with_valid_ts', 0))
             output_data['Images Examined'] = int(self.stats.get('examined_images', 0))
-            output_data['Matched ≤2s'] = matches_made
+            output_data['Matched <=2s'] = matches_made
             output_data['Rejected >2s'] = int(self.stats.get('rejected_time', 0))
             output_data['Rejected No CSV'] = int(self.stats.get('rejected_no_csv', 0))
             output_data['Written To Flight Log'] = int(self.stats.get('written_to_flight_log', 0))
             output_data['Acceptance Rate %'] = float(f"{self.stats.get('accept_rate_pct', 0.0):.2f}")
             output_data['Delta Buckets'] = {
                 "Exact": int(self.stats.get('bucket_exact', 0)),
-                "0–4s": int(self.stats.get('bucket_0_4', 0)),
-                "4–15s": int(self.stats.get('bucket_4_15', 0)),
+                "0-4s": int(self.stats.get('bucket_0_4', 0)),
+                "4-15s": int(self.stats.get('bucket_4_15', 0)),
                 ">15s": int(self.stats.get('bucket_gt15', 0))
             }
             output_data['Unknown Camera Images'] = int(self.stats.get('unknown_camera_images', 0))
@@ -609,7 +628,7 @@ class GeoreferenceImages(RSModule):
         self.logger.info(f"Timestamp Parse Failures: {output_data['Timestamp Parse Failures']}")
         self.logger.info(f"Images With Valid Timestamps: {output_data['Images With Valid Timestamps']}")
         self.logger.info(f"Images Examined: {output_data['Images Examined']}")
-        self.logger.info(f"Matched ≤2s: {output_data['Matched ≤2s']}")
+        self.logger.info(f"Matched <=2s: {output_data['Matched <=2s']}")
         self.logger.info(f"Rejected >2s: {output_data['Rejected >2s']}")
         self.logger.info(f"Rejected No CSV: {output_data['Rejected No CSV']}")
         self.logger.info(f"Written To Flight Log: {output_data['Written To Flight Log']}")

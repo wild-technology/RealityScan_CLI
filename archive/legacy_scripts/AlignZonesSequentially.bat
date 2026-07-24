@@ -103,6 +103,9 @@ echo.
 rem Add images from zone folder
 echo [6/10] Adding images from zone folder...
 echo    This may take several minutes for large image sets...
+:: appIncSubdirs: see AlignImagesFromFolder.bat - without it a zone tree
+:: with per-camera subfolders adds 0 images in this 2.2 build.
+%RealityScan% -delegateTo %RS_INSTANCE% -set "appIncSubdirs=true"
 call :run -addFolder "%zone_input%" || goto :fail
 echo    SUCCESS: Images added from %zone_input%
 echo.
