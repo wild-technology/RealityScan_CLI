@@ -394,6 +394,26 @@ frozen as the NA167 raw log; all new findings go HERE.
   (.geometry/.texture/.mask) are the official reconciling mechanism.
   See docs/COLMAP_CROSSOVER.md. [H2023 + LilyJean fact base via
   HANDOFF] (2026-07-23)
+  - UPDATE 2026-07-24: full COLMAP fact base received from owner
+    (frozen copy docs/COLMAP_FINDINGS_UNIFIED.md). Its candidate
+    explanations for the conflict (F-20260723-33): ENGINE (RealityScan
+    applies internal tone mapping pre-detection), DETECTOR, or IMAGERY
+    REGIME (zone_9 baseline catastrophically flat vs LilyJean baseline
+    that aligns well). Also externally corroborated on the COLMAP side
+    (Summers & Jones, arXiv:2507.21715: enhancement generally degrades
+    feature matching; raw preferred). Their standing policy — geometry
+    on originals, color-correct only at texturing — is the opposite of
+    this pipeline's default; Q-05's four cells decide the
+    documentation-guide policy for both.
+- **Cross-engine Zeuss-camera anomaly** — COLMAP zone_9: 710 zeuss
+  frames REGISTERED but with ZERO triangulated points (contribute
+  nothing downstream; C-20260721-15/Q-07 in the COLMAP fact base) —
+  independently echoing this line's NA167 zone_13 A/B where XMP priors
+  cost 6.7 points of registration specifically on Zeuss [NA167 #4].
+  Two engines, two failure shapes, one physical camera family: treat
+  Zeuss calibration/imagery as suspect and prioritize per-camera
+  validation when Zeuss zones underperform. [RECON, via COLMAP fact
+  base] (2026-07-24)
 
 ## Windows & automation traps
 

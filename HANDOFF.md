@@ -93,6 +93,42 @@ placeholders; SHOULD-FIX/NITS backlog below; Claude Skill +
 documentation guide task (FINDINGS.md is the fact base, docs/ the
 rationale base).
 
+**Workflow-evaluation queue (owner-requested audit, 2026-07-24 —
+end goal: ALL components as big as possible in ONE final project,
+user evaluation gate before models, optional auto-proceed):**
+
+1. D7 on smoke BEFORE production merge_v2 (which merge attempt is
+   trustworthy).
+2. Merge-driver rework (merge_zones.py + MergeZoneComponents.bat):
+   deliverable becomes a saved .rsproj containing ALL surviving
+   components (merge mode currently exports maximal only); success
+   metric = total registered + maximal size, not maximal-fraction
+   `--target` alone; add input-union shrink accounting (align-mode
+   attempts can shrink and still "pass" today — manifests to check
+   against already exist); terminal state "EVALUATION READY" with
+   report (per-component members/counts/bboxes/twin decisions/orphans/
+   georef check) then owner gate or --auto_model (EOF-safe).
+3. Port AlignZone's successive-difference identity harvest to a dated
+   COPY of the final merge project (merged-stage exports are ordinal =
+   count-only today; evaluation gate needs per-component membership).
+4. Final orphan-pickup growth pass in the merged project (add all
+   images + union log + align under checkpoint/invariant) — merge
+   never adds images; cross-zone context is what rescued zone_14's.
+5. Fix GrowZone re-enable-all-before-save; CHECK zone_1 scene for
+   the disabled-images state (gates "keep final zone projects").
+6. Manifest<->scene name correlation by image set (selectComponent
+   no-ops on renamed-manifest names — becomes must-fix once
+   merge-scene deletion is in the loop).
+7. grow_zone: consider accepting zero-gain passes that REDUCE
+   component count (consolidation serves merging; invariant otherwise
+   unchanged — never-shrink stays the automated default).
+8. HYPOTHESIS to verify (then promote to FINDINGS): -align fuses via
+   image CONTENT (duplicated overlap frames match visually without
+   path identity), unlike -mergeComponents which needs path identity —
+   would make attempt-2 align_rematch the mechanistically sound rung
+   for duplicate-path zones and argue for inverting the attempt
+   ladder. NA167 D3 is not a counterexample (zero content overlap).
+
 ## 2026-07-24 (earlier) H2023 SESSION END STATE
 
 **Zone_1 growth completed after this was written — final: 4,429/4,540

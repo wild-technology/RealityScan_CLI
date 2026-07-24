@@ -25,20 +25,16 @@ H2023 nav, and `NA156_old_vs_new_comparison.md` are all ROV-nav
 material feeding both pipelines equally; the comparison doc validates
 ROVDataConcat old-vs-new, not photogrammetry).
 
-## 2. The LilyJean/COLMAP fact base (external, currently MISSING here)
+## 2. The COLMAP unified fact base (RECEIVED 2026-07-24)
 
-`HANDOFF.md` ("PENDING RECONCILIATION with LilyJean/COLMAP findings",
-filed 2026-07-23 by the Honeybadger session) cites a 34-entry fact base
-at `C:\Users\jonat\itsmagicIswear\FINDINGS.md`. **That path does not
-exist on this machine** (verified 2026-07-24; searched C:\Users\jonat to
-depth 3 — nothing matching itsmagic*/colmap-studio*). It presumably
-lives on the Honeybadger box. Everything below is second-hand via the
-HANDOFF quotes; treat as unverifiable from here until the file is
-copied over.
-
-**Owner action queued: copy `itsmagicIswear\FINDINGS.md` (and any
-colmap-studio research) off Honeybadger so the reconciliation matrix
-can cite it directly.**
+The owner delivered the merged COLMAP fact base (colmap_studio ⊕
+itsmagicIswear, C-*/F-* IDs) in-session on 2026-07-24; frozen copy:
+`docs/COLMAP_FINDINGS_UNIFIED.md`. Canonical home is the colmap_studio
+repo on the BIMBOX machine; the itsmagicIswear parent
+(`C:\Users\jonat\Desktop\CoyoteThings\itsmagicIswear\FINDINGS.md`) is
+frozen there. The RealityScan repo on that machine is checked out as
+`Desktop\CoyoteThings\RS_main` (the fact base's F-20260723-33/34 cite
+it by that name).
 
 ## 3. The one real crossover: preprocessing scope conflict
 
