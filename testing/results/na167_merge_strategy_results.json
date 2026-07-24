@@ -1,0 +1,254 @@
+{
+  "A1_align_zone_6": {
+    "success": true,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 61.6,
+    "xmp_total": 1598,
+    "xmp_with_pose": 1533,
+    "components": [
+      "Merged.rsalign"
+    ]
+  },
+  "A1_align_zone_14": {
+    "success": false,
+    "return_code": 1,
+    "errors": "An error occurred: process 65537 finished with result code 2147549183 in 3274 seconds.",
+    "duration_min": 54.9,
+    "xmp_total": 0,
+    "xmp_with_pose": 0,
+    "components": []
+  },
+  "A1_align_zone_4": {
+    "success": true,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 24.3,
+    "xmp_total": 1583,
+    "xmp_with_pose": 1438,
+    "components": [
+      "Merged.rsalign"
+    ]
+  },
+  "A1_merge_inplace_z6z4": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 20.3,
+    "mode": "merge",
+    "sets": [
+      "sfmMergeGeoreferencedComponents:false",
+      "sfmForceComponentRematch:false"
+    ],
+    "xmp_total": 1598,
+    "xmp_with_pose": 1533,
+    "components": [
+      "a1_merged_inplace.rsalign"
+    ]
+  },
+  "A2_align_zone_6": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 97.8,
+    "xmp_total": 1598,
+    "xmp_with_pose": 1534,
+    "components": [
+      "a2_zone_6.rsalign"
+    ]
+  },
+  "A2_align_zone_14": {
+    "success": false,
+    "hung": false,
+    "return_code": 1,
+    "errors": "An error occurred: process 65537 finished with result code 2147549183 in 1848 seconds.",
+    "duration_min": 31.2,
+    "xmp_total": 0,
+    "xmp_with_pose": 0,
+    "components": []
+  },
+  "A2_align_zone_4": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 20.8,
+    "xmp_total": 1572,
+    "xmp_with_pose": 1453,
+    "components": [
+      "a2_zone_4.rsalign"
+    ]
+  },
+  "A2_merge": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 16.8,
+    "mode": "merge",
+    "sets": [
+      "sfmMergeGeoreferencedComponents:false",
+      "sfmForceComponentRematch:false"
+    ],
+    "xmp_total": 1598,
+    "xmp_with_pose": 1534,
+    "components": [
+      "a2_merged.rsalign"
+    ]
+  },
+  "B_sequential": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 444.3,
+    "xmp_total": 4106,
+    "xmp_with_pose": 3906,
+    "components": [
+      "grown_b.rsalign"
+    ]
+  },
+  "C_joint": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 168.8,
+    "xmp_total": 4100,
+    "xmp_with_pose": 3904,
+    "components": [
+      "joint_c.rsalign"
+    ]
+  },
+  "A1_align_zone_14_retry": {
+    "success": false,
+    "hung": false,
+    "return_code": 1,
+    "errors": "An error occurred: process 65537 finished with result code 2147549183 in 1518 seconds.",
+    "duration_min": 25.5,
+    "xmp_total": 0,
+    "xmp_with_pose": 0,
+    "components": []
+  },
+  "D1_geo_merge": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 21.3,
+    "mode": "merge",
+    "sets": [
+      "sfmMergeGeoreferencedComponents:true",
+      "sfmForceComponentRematch:false"
+    ],
+    "xmp_total": 1598,
+    "xmp_with_pose": 1533,
+    "components": [
+      "d1_geo_merge.rsalign"
+    ]
+  },
+  "D2_geo_rematch_align": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 20.4,
+    "mode": "align",
+    "sets": [
+      "sfmMergeGeoreferencedComponents:true",
+      "sfmForceComponentRematch:true"
+    ],
+    "xmp_total": 1598,
+    "xmp_with_pose": 1533,
+    "components": [
+      "d2_geo_rematch.rsalign"
+    ]
+  },
+  "D3_align_sharedpath": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 16.9,
+    "mode": "align",
+    "sets": [
+      "sfmMergeGeoreferencedComponents:false",
+      "sfmForceComponentRematch:false"
+    ],
+    "xmp_total": 1598,
+    "xmp_with_pose": 1534,
+    "components": [
+      "d3_align_shared.rsalign"
+    ]
+  },
+  "D5_step1_grow_z6z14": {
+    "success": true,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 218.5,
+    "xmp_total": 875,
+    "xmp_with_pose": 870,
+    "components": [
+      "d5_grown_z6z14.rsalign"
+    ]
+  },
+  "D5_step2_merge": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 32.4,
+    "xmp_total": 1572,
+    "xmp_with_pose": 1453,
+    "components": [
+      "d5_merged.rsalign"
+    ]
+  },
+  "D5_alt_merge_grownB_z4": {
+    "success": true,
+    "hung": false,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 58.5,
+    "xmp_total": 4106,
+    "xmp_with_pose": 3906,
+    "components": [
+      "d5_alt_merged.rsalign"
+    ]
+  },
+  "D6_align_z6a": {
+    "success": true,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 42.0,
+    "xmp_total": 767,
+    "xmp_with_pose": 749,
+    "components": [
+      "d6_z6a.rsalign"
+    ]
+  },
+  "D6_align_z6b": {
+    "success": true,
+    "return_code": 0,
+    "errors": "",
+    "duration_min": 11.6,
+    "xmp_total": 350,
+    "xmp_with_pose": 342,
+    "components": [
+      "d6_z6b.rsalign"
+    ]
+  },
+  "D6_merge_halves": {
+    "success": false,
+    "hung": false,
+    "return_code": 1,
+    "errors": "",
+    "duration_min": 56.0,
+    "xmp_total": 0,
+    "xmp_with_pose": 0,
+    "components": [],
+    "verdict_guide": "fused ~1533 / unfused ~1000"
+  }
+}

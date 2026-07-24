@@ -560,8 +560,10 @@ class BatchDirectory(RSModule):
                 shutil.copy(file_path, output_path)
 
             # Optionally generate XMP sidecar with camera calibration priors
-            if self.params.get('batch_xmp_priors') is not None and \
-                    self.params['batch_xmp_priors'].get_value():
+            # (self.params is None until the orchestrator injects it - treat
+            # that the same as the parameter being absent/off)
+            prior_param = (self.params or {}).get('batch_xmp_priors')
+            if prior_param is not None and prior_param.get_value():
                 self.__generate_xmp_sidecar(file, camera_dir, camera_subfolder)
 
     def __generate_xmp_sidecar(self, image_filename: str, output_path: str, camera_type: str) -> None:

@@ -254,6 +254,35 @@ Other findings from the first runs:
 - `-exportRegistration` without a params XML blocks forever headless —
   avoid it until a params file saved from the GUI dialog exists.
 
+## PENDING RECONCILIATION with LilyJean/COLMAP findings (filed 2026-07-23)
+
+The LilyJean fact base (`C:\Users\jonat\itsmagicIswear\FINDINGS.md`, 34 dated/
+sourced entries) reached the OPPOSITE preprocessing verdict from this pipeline:
+on 3,607 LilyJean stereo pairs, both adaptive enhancement and fixed backscatter
+subtraction reduced COLMAP registration ~30% vs originals (F-20260721-02,
+F-20260723-01) — while this repo's CLAHE 2.0/8×8 pre-alignment default is
+validated on zone_9 where the baseline aligns to NOTHING (recorded there as
+counter-evidence F-20260723-33). Both results are real; scope is unresolved.
+
+When the colmap-studio research completes, run the reconciliation matrix (Q-05):
+zone_9 {baseline, CLAHE} × COLMAP, and LilyJean {originals, CLAHE} × this
+pipeline's RealityScan alignment, judged on REGISTRATION (not keypoints —
+F-20260723-03). Outcome decides whether preprocess_images stays default-on,
+becomes per-dataset, or moves to texture-only.
+
+Also relevant from that fact base for this repo:
+- RealityScan Image Layers (`.geometry`/`.texture`/`.mask`, F-20260723-23) are
+  the official mechanism for "originals align, corrected images texture" — the
+  reconciling architecture if CLAHE ends up texture-only.
+- Staff caution against over-masking (F-20260723-31) and Ultra detector
+  sensitivity manufacturing noise points (F-20260723-26) — relevant to
+  `masking.py` and AlignmentParams choices on turbid imagery.
+- No stereo-rig support in RealityScan (staff-confirmed through Aug 2025,
+  F-20260723-27): Voyis-rig scale must come from GCPs/distance constraints/
+  locked XMP — consistent with this repo's per-rig XMP-priors caution (the
+  NA167 zone_13 A/B where priors cost 6.7 points of registration is recorded
+  as F-20260723-34).
+
 ## Known loose ends
 
 - `geoall.py` (canonical) and `modules/georeference/georeference_images.py`

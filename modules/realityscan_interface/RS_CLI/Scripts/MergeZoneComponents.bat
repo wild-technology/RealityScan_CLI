@@ -3,13 +3,16 @@ setlocal enabledelayedexpansion
 :: Import every .rsalign component from a folder into a fresh scene, merge
 :: them, and export the merged component.
 ::
-:: Merge mechanisms (RealityScan 2.2):
-::   - "merge": the -mergeComponents command. Merges existing components
-::     without adding new images; needs shared cameras, control points,
-::     or (with sfmMergeGeoreferencedComponents=true) georeferencing.
+:: Merge mechanisms (RealityScan 2.2, empirically verified - see
+:: testing/FINDINGS.md #23-#26, #30):
+::   - "merge": the -mergeComponents command. Fuses ONLY through cameras
+::     shared by identity (same image path in both components). With no
+::     shared cameras it exits SUCCESS and silently leaves components
+::     separate - verify merges by camera count, never exit status.
+::     sfmMergeGeoreferencedComponents did NOT enable overlap-free
+::     merging headless, despite the official docs.
 ::   - "align": -align with components present - RealityScan's align
-::     update re-registers components and can fuse them, modulated by
-::     sfmForceComponentRematch / sfmMergeGeoreferencedComponents.
+::     update; same shared-camera requirement observed.
 ::
 :: Arguments:
 ::   %1 folder containing .rsalign files, OR a .complist file: a text file
@@ -161,6 +164,9 @@ echo Exporting merged component
 :: exports are selection-driven - under -silent the "Export Selection"
 :: dialog auto-answer then exports NOTHING (census read 0; FINDINGS.md).
 call :run -deselectAllImages || goto :fail
+:: setMinComponentSize is deprecated in 2.2 ("removed in the next
+:: release") but still required here - without it small components are
+:: silently excluded from selection/export (default threshold 5)
 call :run -setMinComponentSize 1 || goto :fail
 call :run -selectMaximalComponent || goto :fail
 call :run -renameSelectedComponent "%merged_name%" || goto :fail
