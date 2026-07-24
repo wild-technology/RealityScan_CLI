@@ -434,6 +434,26 @@ frozen as the NA167 raw log; all new findings go HERE.
   self-test PASSED in the same probe (results_RS1.log grew after the
   CRLF normalization). [H2023] (2026-07-24)
 
+- **A merge/align leaves the SOURCE components in the scene alongside
+  the fused component.** Smoke E2E of the reworked merge driver
+  (2026-07-24): after fusing 78+42, the peel loop read components
+  [120, 78, 42] — the fusion PLUS both originals. The legacy
+  maximal-only export naturally picked the fused one, which is why
+  this went unnoticed. Consequences: (a) any all-components export of
+  a merge scene contains residual source copies — consumers must
+  attribute, not enumerate (merge_zones.attribute_result: largest-first
+  subset matching, residual = count equal to an already-consumed
+  input); (b) component COUNT in a merge scene is not "how many
+  features" — never use it directly. Discovered: peel harvest counts +
+  exact 120=78+42 arithmetic. [H2023] (2026-07-24)
+- **Peel-loop terminal state: -selectMaximalComponent on an EMPTY scene
+  silently no-ops and the following -renameSelectedComponent fails
+  E_INVALIDARG 0x80070057 (2147942487) "in 0 seconds"** — there is no
+  CLI query for "how many components remain", so the tolerated rename
+  failure IS the loop's exhaustion signal (:run_peelrename, marker
+  moved to expected_peelend_<inst>.txt as evidence). Same pattern as
+  the tolerated 18002 flight-log import. [H2023] (2026-07-24)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT

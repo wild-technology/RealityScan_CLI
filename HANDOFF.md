@@ -1,5 +1,37 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-07-24 (evening) FULL FRESH RUN IN FLIGHT — owner deliverable
+
+**Owner directives (2026-07-24 afternoon):** iterate until the workflow
+is fully tested/reworked/QA'd AND a full fresh run (raw images + nav →
+final project) completes; run the last zone-merge steps GUI-VISIBLE;
+deliverable = an OPEN, completely aligned project on the desktop by
+morning. Screenshots may verify GUI-only questions.
+
+**State when this section was written:**
+- D7 probe DONE → content-fusion rule established (FINDINGS "D7
+  RESOLVED"); hook liveness PASSED; merge driver reworked feature-aware
+  and unit-tested (44 tests); MergeZoneComponents.bat gained
+  assemble mode + count-based peel harvest with tolerant terminal.
+- Fresh workspace D:/na156_h2023_fresh: georef 4,598/4,598 → CLAHE →
+  3 zones batched (zone_1 4,540 / zone_2 852 / zone_3 124, calibration
+  sidecars + filtered logs).
+- Production zone aligns RUNNING (sequential, RS1, headless,
+  'Batch Directory,RealityScan Alignment' chain, project label
+  NA156_H2023_FRESH). Budget declaration: 2.5–5.5 h total for the three
+  zones; peak RAM well under the box; abort = stall >45 min / exit
+  code 3 / rollback storm.
+- NEXT after aligns: (1) re-verify the fixed peel E2E on the smoke pair
+  (RS1 free between stages); (2) cross-zone merge via the NEW
+  merge_zones.py with --visible true (owner wants to watch); (3) leave
+  the assembly .rsproj OPEN in a visible RealityScan instance on the
+  desktop; screenshot-verify georeferencing/seams (U7 proxy).
+- Growth stage (grow_zone.py) is DELIBERATELY SKIPPED for the fresh
+  run deliverable: zone_1/zone_2 production growth showed re-solve
+  passes reject or shrink (growth ≈ cheap insurance); the morning
+  deliverable is the aligned+merged project. Run growth later if the
+  evaluation gate shows recoverable orphans.
+
 ## 2026-07-24 (later) ONBOARDING SESSION — recommendations produced
 
 The "onboard, then produce implementation recommendations" task below is
