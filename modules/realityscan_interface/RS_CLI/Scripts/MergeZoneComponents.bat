@@ -52,9 +52,9 @@ if errorlevel 1 exit /b 1
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
 
-if [%1] == [] ( echo ERROR: components folder argument required & exit /b 1 )
-if [%2] == [] ( echo ERROR: output directory argument required & exit /b 1 )
-if [%3] == [] ( echo ERROR: merged name argument required & exit /b 1 )
+if [%1] == [] ( echo ERROR: components folder argument required & goto :argfail )
+if [%2] == [] ( echo ERROR: output directory argument required & goto :argfail )
+if [%3] == [] ( echo ERROR: merged name argument required & goto :argfail )
 set "components_dir=%~1"
 set "output_dir=%~2"
 set "merged_name=%~3"
@@ -69,9 +69,9 @@ if /i "%components_dir:~-9%" == ".complist" set "list_mode=1"
 
 set /a component_count=0
 if defined list_mode (
-    if not exist "%components_dir%" ( echo ERROR: complist not found: %components_dir% & exit /b 1 )
+    if not exist "%components_dir%" ( echo ERROR: complist not found: %components_dir% & goto :argfail )
     for /f "usebackq delims=" %%F in ("%components_dir%") do (
-        if not exist "%%~F" ( echo ERROR: component not found: %%~F & exit /b 1 )
+        if not exist "%%~F" ( echo ERROR: component not found: %%~F & goto :argfail )
         set /a component_count+=1
     )
 ) else (
@@ -79,9 +79,18 @@ if defined list_mode (
 )
 if %component_count% LSS 2 (
     echo ERROR: need at least 2 components, found %component_count%
-    exit /b 1
+    goto :argfail
 )
 if not exist "%output_dir%" mkdir "%output_dir%"
+goto :args_ok
+
+:: Argument/precondition failures land here. `exit /b N` inside a
+:: multi-statement parenthesized block returns 0 to the process caller
+:: (Windows trap registry) - every validation above jumps here instead.
+:argfail
+exit /b 1
+
+:args_ok
 
 echo Starting RealityScan
 call "%~dp0startRealityScan.bat"

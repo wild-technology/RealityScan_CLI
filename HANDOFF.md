@@ -1,5 +1,45 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-07-24 (later) ONBOARDING SESSION — recommendations produced
+
+The "onboard, then produce implementation recommendations" task below is
+DONE: **`docs/MERGE_REWORK_RECOMMENDATIONS.md`** is the answer to the
+workflow-evaluation queue (Q1–Q10), with a recommended order of work.
+Read it after this section. What this session settled:
+
+- **The feature geography is in the manifests, and it makes the merge
+  target unreachable**: three spatially disjoint clusters — hull 3,720
+  images, bow 686, west pocket 102, hull ∩ bow = 0 shared basenames.
+  Maximal-component ceiling 80.9% vs `--target` 0.83/0.85. Confirms the
+  owner's bow/hull statement from data and quantifies hazard #2.
+  Recommended fix is cluster-partitioned merge scenes (one per
+  border-connected cluster) — bow and west pocket then get ZERO merge
+  attempts instead of ~1.7 h of guaranteed-useless ladder.
+- **`D:\na156_h2023\merged` is superseded, not a baseline** (5 ordinal
+  exports, empty twin_plan, predates manifests). Stop citing its 83.9%.
+- **Zone_1's saved scene escaped the GrowZone disabled-images bug** —
+  every component pass was rolled back; `zone_1.rsproj` mtime is the
+  `merge` pass's save (all-enabled state). The code bug still stands.
+  Confirm in the GUI; the argument is timestamp inference.
+- **`-mergeComponents` consolidated zone_1 from 9 components to 4** —
+  direct support for queue item 7.
+- **MUST-FIX applied**: MergeZoneComponents.bat complist validations now
+  route to a top-level `:argfail`. Before/after measured with `cmd //c`:
+  a missing complist or missing component returned **0** and would have
+  been reported then IGNORED by the driver; now returns 1.
+- **Two review items CLOSED as non-issues by measurement**: the shared
+  `:run` error-detection channel is LIVE (probe with a non-empty errors
+  marker aborts, empty continues), and `startRealityScan.bat`'s nested
+  boot-timeout `exit /b 1` propagates correctly through `call`. The
+  cmd trap is narrower than recorded — see the refined FINDINGS entry.
+
+Self-tests run: 31 tests pass; all .bat/.vbs confirmed CRLF;
+rs_settings.json paths all resolve after the repo move. **Still owed at
+the next live run: hook-chain liveness (results_<inst>.log must grow).**
+
+Next concrete step: the smoke-fixture D7 + content-fusion probe (Q1+Q9),
+before any production merge_v2.
+
 ## NEW-SESSION ONBOARDING (prepared 2026-07-24, session end)
 
 The repo now lives at `C:\Users\jonat\OneDrive\Desktop\CoyoteThings\

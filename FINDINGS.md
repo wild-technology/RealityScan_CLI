@@ -349,6 +349,64 @@ frozen as the NA167 raw log; all new findings go HERE.
   quit-no-save produced .rsalign + manifest (118 members by real
   basename, UTM bbox), census from manifests == original registration,
   zero pose sidecars left beside images. [H2023] (2026-07-23)
+- **H2023's feature geography is IN the manifests, and it makes the
+  maximal-fraction merge target mathematically unreachable.** Running
+  `component_analysis.merge_plan` over the 12 zone manifests
+  (`aligned_components`, pure analysis, no RealityScan) resolves three
+  spatially disjoint UTM clusters:
+  - hull — zone_1 c0/c1/c3/c4/c5/c6/c7/c8 + zone_2 c1, bbox band
+    E 594693–594719 / N 2345096–2345160, **3,720 unique images**;
+  - bow — zone_2 c0 (686) and its twin zone_1 c2 (672), identical bbox
+    E 594653–594668 / N 2345217–2345251, ~60 m NW, **686 images**;
+  - west pocket — zone_2 c2, E 594599–594607 / N 2345248–2345256,
+    another ~50 m west, **102 images**.
+  Hull ∩ bow = **0 shared basenames**, so no merge mechanism (shared
+  cameras or content rematch) can ever fuse them. Ceiling on the
+  maximal component is therefore 3,720/4,600 = **80.9%**, below both
+  `--target` values ever used (0.85 in the `merged` run, 0.83 in
+  rs_settings). merge_zones.py must run the full three-attempt ladder
+  (~1.7 h) and exit 1 on a CORRECT result. Discovered: manifest
+  analysis during 2026-07-24 onboarding; confirms the owner's bow/hull
+  statement from the data independently, and quantifies HANDOFF's
+  size-based-hazard #2. [H2023] (2026-07-24)
+- **The `merged/` run is superseded, not a baseline** — its
+  `components_in` are five ordinal `Component N.rsalign` exports with
+  an EMPTY twin_plan (it predates manifests). Its three attempts read
+  3,860 / 3,855 / 3,855 cameras (83.9%, 83.8%, 83.8%) and it exited
+  "no attempt reached the 85% target". Read with the clusters above,
+  3,860 is a hull-cluster maximal component, not a shortfall. Do not
+  cite it as evidence about merge mechanism. [H2023] (2026-07-24)
+- **`-mergeComponents` as a rigid consolidation pass really does
+  consolidate: zone_1 went 9 components → 4** (growth pass `merge`,
+  38 min, accepted). Discovered: `growth/zone_1/final_components`
+  holds four ordinal `Component N (1).rsalign` files against the nine
+  manifested pre-growth exports, same 4,392-image union. Supports
+  HANDOFF queue item 7 (a zero-camera-gain pass that reduces component
+  count still serves the merge stage). [H2023] (2026-07-24)
+- **The zone_1 growth +37 census delta most likely = cameras below the
+  50-camera export floor, absorbed by the rigid merge** (HYPOTHESIS,
+  not yet proven). Both the identity harvest and every census export
+  run under `setMinComponentSize 50`, so members of sub-50 components
+  are invisible to the census; the only accepted mutation before the
+  +37 appeared was the 9→4 consolidation. Cannot be closed from the
+  report alone — `try_build_manifests` produced ZERO manifests for the
+  post-growth exports (B10 ordinal rule: identity is unharvestable
+  outside the original aligning scene), so post-growth membership does
+  not exist to diff. Test: re-census the zone_1 scene at
+  `setMinComponentSize 1`. [H2023] (2026-07-24)
+- **The GrowZone disabled-images bug did NOT reach the zone_1
+  authoritative artifact — because every component pass was rolled
+  back.** GrowZone.bat component mode disables all images, enables a
+  subset, aligns, and falls through to `:save_quit` with no
+  re-enable, so each of the eight passes saved a crippled scene; the
+  driver then restored the checkpoint each time. Timestamp evidence:
+  `zone_1.rsproj` mtime 03:31:57 == the `merge` pass's save; all
+  component passes ran 03:31→03:54 and were rolled back; the surviving
+  checkpoints are `initial` and `grow_s1_zone_1_c7` (taken before the
+  last pass, i.e. the post-merge all-enabled state). The code bug
+  stands (HANDOFF queue item 5) — a single ACCEPTED component pass
+  would persist it. Confirm in the GUI before trusting the scene.
+  [H2023] (2026-07-24)
 
 ## Resource envelope & monitoring
 
@@ -434,6 +492,32 @@ frozen as the NA167 raw log; all new findings go HERE.
   0 to the caller**; the single-line `( echo msg & exit /b 1 )` form
   propagates correctly. Never put exit /b inside multi-line parens; use
   single-line chains or goto. [H2023] (2026-07-23)
+  - **REFINED 2026-07-24 by direct measurement** (four probe .bats,
+    `cmd //c`, before/after on MergeZoneComponents.bat). The code is
+    lost in exactly ONE configuration: `exit /b` sitting inside an
+    outer multi-line parenthesized block (an `if (...)` body or a
+    `for ... do (...)` body) in the body of the script that IS the
+    process entry point. Measured:
+    - top-level `( echo … & exit /b 1 )` → **1** (correct);
+    - top-level multi-line `if … (` … `exit /b 1` `)` → **1** (correct
+      — the original review finding over-reached here);
+    - `exit /b 1` in an `if`-block nested inside `if defined … (` → **0**;
+    - `exit /b 1` in an `if`-block nested inside a `for /f … do (` → **0**;
+    - the same nested shapes inside a `call :label` SUBROUTINE → **1**;
+    - the same nested shape in a `call`ed CHILD .bat → **1**.
+    Consequences, both verified rather than assumed: (a) the shared
+    `:run` abort contract is **LIVE** — a probe replicating `:run` with
+    a non-empty errors marker aborts (exit 1) and with an empty one
+    continues, so `call :run … || goto :fail` does detect RealityScan
+    errors in every workflow; (b) `startRealityScan.bat`'s nested
+    boot-timeout `exit /b 1` propagates correctly through `call`, so
+    the "timeout exit-code shape" review item is a NON-ISSUE; (c) the
+    only genuinely broken sites were MergeZoneComponents.bat's
+    top-level complist validations (missing complist, missing
+    component) — both returned 0, i.e. an unreadable component list
+    would have been reported and then IGNORED by the driver. Fixed by
+    routing every validation to a top-level `:argfail` label.
+    [H2023] (2026-07-24)
 - **cmd label-search fails on LF-only line endings** — "cannot find the
   batch label" strikes intermittently at LF-only byte offsets, even
   after earlier `call :label` calls in the same file succeeded. All
