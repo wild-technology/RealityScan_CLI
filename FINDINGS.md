@@ -473,6 +473,20 @@ frozen as the NA167 raw log; all new findings go HERE.
   .rsproj in RC_projects one level up from the zone image directory;
   saves after components / merge / texture / final model. (owner
   requirement 2026-07-23)
+- **Final per-zone alignment projects are the AUTHORITATIVE artifacts;
+  the cross-zone merged project is derived and never trusted over
+  them** (owner rationale 2026-07-24). The saved zone project = the
+  post-growth accepted state ("as big as the components got
+  within-zone"), all images re-enabled, paired with its identity
+  manifests as one recovery unit. Three reasons: (a) hand-evaluation
+  fallback when the merged result looks wrong — it shows exactly what
+  the merge stage was handed, per feature; (b) per-component identity
+  is only harvestable from the original aligning scene (B10 ordinal
+  rule) and re-alignment is nondeterministic, so a lost zone project
+  means unrebuildable identity; (c) the merge stage is the
+  least-proven link (D7 open, silent non-merge modes on record) —
+  recovery from a bad merge must never require re-running the stage
+  upstream of these saves. (2026-07-24)
 - Model recipe (owner 2026-07-23): high → remove marginal → remove
   large(30) → largest component → closeHoles+clean → simplify(noise)
   → texture → 4× simplify(smooth 80%)+clean → unwrap → reproject.
