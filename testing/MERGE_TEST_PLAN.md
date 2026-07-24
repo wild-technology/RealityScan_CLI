@@ -149,6 +149,47 @@ AND seam inspection. Decides whether flight-log constraints in the
 merge scene enable georef-based placement headless, and whether such
 placement is fusion or mere co-location.
 
+### D7 probe wave (2026-07-24, H2023 smoke fixture — testing/probe_d7.py)
+
+Fixtures: `smoke_test/zones_d7/zone_c` = mini_a's 80 non-shared images,
+`zone_d` = mini_b's 80 non-shared images (zero shared basenames, zero
+shared paths), each with filtered flight log + calibration sidecars,
+aligned via AlignZone.bat (min size 10). Overlap pair = existing
+mini_a_c0 (118) + mini_b Component 2 (62), 40 duplicated-content
+basenames at different paths. Census = pose-XMP count under the cell's
+images root (sanitized after every read); fused iff census ≈ sum of the
+pair, not-fused iff census ≈ max. RS log snapshotted per cell
+("Finalizing N component"). The first align doubles as the hook-chain
+liveness self-test (results_RS1.log must be non-empty after it).
+
+Budget declaration: 2 aligns (~3–10 min each) + 4 merge cells (~2–10 min
+each) ≈ ≤90 min total; RAM trivial (≤240 images); abort criterion: any
+single workflow stalled >30 min.
+
+| Cell | Inputs | Mechanism | Log+update? | Hypothesis | Status |
+|---|---|---|---|---|---|
+| P0_align_c / P0_align_d | zone_c, zone_d | AlignZone.bat | per-zone log | both produce ≥1 comp ≥10 cams; liveness passes | DONE(zone_c 78/80 1 comp 94 s; zone_d 78/80 2 comps [c0=42, c1=36] 124 s; hook liveness PASSED) |
+| D7b_zero_nolog (known-bad oracle) | zone_c+zone_d_c0 comps | merge, georef:true prior:true | NO | census = max (no fuse; local replication of NA167 D1) | **DONE — HYPOTHESIS REFUTED: FUSED, census 120 = 78+42 exact, "Finalizing 1 component", 70 s.** The pair shares zero basenames/paths but views the same wreck strip — content overlap sufficed |
+| D7a_zero_log (decisive as designed; overtaken by D7b) | same | merge, georef:true prior:true | YES | co-location vs content discriminator | DONE(FUSED, 120, 57 s — identical to D7b, so the log played no role in fusion) |
+| Q9a_content_align_nolog | mini_a_c0 + mini_b_c2 | align, rematch:true | NO | content fusion real? | DONE(**FUSED, 180, 68 s** — content fusion confirmed for align mode too) |
+| D7c_repl_overlap_log (known-good oracle) | mini_a_c0 + mini_b_c2 | merge, georef:true prior:true | YES | census ≈ 180 (replicates the 66 s fusion) | DONE(FUSED, 180, 93 s — replication holds) |
+
+**VERDICT (one rule explains every observation to date): fusion is
+CONTENT-driven.** Content overlap => fusable by either mechanism, with
+or without scene georef constraints; zero content overlap => silent
+no-fuse regardless of flags (NA167 D1–D3 pairs had zero content
+overlap — z6+z4 never see the same seafloor — so they are consistent,
+not contradictory). The union log remains REQUIRED for georeferencing
+the merged result; it just isn't the fusion mechanism. Ladder
+inversion (queue #9) unnecessary; bbox border gating is the correct
+candidate filter (content overlap requires spatial adjacency). Full
+entry: FINDINGS.md 2026-07-24 "D7 RESOLVED".
+
+Caveat recorded up front: merge-scene aligns (Q9a) run on instance
+defaults + the passed keys only — MergeZoneComponents.bat does not apply
+AlignmentParams.xml (same condition as the NA167 D2/D3 cells it is
+compared against; consistency preferred over purity here).
+
 ### Wave 3 — conditional follow-ups (PLANNED, gated on waves 1–2)
 
 | Cell | Trigger | Test |

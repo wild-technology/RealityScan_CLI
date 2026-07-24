@@ -154,6 +154,13 @@ def parse_arguments(argv, params, logger) -> None:
                     val = inp.lower() in ('true', 't', 'yes', 'y')
                 else:
                     val = p.get_type()(inp)
+            except EOFError:
+                # Unattended run (stdin closed / hidden console): take the
+                # stored default silently - same convention as the module
+                # prompts (Windows trap registry: isatty() lies, input()
+                # must always be EOF-safe).
+                logger.info(f'Non-interactive: {p.get_name()} = {last_value}')
+                val = last_value
             except ValueError:
                 logger.warning(f'Invalid value for {p.get_name()}, using default {p.get_default_value()}')
                 val = p.get_default_value()

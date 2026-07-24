@@ -663,10 +663,17 @@ class BatchDirectory(RSModule):
 
     def _prompt_int(self, key: str, message: str, fallback: int) -> int:
         """Integer prompt whose last-entered value persists as the next
-        run's default (rs_settings.json, section "batch")."""
+        run's default (rs_settings.json, section "batch").
+
+        EOF-safe: unattended runs (hidden consoles report isatty()=True
+        with an EOF stdin) silently take the stored/fallback value - the
+        same convention as merge_zones/grow_zone ask()."""
         stored = self.settings.get('batch', key, fallback)
         while True:
-            raw = input(f"{message} [{stored}]: ").strip()
+            try:
+                raw = input(f"{message} [{stored}]: ").strip()
+            except EOFError:
+                raw = ''
             if not raw:
                 value = int(stored)
                 break
@@ -682,7 +689,10 @@ class BatchDirectory(RSModule):
                       lo: float = None, hi: float = None) -> float:
         stored = self.settings.get('batch', key, fallback)
         while True:
-            raw = input(f"{message} [{stored}]: ").strip()
+            try:
+                raw = input(f"{message} [{stored}]: ").strip()
+            except EOFError:
+                raw = ''
             try:
                 value = float(stored) if not raw else float(raw)
             except ValueError:
@@ -765,7 +775,13 @@ class BatchDirectory(RSModule):
 
             self.__plot_results(gdf_processed, final_zones, output_dir)
 
-            user_input = input("Accept these batches? (a)ccept, (r)eject and set new params: ").strip().lower()
+            # EOF-safe: an unattended run cannot answer - auto-accept the
+            # computed batches (the summary above is in the log for review).
+            try:
+                user_input = input("Accept these batches? (a)ccept, (r)eject and set new params: ").strip().lower()
+            except EOFError:
+                self.logger.info("Non-interactive run: batches auto-accepted.")
+                user_input = 'a'
             if user_input == 'a':
                 self.logger.info("Batches accepted. Proceeding to copy files.")
                 break
@@ -848,10 +864,20 @@ class BatchDirectory(RSModule):
         output_dir = os.path.join(self.params['output_dir'].get_value(), 'batched_images_by_zone')
         if os.path.isdir(output_dir) and os.listdir(output_dir):
             self.logger.warning('Batched images folder already exists and may contain old plots. Overwrite? (y/n)')
-            overwrite = input()
-            if overwrite.strip().lower() != 'y':
-                return False, 'Batched images folder not created'
-            else:
+            try:
+                overwrite = input()
+            except EOFError:
+                # Unattended run: REUSE the existing folder without deleting
+                # anything - zone recomputation is deterministic for the
+                # same log+parameters and __copy_files skips files already
+                # present, so this is the resume path, not data loss.
+                # (Interactive 'y' still wipes for a truly clean rebuild.)
+                self.logger.info('Non-interactive: reusing existing batched '
+                                 'folder (copies are skipped if present).')
+                overwrite = None
+            if overwrite is not None:
+                if overwrite.strip().lower() != 'y':
+                    return False, 'Batched images folder not created'
                 shutil.rmtree(output_dir)
 
         if not os.path.isdir(output_dir):

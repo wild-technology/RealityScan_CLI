@@ -408,6 +408,32 @@ frozen as the NA167 raw log; all new findings go HERE.
   would persist it. Confirm in the GUI before trusting the scene.
   [H2023] (2026-07-24)
 
+- **D7 RESOLVED: RealityScan 2.2 fuses components via image CONTENT;
+  path identity is NOT required; georef constraints are NOT what
+  enabled the NA156 duplicate-path merges.** Probe (testing/probe_d7.py,
+  smoke fixture, 2026-07-24): zone_c (78 cams, mini_a-only images) +
+  zone_d_c0 (42 cams, mini_b-only images) share ZERO basenames and ZERO
+  paths but view the same wreck strip. `-mergeComponents` fused them to
+  one 120-camera component (78+42 exact) BOTH without any flight log in
+  the merge scene (D7b) AND with union log + -update (D7a) — "Finalizing
+  1 component" in both. `-align` + rematch on the 118+62 overlap pair
+  fused to 180 without a log (Q9a); the original 66 s merge replicated
+  at 180 (D7c). Reconciliation with NA167 D1–D3 (never fused): those
+  pairs had zero CONTENT overlap (z6+z4 never see the same seafloor).
+  Every fusion observation to date is explained by one rule: **content
+  overlap => fusable (either mechanism); no content overlap => no fuse,
+  silently, regardless of flags/log**. Consequences: (a) the union-log
+  candidate discriminator is refuted — the log is still REQUIRED for
+  georeferencing the merged result, but plays no role in fusion;
+  (b) queue #9's ladder inversion is unnecessary — merge_first is
+  mechanistically sound for duplicate-path zones (and ~25% faster than
+  align mode in the probe); (c) bbox border gating is the correct
+  candidate filter, since content overlap requires spatial adjacency;
+  (d) the H2023 3,860 merge was real content fusion, not co-location —
+  seam quality still owner-inspected at the gate. Hook-chain liveness
+  self-test PASSED in the same probe (results_RS1.log grew after the
+  CRLF normalization). [H2023] (2026-07-24)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT

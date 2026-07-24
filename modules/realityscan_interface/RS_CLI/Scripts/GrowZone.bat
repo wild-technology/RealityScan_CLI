@@ -259,6 +259,15 @@ goto :save_quit
 
 :: ------------------------------------------------------------ save/quit
 :save_quit
+:: Component-mode passes disable most of the scene (inpEnabled=false)
+:: and that state PERSISTS INTO THE SAVE - a saved zone project must
+:: always be the all-enabled state (it is the authoritative artifact;
+:: FINDINGS 2026-07-24). Re-enable everything before every save; a
+:: no-op for modes that never disabled anything.
+echo Re-enabling all images before save
+call :run -selectAllImages || goto :fail
+call :selEnable || goto :fail
+call :run -deselectAllImages || goto :fail
 echo Saving scene in place
 call :run -save "%scene_path%" || goto :fail
 

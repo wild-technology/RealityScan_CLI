@@ -143,79 +143,11 @@ def take_census(images_root: str, stem_index: dict[str, str], logger) -> set[str
 # ----------------------------------------------------------------------
 # Scene checkpoint / rollback (owner-mandated design: bundle file copy)
 # ----------------------------------------------------------------------
-
-def scene_bundle(scene_path: str) -> list[str]:
-    """The .rsproj plus its companion data folder. A RealityScan save
-    produces a sibling directory named exactly after the project stem
-    (e.g. zone_1/ next to zone_1.rsproj) holding the bulky state as flat
-    .dat blobs (sfmN.dat, appConfig0.dat, controlpoints0.dat, ...) -
-    verified on D:/na156_h2023/aligned_components 2026-07-23. The extra
-    candidates are defensive, in case a future build renames the folder."""
-    stem = os.path.splitext(scene_path)[0]
-    candidates = [scene_path, stem, stem + '.Data', scene_path + '.data']
-    return [p for p in candidates if os.path.exists(p)]
-
-
-def checkpoint_scene(scene_path: str, checkpoints_dir: str, tag: str,
-                     logger) -> str:
-    dest = os.path.join(checkpoints_dir, tag)
-    if os.path.isdir(dest):
-        shutil.rmtree(dest)
-    os.makedirs(dest)
-    for src in scene_bundle(scene_path):
-        target = os.path.join(dest, os.path.basename(src))
-        if os.path.isdir(src):
-            shutil.copytree(src, target)
-        else:
-            shutil.copy2(src, target)
-    logger.info('checkpoint "%s" -> %s', tag, dest)
-    return dest
-
-
-def restore_scene(scene_path: str, checkpoints_dir: str, tag: str, logger) -> None:
-    """Rollback = restore the pre-pass scene snapshot to the SAME path.
-
-    Deliberately NOT the export/fix/reimport round trip: reimported
-    components do not contain the never-registered orphan images, so a
-    round-trip rollback would silently drop them from the scene
-    (owner-confirmed 2026-07-23). Relocated .rsalign imports also hang
-    the instance (hard rule 7). The bundle copy avoids both hazards."""
-    src_dir = os.path.join(checkpoints_dir, tag)
-    if not os.path.isdir(src_dir):
-        raise FileNotFoundError(f'checkpoint "{tag}" not found in {checkpoints_dir}')
-    # Remove the rejected bundle first so stale sidecar data can never
-    # mix with the restored snapshot.
-    for cur in scene_bundle(scene_path):
-        if os.path.isdir(cur):
-            shutil.rmtree(cur)
-        else:
-            os.remove(cur)
-    scene_dir = os.path.dirname(os.path.normpath(scene_path))
-    for name in os.listdir(src_dir):
-        src = os.path.join(src_dir, name)
-        target = os.path.join(scene_dir, name)
-        if os.path.isdir(src):
-            shutil.copytree(src, target)
-        else:
-            shutil.copy2(src, target)
-    logger.info('rolled back scene from checkpoint "%s"', tag)
-
-
-def prune_checkpoints(checkpoints_dir: str, keep: set[str], logger) -> None:
-    """Scene bundles are large (multi-GB); keep only the initial
-    checkpoint and the most recent one."""
-    if not os.path.isdir(checkpoints_dir):
-        return
-    for name in os.listdir(checkpoints_dir):
-        if name in keep:
-            continue
-        path = os.path.join(checkpoints_dir, name)
-        if os.path.isdir(path):
-            try:
-                shutil.rmtree(path)
-                logger.info('pruned checkpoint "%s"', name)
-            except OSError as exc:
-                logger.warning('could not prune checkpoint %s: %s', name, exc)
+# Implementation moved to module_base/scene_checkpoint.py (2026-07-24)
+# so the cross-zone merge driver shares the SAME battle-tested restore
+# path. Re-exported here for existing callers/tests.
+from module_base.scene_checkpoint import (  # noqa: F401
+    scene_bundle, checkpoint_scene, restore_scene, prune_checkpoints)
 
 
 # ----------------------------------------------------------------------
@@ -832,6 +764,29 @@ def main() -> int:
         'component_passes_used': passes_used,
         'components': final_components,
     }
+
+    # grow -> merge handoff (review backlog MUST-FIX, 2026-07-24): a
+    # .complist naming every final component at its authoritative export
+    # path, consumable directly by merge_zones.py --complist. Only
+    # MANIFESTED components are listed - the feature-aware merge refuses
+    # anonymous inputs (B10: post-growth ordinal exports carry no
+    # identity), so when growth accepted nothing the pre-growth
+    # manifested exports are the right merge inputs and this list simply
+    # points back at them.
+    complist_path = os.path.join(output_dir, 'final.complist')
+    listed = []
+    for name, entry in sorted(final_components.items()):
+        rsalign = entry.get('rsalign')
+        if rsalign and os.path.isfile(rsalign) and os.path.isfile(
+                rsalign + '.manifest.json'):
+            listed.append(rsalign)
+    with open(complist_path, 'w', encoding='utf-8', newline='\r\n') as f:
+        f.write('\n'.join(listed) + '\n')
+    report['final']['complist'] = complist_path
+    report['final']['complist_components'] = len(listed)
+    logger.info('merge handoff: %d manifested component(s) -> %s',
+                len(listed), complist_path)
+
     save_report()
     logger.info('grow complete: %d/%d unique images registered (%.1f%%); '
                 'report: %s', registered, len(all_basenames),
