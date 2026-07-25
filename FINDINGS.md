@@ -532,6 +532,44 @@ frozen as the NA167 raw log; all new findings go HERE.
   untrusted until re-tested. Discovered: PD-2b cell, 10.5 min.
   [H2023] (2026-07-25)
 
+- **RIG GEOMETRY MEASURED FROM THE SOLVE (2,169 near-simultaneous C/P
+  pairs, zone_1 fresh run, 2026-07-25). Mount angles CONFIRMED; the
+  PORT LEVER ARM IS WRONG BY ~1 m.**
+  - C-vs-P optical-axis angle: **47.2°** (IQR 47.0–47.4) vs the code's
+    45.0° — owner's "C = 45° down, P = straight-on" CONFIRMED (2.2°
+    residual is mount tolerance / solve bias, not a structural error).
+  - |P − C| separation: **0.22 m** (IQR 0.21–0.28) vs the 1.00 m the
+    code implies. Vertical component: **0.00 m** (IQR −0.09..+0.04) vs
+    the code's "P sits 1 m below C". P is ~0.17 m *ahead* of C.
+  - Method (immune to the absolute-frame weakness that spoiled the
+    earlier mount derivation): both quantities are RIG-INTERNAL —
+    relative axis angle and relative position between two cameras on
+    one rigid vehicle — so they are observable in any solve regardless
+    of how weakly the scene's absolute attitude is constrained. The
+    positions used are ECEF (metric) from a georeferenced solve, and
+    the 10 m-loose position priors of that run mean the VISUAL solution
+    dominated: 0.22 m is what the imagery says, against a 1 m prior.
+  - **Why this now matters more than it used to:** with position
+    accuracies tightened to 1 m XY / 0.1 m Z (2026-07-25), a 1 m
+    lever-arm error in Z is a ~10-sigma conflict on EVERY Port frame,
+    where the old 10/10/1 accuracies absorbed it silently. Prime
+    suspect for elevated residuals, and a candidate cause of the PD-4
+    zone_1 collapse (dense interleaved P/C frames accumulate the
+    conflict; sparse zone_2/zone_3 showed no harm from tight positions
+    alone — PD-0a neutral). Owner confirmation of true rig offsets
+    requested before overwriting `_get_camera_offsets`. [H2023]
+    (2026-07-25)
+- **`LensDistortionPrior="Approximate"` with NO coefficients supplied
+  does NOT pin distortion to zero** — cinema has carried exactly that
+  since the camera registry was written and still solved k1 = −0.0524
+  over 2,204 cameras. An earlier caution in this session ("Approximate
+  would assert approximately-zero distortion, wrong for a fisheye")
+  was WRONG; `Unknown` merely withheld a hint. Port/Starboard moved to
+  `Approximate` per owner directive. Supplying measured coefficients
+  remains a further refinement (must be measured under Division — the
+  single-parameter division model is not the brown3 k1). [H2023]
+  (2026-07-25)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT

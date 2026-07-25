@@ -41,9 +41,18 @@ class Camera:
 
 CAMERAS: dict[str, Camera] = {
     'zeuss': Camera('zeuss', '1', 'Approximate', 23.0, '1', 'Approximate', 'brown3'),
-    'port': Camera('port', '2', 'Approximate', 14.0, '2', 'Unknown', 'division'),
-    'cinema': Camera('cinema', '3', 'Approximate', 17.0, '3', 'Approximate', 'brown3'),
-    'starboard': Camera('starboard', '4', 'Approximate', 14.0, '4', 'Unknown', 'division'),
+    # Port/Starboard fisheye: prior 'Approximate' throughout (owner
+    # directive 2026-07-25). Verified NOT to pin distortion at zero even
+    # with no coefficients supplied: cinema has always carried
+    # LensDistortionPrior='Approximate' with no coefficients and still
+    # solved k1 = -0.0524 across 2,204 cameras. 'Unknown' gave the solver
+    # no wiggle-room hint at all.
+    'port': Camera('port', '2', 'Approximate', 16.0, '2', 'Approximate', 'division'),
+    # Cinema focal 17.0 -> 16.0: owner-confirmed 2026-07-25 ("C=16"),
+    # corroborated by the solver's own median 16.37 mm 35-eq over 2,204
+    # cameras in the fresh run.
+    'cinema': Camera('cinema', '3', 'Approximate', 16.0, '3', 'Approximate', 'brown3'),
+    'starboard': Camera('starboard', '4', 'Approximate', 16.0, '4', 'Approximate', 'division'),
 }
 
 # Legacy cam* filename families map onto the same physical cameras.
