@@ -27,6 +27,9 @@ echo Reading default variables
 call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
 set "AlignmentParams=%Metadata%\AlignmentParams.xml"
+:: Test-cell override (PRIORS_DISTORTION_TEST_PLAN): a cell may point at
+:: a variant params file without touching the canonical Metadata copy.
+if defined RS_ALIGN_PARAMS if not "%RS_ALIGN_PARAMS%" == "" set "AlignmentParams=%RS_ALIGN_PARAMS%"
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"

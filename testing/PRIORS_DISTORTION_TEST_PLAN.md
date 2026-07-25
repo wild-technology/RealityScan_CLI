@@ -7,6 +7,17 @@ the morning audit established five concrete defects/factors — this
 matrix isolates them. Update cell statuses in place; graduate results
 to FINDINGS.md.
 
+**STATUS ELEVATION (owner + reframe, 2026-07-25): this plan is the
+MAIN LINE, not a side branch** — the week's downstream pathologies
+(fragmentation, fusion camera drops, 0.55 m merge deformation, zone_2
+/ orphan "unregistrable" verdicts, high residuals) plausibly share the
+missing-priors cause (FINDINGS "GOVERNING REFRAME"). PD-4/PD-5 are the
+gate for ALL further merge-machinery investment; re-run the
+orphan/zone_2 verdicts and the D1/D2 georef-merge cells (see
+SUPERSEDED-RISK flag in FINDINGS) after priors v2 lands. Every cell
+reports QUALITY metrics first (residuals, prior-vs-solved deviation),
+counts second.
+
 ## What the audit established (2026-07-25, all verified)
 
 1. **The custom 13-column flight-log format was NEVER INSTALLED** —
@@ -66,12 +77,26 @@ Change ONE variable per cell; all others pinned at fresh-run values.
 
 | Cell | Fixture | Variable under test | Hypothesis | Status |
 |---|---|---|---|---|
-| PD-0 | Z3 | re-run baseline post-format-install (13-col import now live, 1/1/0.1 acc) | orientation+accuracy priors alone change registration/residuals measurably | PLANNED |
-| PD-1 | Z3 | global sfmDistortionModel=Division (sidecar models unchanged) | if P solves as division now, the global key IS the override; C may degrade (division too weak for rect?) | PLANNED |
-| PD-2 | Z3 | per-image models honored check: global Brown3 + P sidecar division — inspect exported model per camera | decides whether per-camera models are POSSIBLE via XMP or the global key always wins (Q: does xcr:DistortionModel attribute-form work better than Camera: element?) | PLANNED |
-| PD-3 | Z3 | priors v2 focals (C 16.4 / P 15.4 35-eq, Approximate) | tighter starting point → faster convergence, marginally better registration | PLANNED |
-| PD-4 | Z1 | winner of PD-1/2/3 combined | ≥97.0% registration, residuals materially lower than baseline, ≤3 components | PLANNED |
-| PD-5 | Z1 | full priors v2: 13-col import + 1/1/0.1 + division-for-P + empirical focals | the production configuration for the next dive | PLANNED |
+| PD-0 | Z3 | 13-col import live + 1/1/0.1 acc + tight YPR acc (3-5°) | orientation+accuracy priors change the solve | DONE — **BAD CELL (two variables at once)**: 101/124 in FOUR comps [62,18,11,10] vs baseline 102/1. Superseded by the a/b split |
+| PD-0a | Z3 | position-only, 1/1/0.1 (stock 7-col format) | tight position accuracies alone are safe | DONE: 101/124, ONE comp — safe, neutral |
+| PD-0b | Z3 | + orientation at HONEST 15° YPR accuracy | orientation helps when honestly weighted | DONE: **109/124 (+7 vs baseline)**, comps [99,10]. Dose-response proven: 5°→fragments, 15°→gains |
+| PD-1 | Z3 | global sfmDistortionModel=Division (on PD-0a config) | Division fits the fisheye; C may degrade | DONE: **112/124, best result**, comps [102,10]; BOTH cameras solved division — C did not degrade |
+| PD-2 | Z3 | are per-image XMP models honored vs global key | — | DONE (from fresh-run data + PD-1): the GLOBAL key owns the model; Camera:DistortionModel element does NOT override. Mixed-optics rigs need a global choice (or an Epic feature request) |
+| PD-1b | Z3 | Division + orientation@15° combined | additive gains | DONE: 112/124 [102,10] — same as PD-1; orientation gains not additive on Z3 (its weak frames rescued by either lever) |
+| PD-3 | Z3 | priors v2 focals (C 16.4 / P 15.4 35-eq, Approximate) | faster convergence, marginal gains | PLANNED |
+| PD-4 | Z1 | winner config on zone_1 | ≥97.0%, fewer comps, residuals materially lower | PLANNED — **the decision cell** |
+| PD-5 | Z1 | full priors v2 production config | next-dive configuration | PLANNED |
+
+**Orientation-frame caveat (2026-07-25, open):** empirical mount
+derivation from solved scenes is UNRELIABLE — zone_3-derived offsets
+(C≈58° down, P≈11° down, tight IQR) conflict with a steady zone_1
+strip (C≈−42°?!, also tight IQR): per-zone absolute orientation is
+itself weakly constrained by position-only georeferencing (a
+trajectory is near-1D; scene rotation about it is cheap), so
+solved-scene "truth" is per-scene, not rig truth. Mount offsets need
+rig ground truth from the owner (or a solve WITH orientation priors
+at honest accuracy to anchor the frame first). Until then: import
+orientation at 15° accuracy (proven helpful), do NOT tighten.
 
 Decision rules: adopt division-for-P only if PD-1/PD-2 show P solved
 as division WITHOUT degrading C (if the global key is all-or-nothing

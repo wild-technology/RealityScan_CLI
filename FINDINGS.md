@@ -484,6 +484,41 @@ frozen as the NA167 raw log; all new findings go HERE.
   → assembly → evaluation gate) ran end to end unattended. [H2023]
   (2026-07-24)
 
+- **[RECON 2026-07-25] GOVERNING REFRAME (owner-driven): the week's
+  pathologies share one upstream cause — the rig's metrology never
+  reached the solver.** Until 2026-07-25, every alignment ran with
+  position-only priors at 10x-inflated claimed accuracy (10/10/1 m vs
+  the rig's real DVL 1 m XY / Paro 0.1 m Z), no orientation priors
+  (custom 13-column flight-log format never installed), and the
+  fisheye solved through brown3. Re-read under that lens:
+  fragmentation (9->3 components from calibration groups alone — a
+  partial priors fix — with the residual c0/c1 hull split likely the
+  same disease), the merge's 0.55 m median solve-to-solve deformation
+  (a DIRECT measurement of under-constraint), the -2/-1 fusion camera
+  drops (loose seam cameras), zone_2's 11.9% and the 91 "genuinely
+  unregistrable" orphans (concluded under broken priors — transit
+  imagery is exactly where nav priors should carry registration), and
+  the high residuals the owner observed. Consequence for priorities:
+  priors v2 (testing/PRIORS_DISTORTION_TEST_PLAN.md) is the MAIN
+  LINE; merge-repair machinery (ladder, attribution, bounded-loss)
+  re-evaluates as insurance after re-alignment under real priors.
+  Verification-culture lesson recorded: every automated oracle
+  measured QUANTITY (census counts, component counts) and none
+  measured QUALITY (residuals, prior-vs-solved deviation,
+  solve-to-solve deformation) — solve quality was an unnamed
+  blindness; the GUI was its only detector. Residual extraction and
+  deformation-vs-zone-solve checks are to become standing oracles
+  alongside the census. (2026-07-25)
+- **[RECON 2026-07-25] SUPERSEDED-RISK flag on NA167 D1/D2** ("georef
+  merging never manifested headless"): those cells fed the flag
+  components georeferenced from position-only priors with 10 m claimed
+  accuracy — the feature's documented premise ("each is georeferenced")
+  was arguably never met. Do not treat D1/D2 as final until re-tested
+  with priors-v2 components (queued as a PD follow-on cell). The
+  content-fusion rule (D7 RESOLVED) stands regardless — it explains
+  every observed fusion; what is in doubt is only whether the
+  georef-flag path ALSO works when georeferencing is real. (2026-07-25)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT
