@@ -661,6 +661,30 @@ frozen as the NA167 raw log; all new findings go HERE.
   solve. Reverted to 10/10/1; intermediate ladder queued. [H2023]
   (2026-07-25)
 
+- **RESOLVED: the hull scale error is fixed by the corrected alignment
+  configuration.** PD-6 re-aligned fresh zone_1 with Division + explicit
+  loose 10/10/1 position priors + calibration sidecars intact:
+  **c0 = 3,738 cams at scale 0.981** (IQR 0.949-1.027) and c1 = 656 at
+  1.076, total 4,394/4,540 in 67.7 min. Against the baseline's
+  4,405/4,540 in THREE components at hull scale 0.175/0.221. So:
+  registration unchanged within noise (-11, 0.24%), components 3 -> 2,
+  and metric validity restored. Note the hull now solves as ONE
+  3,738-camera component natively - exactly the object the merge stage
+  was straining to build by fusing c0+c1 (3,026+714=3,740, dropping 2
+  cameras in the attempt). The within-zone hull split was itself an
+  artifact of the broken configuration, not real geography.
+  ATTRIBUTION: two things changed vs baseline - (a) Brown3 -> Division,
+  and (b) the accuracy columns are now actually imported (baseline ran
+  before the 13-column format was installed, so RS fell back to global
+  prior defaults). Division is the physically motivated candidate: the
+  Port fisheye forced through a 3-parameter radial model biases the
+  focal estimate, and in this geometry focal error maps directly to
+  reconstruction scale. A Brown3 + explicit-loose isolation cell on
+  zone_1 (~70 min) would settle it; not run, since the corrected config
+  is adopted either way. **Owner's instinct that Division was right for
+  the fisheye was correct, and its real payoff was metric validity, not
+  registration count.** [H2023] (2026-07-25)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT

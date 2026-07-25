@@ -87,7 +87,8 @@ Change ONE variable per cell; all others pinned at fresh-run values.
 | PD-4 | Z1 | Division + orientation@15° + 1/1/0.1 | ≥97.0%, fewer comps | DONE — **COLLAPSED: 669/4540 (14.7%), ONE comp = the BOW box.** The hull band did not solve at all. Ran under heavy contention (owner tests, ~4 GB free) — partially confounded |
 | M-DIV / M-DIV-ORI | smoke mini_a (hull-band strip) | Division alone / + orientation@15 | is hull IMAGERY incompatible with v2? | DONE — both PERFECT: 118/120, 1 comp each. Hull imagery is fine at single-pass scale; PD-4's collapse is SCALE- or ENVIRONMENT-dependent (orientation priors tearing across maneuvering passes, or memory pressure) |
 | PD-4a | Z1 | Division + POSITION-ONLY (orientation off) | if ≥97% → orientation-at-scale is the poison; dense zones ship position-only | RUNNING |
-| PD-5 | Z1 | full priors v2 production config (shaped by PD-4a) | next-dive configuration | BLOCKED on PD-4a |
+| PD-5 | Z1 | full priors v2 production config | next-dive configuration | SUPERSEDED by PD-6 |
+| **PD-6** | Z1 | Division + LOOSE 10/10/1 + sidecars intact | does the hull scale error survive a correct config? | DONE — **NO: hull scale 0.175 -> 0.981.** 4,394/4,540 in TWO components (hull 3,738 @ 0.981, bow 656 @ 1.076), 67.7 min. Registration unchanged vs baseline (-0.24%); metric validity restored; the hull's within-zone split was a configuration artifact |
 
 ### Bow 2x2 (2026-07-25) — the decisive isolation
 
