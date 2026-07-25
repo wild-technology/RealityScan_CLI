@@ -532,9 +532,58 @@ frozen as the NA167 raw log; all new findings go HERE.
   untrusted until re-tested. Discovered: PD-2b cell, 10.5 min.
   [H2023] (2026-07-25)
 
-- **RIG GEOMETRY MEASURED FROM THE SOLVE (2,169 near-simultaneous C/P
-  pairs, zone_1 fresh run, 2026-07-25). Mount angles CONFIRMED; the
-  PORT LEVER ARM IS WRONG BY ~1 m.**
+- **CRITICAL — THE FRESH-RUN HULL COMPONENTS ARE AT ~1/5 TRUE SCALE;
+  THE DELIVERED ASSEMBLY IS METRICALLY INCOHERENT** (2026-07-25).
+  Per-component solved-vs-nav pairwise-distance ratio (rotation- and
+  translation-invariant), fresh zone_1: **c0 (hull main, 3,026 cams)
+  = 0.175** (IQR 0.168–0.186), **c1 (hull strip, 714) = 0.220**,
+  c2 (bow, 665) = 1.011. Fresh zone_2 = 0.902, zone_3 = 0.965–0.991.
+  So two components holding 82% of the delivered assembly's cameras
+  are ~5.7x and ~4.5x SMALLER than reality, while the rest are sound.
+  Three independent confirmations:
+  1. **Constant across scale bands** — the ratio holds at 0.197 / 0.181
+     / 0.185 / 0.179 / 0.174 / 0.174 across 1-2, 2-4, 4-8, 8-16, 16-32,
+     32-64 m nav-distance bins. A pure SIMILARITY (uniform scale) error,
+     NOT drift, fold, or accumulating error.
+  2. **Implied ROV speed** — hull solve says 0.01 m/s (implausible for
+     a vehicle surveying a 64 m hull); nav says 0.08 m/s (plausible
+     slow inspection). On the bow, solve 0.22 m/s == nav 0.21 m/s.
+     Nav is right; the hull solve is wrong.
+  3. **The rig as an independent ruler** — the fixed C-P baseline
+     measures 1.11-1.21 m in metrically sound components but 0.22 m in
+     hull c0, i.e. 0.20x. Agrees with the nav-derived 0.175x without
+     using nav at all.
+  Consequences, all previously mis-attributed: (a) the owner's "high
+  residuals" — position priors in metres cannot be satisfied by a
+  5.7x-shrunken solve; (b) the c0+c1 fusion camera drops (-2/-1) — the
+  merge was asked to rigidly fuse two bodies whose scales differ by
+  26% (0.175 vs 0.220), which is geometrically impossible without a
+  similarity transform; the never-shrink gate rejecting it was RIGHT
+  for a deeper reason than we knew; (c) the 0.55 m merge deformation.
+  A uniform scale error is INVISIBLE in the viewer, which is why
+  "all components look good" was true and still is - locally.
+  NOT chronic: the older production run's zone_1 components measure
+  0.77-1.01. Something about the fresh run's zone_1 solve specifically
+  lost scale. Root cause NOT yet established. [H2023] (2026-07-25)
+- **RIG GEOMETRY VALIDATED — the georef module's mount angles AND lever
+  arms are CORRECT.** Measured on two INDEPENDENT metrically-sound
+  solves (bow c2 from the zone_1 align; zone_2 from PD-2b): C-vs-P
+  optical-axis angle **47.2°/46.8°** vs the code's 45.0°, and **C above
+  P by +1.12 m / +1.03 m** vs the code's implied +1.00 m (P at 1 m
+  forward + 1 m down, C at 1 m forward). |P-C| separation 1.21/1.11 m.
+  Both mounts at 1 m forward is confirmed (residual relative forward
+  offset ~0.15 m, negligible). **RETRACTION:** an earlier entry in this
+  session claimed the Port lever arm was wrong by ~1 m. That was
+  measured inside hull c0 - the 0.175-scale component - so both its
+  separation (0.22 m) and its "vertical" component were meaningless.
+  Only the ANGLE from that measurement was valid (angles are invariant
+  under scale and rotation). Owner's recollection of "~0.5 m" spacing
+  is ~half the measured value; the code's 1.0 m stands, corroborated
+  twice. [H2023] (2026-07-25)
+- SUPERSEDED (2026-07-25, see the two entries above): **RIG GEOMETRY
+  MEASURED FROM THE SOLVE (2,169 near-simultaneous C/P pairs, zone_1
+  fresh run). Mount angles CONFIRMED; the PORT LEVER ARM IS WRONG BY
+  ~1 m.**
   - C-vs-P optical-axis angle: **47.2°** (IQR 47.0–47.4) vs the code's
     45.0° — owner's "C = 45° down, P = straight-on" CONFIRMED (2.2°
     residual is mount tolerance / solve bias, not a structural error).
