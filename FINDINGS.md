@@ -462,13 +462,19 @@ frozen as the NA167 raw log; all new findings go HERE.
   zones with it. Confirms the camera-registry design decision; details
   docs/FRESH_RUN_2026-07-24.md. [H2023] (2026-07-24)
 - **Component fusion can DROP a small number of cameras: hull c0+c1
-  (3,026+714=3,740) fused to 3,738 on ALL three ladder rungs** —
-  reproducible −2, not noise. Exact-additivity attribution therefore
-  cannot assume fusions conserve cameras; the driver's acceptance
+  (3,026+714=3,740) fused to 3,738 (merge mode) and 3,739 (both
+  align-mode rungs)** — a −2/−1/−1 pattern, so the loss is real but
+  not a fixed set. Exact-additivity attribution therefore cannot
+  assume fusions conserve cameras; the driver's acceptance
   (never-shrink + exact membership) auto-rejected and carried the
   intact inputs forward. Bounded-loss acceptance is an OWNER decision,
-  not a driver default. Discovered: fresh-run production merge,
-  peel [3738, 3026, 714] × 3 attempts. [H2023] (2026-07-24)
+  not a driver default. CORRECTED 2026-07-25: an earlier entry said
+  "3,738 on all three rungs" — the peel counts are [3738]/[3739]/[3739].
+  Follow-up (2026-07-25 ICP over peel poses): merge-mode's confirmed
+  drop is C231C1034 (no fused pose within 2 m); the second is masked by
+  a ~0.55 m MEDIAN non-rigid deformation of the merged solution vs
+  zone_1's own solve — itself a notable fact for seam/residual
+  expectations. [H2023] (2026-07-25)
 - **Fresh-run end-to-end result (2026-07-24): 4,507/4,598 unique
   images (98.0%) across four feature components** (hull 3,026 + hull
   strip 714 + bow 665 + west pocket 102), assembled georeferenced in

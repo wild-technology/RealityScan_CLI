@@ -526,10 +526,14 @@ class GeoreferenceImages(RSModule):
         accepted_images = [img for img in image_data if img.get("ACCEPTED", False)]
         decl_deg = self.params['magnetic_declination_deg'].get_value()
 
-        # Fixed accuracy values
-        pos_x_acc = 10.0
-        pos_y_acc = 10.0
-        alt_acc = 1.0
+        # Fixed accuracy values (owner-stated rig facts, 2026-07-25):
+        # DVL bottom-lock gives ~1 m XY; the Paro depth sensor gives
+        # ~0.1 m Z. The previous 10/10/1 were placeholder-loose and, with
+        # per-image accuracies actually imported (13-column flight-log
+        # format), would have drowned the position priors.
+        pos_x_acc = 1.0
+        pos_y_acc = 1.0
+        alt_acc = 0.1
         yaw_acc = 3.0
         roll_acc = 3.0
 

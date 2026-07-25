@@ -99,7 +99,7 @@ if not defined RS_GROW_SELECT_CMDS set "RS_GROW_SELECT_CMDS=editsel"
 if not exist "%scene_path%" ( echo ERROR: scene not found: %scene_path% & exit /b 1 )
 
 set "mode_ok="
-for %%M in (global component merge export cleanup) do if /i "%mode%" == "%%M" set "mode_ok=1"
+for %%M in (global component merge export cleanup addgrow) do if /i "%mode%" == "%%M" set "mode_ok=1"
 if not defined mode_ok ( echo ERROR: unknown mode "%mode%" & exit /b 1 )
 
 :: Validation stays in single-line chained ifs: an "exit /b 1" inside a
@@ -109,18 +109,22 @@ if not defined mode_ok ( echo ERROR: unknown mode "%mode%" & exit /b 1 )
 if /i "%mode%" == "component" if "%payload%" == "" ( echo ERROR: component mode requires an imagelist payload & exit /b 1 )
 if /i "%mode%" == "component" if not exist "%payload%" ( echo ERROR: imagelist not found: %payload% & exit /b 1 )
 if /i "%mode%" == "cleanup" if "%payload%" == "" ( echo ERROR: cleanup mode requires a component-name list & exit /b 1 )
+if /i "%mode%" == "addgrow" if "%payload%" == "" ( echo ERROR: addgrow mode requires an imagelist payload & exit /b 1 )
+if /i "%mode%" == "addgrow" if not exist "%payload%" ( echo ERROR: imagelist not found: %payload% & exit /b 1 )
 if /i "%mode%" == "cleanup" if not exist "%payload%" ( echo ERROR: component-name list not found: %payload% & exit /b 1 )
 
 set "needs_export="
 if /i "%mode%" == "global" set "needs_export=1"
 if /i "%mode%" == "component" set "needs_export=1"
 if /i "%mode%" == "export" set "needs_export=1"
+if /i "%mode%" == "addgrow" set "needs_export=1"
 if defined needs_export if "%output_dir%" == "" ( echo ERROR: output directory required for %mode% mode & exit /b 1 )
 if defined needs_export if not exist "%output_dir%" mkdir "%output_dir%"
 
 set "needs_align="
 if /i "%mode%" == "global" set "needs_align=1"
 if /i "%mode%" == "component" set "needs_align=1"
+if /i "%mode%" == "addgrow" set "needs_align=1"
 if defined needs_align if not exist "%AlignmentParams%" ( echo ERROR: AlignmentParams.xml not found: %AlignmentParams% & exit /b 1 )
 
 echo Scene: %scene_path%
@@ -149,6 +153,7 @@ if /i "%mode%" == "global" goto :mode_global
 if /i "%mode%" == "component" goto :mode_component
 if /i "%mode%" == "merge" goto :mode_merge
 if /i "%mode%" == "export" goto :mode_export
+if /i "%mode%" == "addgrow" goto :mode_addgrow
 goto :mode_cleanup
 
 :: ---------------------------------------------------------------- global
@@ -160,6 +165,26 @@ if not "%feature_source%" == "-" (
     echo Setting features source %feature_source% on all images
     call :selFeature || goto :fail
 )
+goto :align_and_export
+
+:: --------------------------------------------------------------- addgrow
+:: Add NEW images to a loaded scene (e.g. cross-zone orphan pickup in a
+:: COPY of the merged project - HANDOFF queue #4), re-import the union
+:: flight log so the added images get their georef priors (rows for
+:: images already in scene re-import harmlessly), then fall into the
+:: standard align+export path (AlignmentParams applied, never instance
+:: defaults). Env: RS_GROW_FLIGHT_LOG / RS_GROW_FLIGHT_LOG_PARAMS.
+:mode_addgrow
+echo Adding images from %payload%
+call :run -add "%payload%" || goto :fail
+if defined RS_GROW_FLIGHT_LOG if not "%RS_GROW_FLIGHT_LOG%" == "" (
+    echo Importing flight log for the grown scene
+    call :run -importFlightLog "%RS_GROW_FLIGHT_LOG%" "%RS_GROW_FLIGHT_LOG_PARAMS%" || goto :fail
+)
+echo Enabling ALL images for the grow align
+call :run -selectAllImages || goto :fail
+call :selEnable || goto :fail
+call :run -deselectAllImages || goto :fail
 goto :align_and_export
 
 :: ------------------------------------------------------------- component
