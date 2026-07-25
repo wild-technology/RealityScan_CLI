@@ -1,5 +1,64 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-07-25 RESTART POINT — read this first
+
+**Everything is committed; repo clean.** The morning-state section below
+is superseded on one critical point: **the delivered assembly is
+METRICALLY INVALID** (two components at ~1/5 scale) and must not be
+modelled or shipped as-is.
+
+### In flight at restart
+
+`PD-6` — zone_1 clean re-align (Division + LOOSE 10/10/1 priors +
+calibration sidecars restored). The decisive test of whether the hull's
+0.175 scale error survives a correct configuration. It was ~58% through
+its solve. A Claude restart kills the Python driver; the detached
+RealityScan instance may keep solving but nothing will save, export or
+harvest it, so the run is lost. **Safe to lose** — a re-runnable
+experiment producing no unique artifacts.
+
+Relaunch (fixture already staged, ~80–110 min):
+
+```bash
+py -3.13 testing/relaunch_pd6.py
+```
+
+A leftover RealityScan instance from the killed run needs no cleanup:
+`RealityScanCLI` detects a live RS1 and shuts it down before starting,
+and stale lock files are PID-checked. Close it manually only if you want
+its ~53 GB back sooner.
+
+### Reading order for a fresh session
+
+1. `FINDINGS.md`, newest entries — the metric-scale crisis (hull at
+   0.175/0.220), the sidecar-stripping defect, over-tight priors, and
+   the rig-geometry validation.
+2. `testing/PRIORS_DISTORTION_TEST_PLAN.md` — PD cell matrix + bow 2×2.
+3. `testing/scale_oracle.py` — the quality oracle; run it on any
+   component: `py -3.13 testing/scale_oracle.py <components_dir> <log>`.
+
+### Validated config state
+
+- Division canonical in `AlignmentParams.xml`.
+- Position accuracies **10/10/1** (tight fragments — bow 2×2).
+- Orientation priors at 15° YPR accuracy; the 13-column flight-log
+  format is installed in Program Files (re-check after any RS update).
+- `camera_registry`: C and P both 16 mm 35-eq, Approximate throughout.
+
+### Open, in priority order
+
+1. PD-6 — does the hull scale error survive a correct config?
+2. If the hull is STILL ~0.175 while the bow is ~1.0: underwater imagery
+   carries no intrinsic scale, so the remedy is a known-distance
+   constraint / GCPs, not more prior tuning.
+3. Intermediate accuracy ladder (3/3/0.5, 5/5/1) — loose is proven, not
+   proven optimal.
+4. Re-run merge + assembly once zone inputs are metrically sound.
+5. `D:/na156_h2023_v2` is staged through batching; aligns deliberately
+   never run.
+6. Owner decisions open: bounded-loss fusion flag; whether to supply
+   measured distortion coefficients (must be measured under Division).
+
 ## 2026-07-25 MORNING STATE — deliverable ready (read this first)
 
 **The fresh end-to-end run COMPLETED overnight.** Full record:
