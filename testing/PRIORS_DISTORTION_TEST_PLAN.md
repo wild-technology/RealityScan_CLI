@@ -84,8 +84,15 @@ Change ONE variable per cell; all others pinned at fresh-run values.
 | PD-2 | Z3 | are per-image XMP models honored vs global key | — | DONE (from fresh-run data + PD-1): the GLOBAL key owns the model; Camera:DistortionModel element does NOT override. Mixed-optics rigs need a global choice (or an Epic feature request) |
 | PD-1b | Z3 | Division + orientation@15° combined | additive gains | DONE: 112/124 [102,10] — same as PD-1; orientation gains not additive on Z3 (its weak frames rescued by either lever) |
 | PD-3 | Z3 | priors v2 focals (C 16.4 / P 15.4 35-eq, Approximate) | faster convergence, marginal gains | PLANNED |
-| PD-4 | Z1 | winner config on zone_1 | ≥97.0%, fewer comps, residuals materially lower | PLANNED — **the decision cell** |
-| PD-5 | Z1 | full priors v2 production config | next-dive configuration | PLANNED |
+| PD-4 | Z1 | Division + orientation@15° + 1/1/0.1 | ≥97.0%, fewer comps | DONE — **COLLAPSED: 669/4540 (14.7%), ONE comp = the BOW box.** The hull band did not solve at all. Ran under heavy contention (owner tests, ~4 GB free) — partially confounded |
+| M-DIV / M-DIV-ORI | smoke mini_a (hull-band strip) | Division alone / + orientation@15 | is hull IMAGERY incompatible with v2? | DONE — both PERFECT: 118/120, 1 comp each. Hull imagery is fine at single-pass scale; PD-4's collapse is SCALE- or ENVIRONMENT-dependent (orientation priors tearing across maneuvering passes, or memory pressure) |
+| PD-4a | Z1 | Division + POSITION-ONLY (orientation off) | if ≥97% → orientation-at-scale is the poison; dense zones ship position-only | RUNNING |
+| PD-5 | Z1 | full priors v2 production config (shaped by PD-4a) | next-dive configuration | BLOCKED on PD-4a |
+
+**Interim v2-config policy (until PD-4a lands):** Division is validated
+everywhere; orientation@15° is validated on SPARSE zones (zone_2 8x,
+zone_3 +7) and suspect at dense-maneuvering scale. The clean-slate v2
+align stage is HELD for zone_1's config decision.
 
 **Orientation-frame caveat (2026-07-25, open):** empirical mount
 derivation from solved scenes is UNRELIABLE — zone_3-derived offsets
