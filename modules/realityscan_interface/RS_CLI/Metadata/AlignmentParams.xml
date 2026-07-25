@@ -8,7 +8,7 @@
        per-camera via XMP sidecars (fisheye Port/Starboard: division;
        rectilinear Cinema/Zeuss: brown3). Division was the NA167
        fisheye-era global. See docs/settings-evaluation-2026-07.md. -->
-  <entry key="sfmDistortionModel" value="Brown3"/>
+  <entry key="sfmDistortionModel" value="Division"/>
   <entry key="sfmCameraPriorAccuracyRoll" value="10.0"/>
   <entry key="sfmMaxFeatureReprojectionError" value="1.29999995"/>
   <entry key="sfmMaxFeaturesPerMpx" value="0x36b0"/>

@@ -105,8 +105,12 @@ class GeoreferenceImages(RSModule):
         elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
             return 30.0
         elif filename_lower.startswith('p231c') or filename_lower.startswith('c231c'):
-            # WCA Port/Cinema: rigid mounts with known orientation
-            return 5.0
+            # WCA Port/Cinema: mounts are rigid but NOT ground-truthed -
+            # solved-vs-log comparison showed a systematic 10-15 deg pitch
+            # bias, and 5 deg claimed accuracy FRAGMENTED the solve
+            # (PD-0 cell, 2026-07-25). Honest 15 deg until the mount
+            # angles are measured; then tighten.
+            return 15.0
         else:
             self._note_unknown_camera(filename, "using default pitch accuracy 10°")
             return 10.0
@@ -534,8 +538,13 @@ class GeoreferenceImages(RSModule):
         pos_x_acc = 1.0
         pos_y_acc = 1.0
         alt_acc = 0.1
-        yaw_acc = 3.0
-        roll_acc = 3.0
+        # Orientation accuracies: HONEST 15 deg until the camera mounts
+        # are ground-truthed (PD-0/PD-0b dose-response, 2026-07-25:
+        # 3-5 deg claimed accuracy FRAGMENTS the solve, 15 deg gains
+        # registration; see PRIORS_DISTORTION_TEST_PLAN orientation-frame
+        # caveat). Applies to yaw/pitch/roll alike.
+        yaw_acc = 15.0
+        roll_acc = 15.0
 
         with open(flight_log_filename, "w") as f:
             f.write(

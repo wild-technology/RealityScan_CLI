@@ -519,6 +519,19 @@ frozen as the NA167 raw log; all new findings go HERE.
   every observed fusion; what is in doubt is only whether the
   georef-flag path ALSO works when georeferencing is real. (2026-07-25)
 
+- **SUPERSEDED (2026-07-25): "zone_2 is transit imagery whose images
+  are genuinely unregistrable."** PD-2b re-aligned the same 852 images
+  under Division + orientation priors @15° + real accuracies (1/1/0.1):
+  **812/852 registered (95.3%) vs 101/852 (11.9%)** under the old
+  config — an 8x improvement from configuration alone, no data change.
+  Components [621, 102, 57, 32]; the 621-camera corridor spans the
+  hull->bow->pocket connecting extent. Zone_2 is the physical BRIDGE
+  between the features, not filler. Every "unregistrable" verdict
+  rendered under the pre-2026-07-25 config (including the 91-orphan
+  pool and production zone_2's "48 genuinely unregistrable") is
+  untrusted until re-tested. Discovered: PD-2b cell, 10.5 min.
+  [H2023] (2026-07-25)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT
