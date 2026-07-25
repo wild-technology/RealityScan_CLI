@@ -619,6 +619,33 @@ frozen as the NA167 raw log; all new findings go HERE.
   single-parameter division model is not the brown3 k1). [H2023]
   (2026-07-25)
 
+- **DEFECT (fixed): AlignZone's identity harvest PERMANENTLY STRIPS
+  calibration sidecars from the image tree.** The harvest PowerShell
+  MOVES every pose-bearing .xmp into identity_r<K>; the last-peeled
+  component's sidecars are never re-exported, so those images end up
+  with no calibration prior at all. Measured on fresh zone_1: **796 of
+  4,540 images (17.5%) had no sidecar** - the ENTIRE bow component
+  (665/665), 123 of c0, and 8 unregistered. Consequence: any re-align
+  of an already-harvested zone silently runs with a partially
+  ungrouped camera set (the WCA JPGs are EXIF-identical, so the XMP
+  group is the ONLY thing separating Port from Cinema). **PD-4 and
+  PD-4a both re-aligned zone_1 in this state, so their "collapse"
+  results (669 and 782 of 4,540) are CONFOUNDED and cannot be read as
+  evidence against Division or tight priors.** Fixed:
+  `camera_registry.ensure_calibration_sidecars()` regenerates any
+  missing sidecar from the registry, and the alignment module now
+  calls it after every zone align. Discovered while building the bow
+  fixture - 665 images copied, 0 sidecars came with them. [H2023]
+  (2026-07-25)
+- **A metric-scale oracle now exists** (`testing/scale_oracle.py`):
+  median solved-vs-nav pairwise-distance ratio per component,
+  invariant to translation and rotation. Self-test reproduces the
+  hand-derived figures exactly (fresh zone_1 c0 0.175 / c1 0.221 /
+  c2 1.009), i.e. validated against a known-bad AND a known-good case
+  before use. This closes the "quantity-only oracle" blindness named
+  in the 2026-07-25 reframe: every future align cell reports SCALE,
+  not just registration count. [H2023] (2026-07-25)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT

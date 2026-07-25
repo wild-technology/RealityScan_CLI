@@ -108,6 +108,50 @@ def calibration_xmp(camera: Camera) -> str:
     return '\n'.join(lines)
 
 
+def ensure_calibration_sidecars(image_root: str) -> tuple[int, int]:
+    """Recreate a calibration-only XMP for every image that has none.
+
+    REQUIRED after any workflow that runs the identity-harvest loop:
+    the harvest MOVES pose-bearing sidecars out of the image tree into
+    identity_r<K>, and the last-peeled component's sidecars are never
+    re-exported, so those images are left with NO calibration prior at
+    all. A later re-align of the same folder then silently runs with a
+    partially-ungrouped camera set - measured on fresh zone_1, where
+    796 of 4,540 images (the whole bow component plus 123 others) had
+    lost their sidecars and PD-4/PD-4a re-aligned in that state
+    (FINDINGS 2026-07-25).
+
+    Returns (created, unknown_camera_skipped).
+    """
+    import logging
+    import os
+
+    logger = logging.getLogger(__name__)
+    created = skipped = 0
+    for root, _dirs, files in os.walk(image_root):
+        names = set(files)
+        for filename in files:
+            if not filename.lower().endswith(('.jpg', '.jpeg', '.png', '.heif')):
+                continue
+            sidecar = os.path.splitext(filename)[0] + '.xmp'
+            if sidecar in names:
+                continue
+            camera = identify(filename)
+            if camera is None:
+                skipped += 1
+                continue
+            with open(os.path.join(root, sidecar), 'w', encoding='utf-8') as f:
+                f.write(calibration_xmp(camera))
+            created += 1
+    if created:
+        logger.info('Restored %d missing calibration sidecar(s) under %s',
+                    created, image_root)
+    if skipped:
+        logger.warning('%d image(s) of unknown camera type left without a '
+                       'calibration sidecar', skipped)
+    return created, skipped
+
+
 def sanitize_and_census(image_root: str) -> tuple[int, int, int]:
     """Count pose-bearing XMP sidecars under image_root, then restore each
     to calibration-only content (or delete it for unknown cameras).

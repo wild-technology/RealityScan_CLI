@@ -257,6 +257,13 @@ class RealityScanAlignment(RSModule):
         if scene_success:
             manifest_paths = self.__capture_component_identities(
                 input_folder, output_folder, scene_name, flight_log_path)
+        # The identity harvest MOVES pose sidecars out of the image tree and
+        # never re-exports the last-peeled component's, leaving those images
+        # with no calibration prior at all. Left unrepaired, a later re-align
+        # of this folder silently runs with a partially ungrouped camera set
+        # (measured: 796 of 4,540 zone_1 images, FINDINGS 2026-07-25).
+        camera_registry.ensure_calibration_sidecars(input_folder)
+
         registered = 0
         for mp in manifest_paths:
             try:
