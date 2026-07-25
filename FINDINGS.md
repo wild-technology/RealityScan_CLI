@@ -646,6 +646,21 @@ frozen as the NA167 raw log; all new findings go HERE.
   in the 2026-07-25 reframe: every future align cell reports SCALE,
   not just registration count. [H2023] (2026-07-25)
 
+- **Over-tight position priors FRAGMENT solves and worsen scale** — bow
+  2x2 (665-image known-good component, clean sidecars, scale oracle):
+  loose 10/10/1 gave ONE component at scale 1.049 (Brown3) / 0.989
+  (Division); tight 1/1/0.1 split it into 2 and 3 components and pushed
+  the maximal component's scale to 0.886 / 0.826. Registration barely
+  moved (656-665 in every cell) - which is precisely why a
+  camera-counting oracle never caught it, and why the zone_1 "collapse"
+  was misread as a Division or memory problem. LESSON: the flight-log
+  accuracy columns want END-TO-END per-image position uncertainty
+  (timestamp matching + nav interpolation + lever arm + dive drift),
+  NOT the instantaneous sensor spec. The owner's DVL 1 m / Paro 0.1 m
+  are sensor figures; using them as prior accuracy over-constrains the
+  solve. Reverted to 10/10/1; intermediate ladder queued. [H2023]
+  (2026-07-25)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT

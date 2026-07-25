@@ -89,6 +89,35 @@ Change ONE variable per cell; all others pinned at fresh-run values.
 | PD-4a | Z1 | Division + POSITION-ONLY (orientation off) | if ≥97% → orientation-at-scale is the poison; dense zones ship position-only | RUNNING |
 | PD-5 | Z1 | full priors v2 production config (shaped by PD-4a) | next-dive configuration | BLOCKED on PD-4a |
 
+### Bow 2x2 (2026-07-25) — the decisive isolation
+
+Fixture: the 665-image bow component (known-good, scale 1.009), clean
+calibration sidecars regenerated before every cell, position-only logs,
+scale measured by `testing/scale_oracle.py`.
+
+| Cell | Registered | Comps | Scale (maximal) |
+|---|---|---|---|
+| brown3_loose (10/10/1) | 665/665 | **1** | 1.049 |
+| brown3_tight (1/1/0.1) | 662/665 | 2 | 0.886 |
+| division_loose | 656/665 | **1** | **0.989** |
+| division_tight | 659/665 | 3 | 0.826 |
+
+**VERDICT: tight position priors FRAGMENT components and move scale
+AWAY from truth** — reproducible on a healthy component under both
+distortion models. Registration count barely moves (656-665), which is
+exactly why counting cameras never caught this. The zone_1 "collapse"
+is the same effect at scale, not a Division problem.
+
+Root cause: the flight log's accuracy columns want END-TO-END per-image
+position uncertainty, not the sensor spec. DVL 1 m XY / Paro 0.1 m Z are
+instantaneous sensor figures; per-image error also carries timestamp
+matching, nav interpolation, lever arm, and dive-long drift. Claiming
+the sensor figure over-constrains the solve.
+
+Applied: georef position accuracies reverted to 10/10/1 with rationale.
+QUEUED: an intermediate ladder (3/3/0.5, 5/5/1) to find the real
+sweet spot - loose is proven, not necessarily optimal.
+
 **Interim v2-config policy (until PD-4a lands):** Division is validated
 everywhere; orientation@15° is validated on SPARSE zones (zone_2 8x,
 zone_3 +7) and suspect at dense-maneuvering scale. The clean-slate v2

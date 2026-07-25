@@ -530,14 +530,20 @@ class GeoreferenceImages(RSModule):
         accepted_images = [img for img in image_data if img.get("ACCEPTED", False)]
         decl_deg = self.params['magnetic_declination_deg'].get_value()
 
-        # Fixed accuracy values (owner-stated rig facts, 2026-07-25):
-        # DVL bottom-lock gives ~1 m XY; the Paro depth sensor gives
-        # ~0.1 m Z. The previous 10/10/1 were placeholder-loose and, with
-        # per-image accuracies actually imported (13-column flight-log
-        # format), would have drowned the position priors.
-        pos_x_acc = 1.0
-        pos_y_acc = 1.0
-        alt_acc = 0.1
+        # Position accuracy = END-TO-END PER-IMAGE UNCERTAINTY, not the
+        # sensor spec. The rig's DVL (~1 m XY) and Paro depth (~0.1 m Z)
+        # describe instantaneous sensor precision; the number RealityScan
+        # wants also absorbs timestamp matching, nav interpolation, lever
+        # arm, and dive-long drift. Claiming the sensor figure (1/1/0.1)
+        # measurably FRAGMENTS solves: on the known-good bow fixture,
+        # loose gave ONE component at scale ~1.0 under both distortion
+        # models, while tight split it into 2-3 and pushed the maximal
+        # component's scale further from truth (0.886 / 0.826). See
+        # testing/PRIORS_DISTORTION_TEST_PLAN.md "bow 2x2".
+        # An intermediate ladder (3/3/0.5 etc.) is untested - queued.
+        pos_x_acc = 10.0
+        pos_y_acc = 10.0
+        alt_acc = 1.0
         # Orientation accuracies: HONEST 15 deg until the camera mounts
         # are ground-truthed (PD-0/PD-0b dose-response, 2026-07-25:
         # 3-5 deg claimed accuracy FRAGMENTS the solve, 15 deg gains
