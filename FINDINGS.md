@@ -1427,3 +1427,42 @@ frozen as the NA167 raw log; all new findings go HERE.
   levers are model detail, harder pre-`closeHoles` culling, or a
   deliberately larger pagefile. All three are owner decisions. [H2023]
   (2026-07-26)
+
+- **ROOT CAUSE of the hull model failures: the DISK, not memory.** The
+  retry ran 143.5 min, got past `closeHoles` (step [5/8], which the first
+  attempt died at) and failed at **[6/8] texture generation** with
+  `result code 2147942512` = **0x80070070 = ERROR_DISK_FULL**. `D:` had
+  reached **0 bytes free**; the driver's own log-snapshot then failed with
+  `[Errno 28] No space left on device`, which is what made it unmissable.
+  The memory readings were real but incidental: RAM did fall to 3.1 GB, the
+  pagefile is only 6.9 GB, and the process was verified doing genuine work
+  (9.1 cores, 33% GPU) throughout. Both earlier explanations - concurrent
+  load, then intrinsic memory exhaustion - are therefore SUPERSEDED as
+  causes of these failures. `:fail` quits WITHOUT saving, so the assembly
+  survived intact (parses, no zero-byte files, bow + torpedo models
+  present).
+  METHOD LESSON, and the sharpest one of the session: I built a resource
+  trace hours earlier and instrumented CPU and memory *because memory was
+  my hypothesis*. It faithfully recorded RAM falling to 3.1 GB and was
+  silent about the disk that actually killed the run. A monitor built
+  around one hypothesis will confirm or refute that hypothesis and tell you
+  nothing else. Free disk on the project drive is now a trace column with a
+  peak-minimum in the summary line. [H2023] (2026-07-26)
+
+- **H2023 workspace physically relocated to `F:` behind a directory
+  junction at the old `D:` path.** Owner-approved cleanup deleted
+  `RC_projects` (57.1 GB), the superseded `merged` assembly (31.9 GB) and
+  `orphan_pickup`/`orphan_pickup2` (17.6 GB), then the remaining 90.6 GB /
+  39,235 files moved to `F:\na156_h2023_fresh` in 3.2 min, with
+  `D:\na156_h2023_fresh` recreated as a JUNCTION to it. WHY the junction
+  rather than a plain move: the saved `.rsproj` stores ABSOLUTE image paths
+  that texturing needs, and hard rule 7 says a relocated `.rsalign` hangs
+  the instance forever on import - a bare move would have broken both. With
+  the junction every historical absolute path still resolves (verified for
+  the .rsproj, a component .rsalign, a zone flight log and a real image)
+  while the bytes live on F:. Result: **D: 0 -> 197.3 GB free, F: 773.9 GB
+  free**. FOR FUTURE SESSIONS: `D:\na156_h2023_fresh` is NOT a real
+  directory - if it is ever deleted or recreated, the junction must be
+  restored (`New-Item -ItemType Junction -Path D:\na156_h2023_fresh -Target
+  F:\na156_h2023_fresh`) or every recorded path in this log breaks.
+  [H2023] (2026-07-26)
