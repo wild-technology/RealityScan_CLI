@@ -255,7 +255,7 @@ class RealityScanAlignment(RSModule):
         # the merge stage depends on them.
         manifest_paths = []
         if scene_success:
-            manifest_paths = self.__capture_component_identities(
+            manifest_paths = self.capture_component_identities(
                 input_folder, output_folder, scene_name, flight_log_path)
         # The identity harvest MOVES pose sidecars out of the image tree and
         # never re-exports the last-peeled component's, leaving those images
@@ -290,10 +290,14 @@ class RealityScanAlignment(RSModule):
     # components; 20 is a generous ceiling against a pathological scene.
     MAX_IDENTITY_COMPONENTS = 20
 
-    def __capture_component_identities(self, input_folder, output_folder,
-                                       scene_name, flight_log_path):
+    def capture_component_identities(self, input_folder, output_folder,
+                                     scene_name, flight_log_path):
         """Build manifests from the identity_r<K> harvest folders written
         by AlignZone.bat's in-session identity loop.
+
+        Public because drivers that invoke AlignZone.bat directly (the
+        testing/ PD cells) must reuse THIS implementation - a component
+        without a manifest is refused by the feature-aware merge.
 
         Naming rule (FINDINGS 2026-07-23, four consistent datapoints):
         -exportXMP writes STEM-named sidecars, while

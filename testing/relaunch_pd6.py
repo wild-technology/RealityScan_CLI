@@ -27,6 +27,7 @@ sys.path.insert(0, REPO)
 
 from modules import camera_registry
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI
+from modules.realityscan_interface.realityscan_interface import RealityScanAlignment
 from testing import scale_oracle
 
 CELL = r'D:/na156_h2023_fresh/pd_runs/pd6_zone_1_clean'
@@ -60,6 +61,14 @@ def main() -> int:
             os.path.join(CELL, 'rslog.txt'))
     except OSError as exc:
         logger.warning('could not snapshot RealityScan.log: %s', exc)
+
+    # AlignZone.bat writes the identity harvest but NOT the manifests -
+    # those are built by the alignment module, which a direct .bat driver
+    # bypasses. Without them the feature-aware merge refuses the exports.
+    manifests = RealityScanAlignment(logger).capture_component_identities(
+        ZONE, components, 'pd6_zone_1',
+        os.path.join(CELL, 'flight_log_4Q_UTM.txt'))
+    logger.info('component manifests written: %d', len(manifests))
 
     camera_registry.sanitize_and_census(ZONE)
 

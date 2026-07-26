@@ -1,32 +1,58 @@
 # HANDOFF — state of the July 2026 overhaul
 
-## 2026-07-25 RESTART POINT — read this first
+## 2026-07-25 (evening) RESTART POINT — read this first
 
-**Everything is committed; repo clean.** The morning-state section below
-is superseded on one critical point: **the delivered assembly is
-METRICALLY INVALID** (two components at ~1/5 scale) and must not be
-modelled or shipped as-is.
+**PD-6 COMPLETED and answered the metric-scale question: NO, the hull
+scale error does not survive a correct configuration.** Nothing is
+running; no RealityScan or Python processes are live.
 
-### In flight at restart
+The delivered assembly at `D:\na156_h2023_fresh\merged\assembly\` is
+still **METRICALLY INVALID** (hull at 0.175/0.221) and must not be
+modelled or shipped. Its replacement inputs now exist.
 
-`PD-6` — zone_1 clean re-align (Division + LOOSE 10/10/1 priors +
-calibration sidecars restored). The decisive test of whether the hull's
-0.175 scale error survives a correct configuration. It was ~58% through
-its solve. A Claude restart kills the Python driver; the detached
-RealityScan instance may keep solving but nothing will save, export or
-harvest it, so the run is lost. **Safe to lose** — a re-runnable
-experiment producing no unique artifacts.
+### Metrically sound inputs, ready for assembly
 
-Relaunch (fixture already staged, ~80–110 min):
+Scale oracle over every fresh-workspace component (all measured
+2026-07-25 evening):
+
+| Component | Cameras | Scale | Source |
+|---|---|---|---|
+| `pd6_zone_1_c0` (hull) | 3,738 | **0.982** | `D:\na156_h2023_fresh\pd_runs\pd6_zone_1_clean\components` |
+| `pd6_zone_1_c1` (bow) | 656 | 1.075 | same |
+| `zone_3_c0` (west pocket) | 102 | 0.990 | `D:\na156_h2023_fresh\aligned_components\zone_3` |
+| *old* `zone_1_c0/c1` | 3,026 / 714 | *0.175 / 0.221* | superseded — do not use |
+
+Total 4,496 cameras (97.8% of 4,598 unique). zone_2's only component
+(101 cams, scale 0.998) is a proven subset of `zone_3_c0` and was
+twin-dropped in the fresh run — exclude it.
+
+**The merge ladder has nothing to do.** A dry run of
+`merge_zones.partition_clusters` over these three puts them in three
+disjoint singleton clusters, zero fusable pairs — the hull that the
+fresh run spent ~75 min trying to fuse now solves natively. The
+remaining work is the ASSEMBLY stage only: import all three, union
+flight log + CRS + `-update`, save, census, evaluation gate.
+
+Exact next command (complist already dry-verified; `--components_root`
+is the workspace root so the complist's three paths all resolve, and
+components stay at their original export locations per hard rule 7):
 
 ```bash
-py -3.13 testing/relaunch_pd6.py
+py -3.13 merge_zones.py --components_root D:/na156_h2023_fresh --complist <complist> --images_root D:/na156_h2023_fresh/batched_images_by_zone --output D:/na156_h2023_fresh/merged_pd6 --name H2023_PD6_Assembly --min_size 50 --project_label NA156_H2023_PD6 --visible true
 ```
 
-A leftover RealityScan instance from the killed run needs no cleanup:
-`RealityScanCLI` detects a live RS1 and shuts it down before starting,
-and stale lock files are PID-checked. Close it manually only if you want
-its ~53 GB back sooner.
+where `<complist>` lists, one per line:
+`pd6_zone_1_c0.rsalign`, `pd6_zone_1_c1.rsalign`, `zone_3_c0.rsalign`
+at the full paths in the table above.
+
+### Fixed this session
+
+- `RealityScanAlignment.capture_component_identities` made public and
+  called from `testing/relaunch_pd6.py`: AlignZone.bat writes the
+  identity harvest but NOT the manifests, so PD-6's exports had none
+  and the feature-aware merge would have refused them. Manifests
+  rebuilt for the existing exports (3,738 / 656, census matches).
+  See FINDINGS 2026-07-25.
 
 ### Reading order for a fresh session
 
@@ -47,17 +73,24 @@ its ~53 GB back sooner.
 
 ### Open, in priority order
 
-1. PD-6 — does the hull scale error survive a correct config?
-2. If the hull is STILL ~0.175 while the bow is ~1.0: underwater imagery
-   carries no intrinsic scale, so the remedy is a known-distance
-   constraint / GCPs, not more prior tuning.
+1. **Build the corrected assembly** from the three sound components
+   (command above), reaching EVALUATION READY. Expect no merge
+   attempts, so far cheaper than the fresh run's ~75 min.
+2. Owner evaluation gate on the new assembly, then models per surviving
+   feature component (hull / bow / west pocket each get their own).
 3. Intermediate accuracy ladder (3/3/0.5, 5/5/1) — loose is proven, not
-   proven optimal.
-4. Re-run merge + assembly once zone inputs are metrically sound.
+   proven optimal. Optional now that scale is sound; each cell is a
+   ~70 min zone_1 re-align.
+4. Optional PD-6 attribution isolation cell (Brown3 + explicit-loose on
+   zone_1, ~70 min) — separates Division from the newly-imported
+   accuracy columns. Not needed to ship; the corrected config is
+   adopted either way.
 5. `D:/na156_h2023_v2` is staged through batching; aligns deliberately
    never run.
-6. Owner decisions open: bounded-loss fusion flag; whether to supply
-   measured distortion coefficients (must be measured under Division).
+6. Owner decisions open: whether to supply measured distortion
+   coefficients (must be measured under Division). The bounded-loss
+   fusion flag is now MOOT for this dive — the hull no longer needs
+   fusing — but remains a real design question for future dives.
 
 ## 2026-07-25 MORNING STATE — deliverable ready (read this first)
 

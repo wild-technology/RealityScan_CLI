@@ -685,6 +685,41 @@ frozen as the NA167 raw log; all new findings go HERE.
   the fisheye was correct, and its real payoff was metric validity, not
   registration count.** [H2023] (2026-07-25)
 
+- **DEFECT (fixed): AlignZone.bat does not write component manifests —
+  only the alignment MODULE does, so any driver invoking the .bat
+  directly produces exports the feature-aware merge refuses.** PD-6's
+  components carried an identity harvest (identity_r0/r1) and two
+  .rsalign exports but ZERO `.rsalign.manifest.json`, because
+  `relaunch_pd6.py` calls `RealityScanCLI.run_batch_script` and skips
+  the module's post-align manifest step. `merge_zones.load_inputs`
+  refuses unmanifested components by design (no membership → no
+  border-gating, twin resolution, or attribution), so the corrected
+  zone_1 could not have fed the assembly at all. Discovered by
+  directory listing while planning the assembly re-run, not by any
+  failure — the align reported success. Fixed by making
+  `RealityScanAlignment.capture_component_identities` public (ONE
+  implementation, per the no-second-way rule) and calling it from
+  `relaunch_pd6.py`; manifests rebuilt for the existing PD-6 exports
+  from the on-disk harvest (3,738 / 656 cameras, matching the census).
+  LESSON: the .bat/module split means "success" from a direct .bat
+  driver is a weaker claim than success from the module — research
+  cells that must feed production stages have to replay the module's
+  post-processing. [H2023] (2026-07-25)
+
+- **The corrected zone_1 leaves NOTHING for the merge ladder to do.**
+  Dry-run of `merge_zones.partition_clusters` over the PD-6 exports +
+  zone_3: three spatially disjoint singleton clusters — hull 3,738
+  (bbox Y 2345096–2345160), bow 656 (Y 2345217–2345251), west pocket
+  102 (Y 2345248–2345256) — zero discards, zero fusable pairs. The
+  fresh run spent ~75 min on a hull ladder whose entire purpose was to
+  fuse c0+c1 into the object the corrected config now solves natively.
+  Confirms the GOVERNING INTENT reading from the data: this dive's end
+  state is three feature components, and merge work on it is
+  self-inflicted. Scale oracle over all fresh zones for the record:
+  zone_2 c0 0.998 (101 cams), zone_3 c0 0.990 (102), PD-6 zone_1 c0
+  0.982 (3,738) / c1 1.075 (656) — only the old zone_1 hull was ever
+  metrically broken. [H2023] (2026-07-25)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT
