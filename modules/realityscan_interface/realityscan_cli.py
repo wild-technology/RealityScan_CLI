@@ -570,13 +570,14 @@ class RealityScanCLI:
         trace = None
         next_sample = 0.0
         started = time.monotonic()
-        peak = {'cpu_pct': 0.0, 'commit_used_gb': 0.0, 'ram_avail_gb_min': None, 'disk_free_gb_min': None}
+        peak = {'cpu_pct': 0.0, 'commit_used_gb': 0.0, 'ram_avail_gb_min': None, 'disk_free_gb_min': None,
+                'cache_free_gb_min': None}
         if resource_csv:
             try:
                 trace = open(resource_csv, 'w', encoding='utf-8', newline='')
                 trace.write('iso_time,elapsed_s,cpu_pct,ram_avail_gb,'
                             'ram_total_gb,mem_load_pct,commit_used_gb,'
-                            'commit_total_gb,disk_free_gb,progress\n')
+                            'commit_total_gb,disk_free_gb,cache_free_gb,progress\n')
                 trace.flush()
             except OSError as exc:
                 self.logger.warning('Could not open resource trace %s: %s',
@@ -593,12 +594,14 @@ class RealityScanCLI:
                 trace.close()
                 self.logger.info(
                     'Resource peaks [%s]: CPU %.0f%%, commit used %.1f GB, '
-                    'minimum available RAM %s, minimum free disk %s. Trace: %s',
+                    'minimum available RAM %s, minimum free disk %s, minimum free CACHE disk %s. Trace: %s',
                     self.instance_name, peak['cpu_pct'], peak['commit_used_gb'],
                     'n/a' if peak['ram_avail_gb_min'] is None
                     else f"{peak['ram_avail_gb_min']:.1f} GB",
                     'n/a' if peak['disk_free_gb_min'] is None
                     else f"{peak['disk_free_gb_min']:.1f} GB",
+                    'n/a' if peak['cache_free_gb_min'] is None
+                    else f"{peak['cache_free_gb_min']:.1f} GB",
                     resource_csv)
 
     def _monitor_loop(self, process, progress_path, last_progress_line,
@@ -692,6 +695,17 @@ class RealityScanCLI:
                 os.path.dirname(trace.name) or '.').free / (1024 ** 3)
         except OSError:
             disk_free = None
+        # ...and on the CACHE drive, which is a DIFFERENT disk and is the one
+        # that actually killed the hull model three times. The column above
+        # watched the project drive and read 773.9 GB free for a whole run
+        # while this one hit zero (2026-07-26).
+        cache_dir = os.environ.get('RS_CACHE_DIR')
+        cache_free = None
+        if cache_dir:
+            try:
+                cache_free = shutil.disk_usage(cache_dir).free / (1024 ** 3)
+            except OSError:
+                cache_free = None
         commit_used = mem['commit_total_gb'] - mem['commit_avail_gb']
         if cpu_pct is not None:
             peak['cpu_pct'] = max(peak['cpu_pct'], cpu_pct)
@@ -702,16 +716,20 @@ class RealityScanCLI:
         if disk_free is not None and (peak['disk_free_gb_min'] is None
                                       or disk_free < peak['disk_free_gb_min']):
             peak['disk_free_gb_min'] = disk_free
+        if cache_free is not None and (peak['cache_free_gb_min'] is None
+                                       or cache_free < peak['cache_free_gb_min']):
+            peak['cache_free_gb_min'] = cache_free
         try:
             trace.write(
                 '{iso},{el:.0f},{cpu},{avail:.2f},{total:.2f},{load:.0f},'
-                '{cu:.2f},{ct:.2f},{df},"{prog}"\n'.format(
+                '{cu:.2f},{ct:.2f},{df},{cf},"{prog}"\n'.format(
                     iso=time.strftime('%Y-%m-%dT%H:%M:%S'), el=elapsed,
                     cpu='' if cpu_pct is None else f'{cpu_pct:.1f}',
                     avail=mem['ram_avail_gb'], total=mem['ram_total_gb'],
                     load=mem['mem_load_pct'], cu=commit_used,
                     ct=mem['commit_total_gb'],
                     df='' if disk_free is None else f'{disk_free:.1f}',
+                    cf='' if cache_free is None else f'{cache_free:.1f}',
                     prog=progress_line.replace('"', "'")[:120]))
             trace.flush()
         except (OSError, ValueError) as exc:
