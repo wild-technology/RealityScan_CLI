@@ -1032,10 +1032,23 @@ frozen as the NA167 raw log; all new findings go HERE.
   zones in **78 seconds** (02:43:57-02:45:15). So >99% of the batch
   stage's wall clock is analysis, not I/O, on a dataset of only 8k
   points. Discovered while reconstructing the hull-crash timeline from
-  file mtimes. Not yet root-caused; the KDE/overlap search is the
-  obvious place to look for an O(N^2) or repeated-rebuild path. Matters
-  for scheduling (this phase, not the copy, is what shares the box with
-  a GPU job) and for the 19k-image datasets ahead. [H2024] (2026-07-26)
+  file mtimes. [H2024] (2026-07-26)
+  - **SUPERSEDED (same session): the 4 h 10 min was NOT analysis - it was
+    `plt.show()` waiting for someone to close a window.** The batcher
+    called `plt.show()` unconditionally after saving each figure; on an
+    interactive backend that BLOCKS until the window is dismissed, and the
+    second figure cannot even appear until the first is closed
+    (owner-observed independently). An identical re-run with the call gated
+    on `stdin.isatty()` completed the whole stage in **28.9 min**. So the
+    "> 99% of wall clock is analysis" claim is withdrawn, and there is no
+    evidence of an O(N^2) path to hunt. LESSON: I inferred an algorithmic
+    cost from one wall-clock measurement without asking what the process
+    was actually doing - the same error as attributing the hull crash to
+    contention. A blocking UI call is indistinguishable from slow compute
+    if you only look at elapsed time. The real defect was worse than the
+    imagined one: an unattended pipeline stage that stalls forever on a
+    window nobody is there to close. Fixed, and the plots are still written
+    as PNGs. (2026-07-26)
 
 - **Zone copies happen only AFTER the accept gate, as designed** - the
   batcher prints its per-zone table, asks `Accept these batches?
@@ -1374,3 +1387,43 @@ frozen as the NA167 raw log; all new findings go HERE.
   align the smoke fixture with orientation at several `ifKmode` values and
   read the resulting camera attitudes out of the pose XMPs, which is
   fully headless and about 2 min per cell. [H2023] (2026-07-26)
+
+- **NEAR MISS (fixed): five H2024 zones were silently a BLEND of two
+  zonings, and were about to be aligned.** After the lever-arm correction
+  changed every Port position, a re-batch reused the existing
+  `batched_images_by_zone` folder: the batcher's unattended overwrite path
+  reuses on the stated premise that "zone recomputation is deterministic
+  for the same log+parameters", which was true and never verified. The
+  flight log HAD changed, so zone membership changed, and `__copy_files`
+  skips files already present but has no way to remove a member the new
+  zoning dropped. Result: **12,679 jpgs on disk against 9,834 reported**
+  (zone_2 1,537 -> 3,497, zone_5 2,623 -> 3,497), i.e. ~2,845 stale
+  images, with the module reporting `Success: True`. Discovered by
+  counting files per zone instead of trusting the summary. Fixed by
+  making the premise mechanical: `batch_inputs.json` records the flight
+  log's sha256 plus the six zoning parameters, and reuse is REFUSED with
+  the remedy named when they differ. Contaminated folder removed and
+  rebuilt clean - 9,834 jpgs, 1:1 sidecars, totals matching the report.
+  LESSON: a reuse/resume path needs an input fingerprint, not a comment
+  asserting the inputs are unchanged; and "Success: True" from a stage
+  whose output is a directory means nothing without counting the
+  directory. [H2024] (2026-07-26)
+
+- **Hull model memory profile, now measurable.** The retry's resource
+  trace (`logs/resources_GenerateModel_*.csv`) shows `-calculateHighModel`
+  on 3,738 cameras driving the box to its limit: available RAM fell from
+  79.4 GB to **3.1 GB within 3 minutes**, commit charge went 19.6 -> 105 GB
+  and Windows grew the commit limit from 99.5 GB to ~120 GB to absorb it,
+  after which the run oscillated at 87-105 GB committed with 7-32 GB free
+  for the next half hour. RealityScan's working set peaked at 62.5 GB.
+  Confirmed still doing real work rather than hanging: 9.1 cores busy and
+  33% GPU measured over a 20 s window. So the FIRST hull attempt's crash
+  at `closeHoles`/`cleanModel` is best explained by memory exhaustion
+  INTRINSIC to this component's mesh at High detail - not by the
+  concurrent-load story that was already retracted. The bow (656 cams)
+  and torpedo (102) completed comfortably; the hull is 5.7x the bow.
+  IMPLICATION for the recipe: at this camera count, High detail plus
+  `closeHoles` does not fit in 93.6 GB of RAM without paging, so the
+  levers are model detail, harder pre-`closeHoles` culling, or a
+  deliberately larger pagefile. All three are owner decisions. [H2023]
+  (2026-07-26)
