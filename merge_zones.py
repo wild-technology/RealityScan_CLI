@@ -59,6 +59,7 @@ from module_base.settings_store import SettingsStore
 from modules import camera_registry
 from modules import component_analysis
 from modules import component_manifest
+from modules import scale_oracle
 from modules.flight_logs import utm_zone_from_flight_log_name, write_flight_log_params
 from modules.realityscan_interface.realityscan_cli import (
     RealityScanCLI, METADATA_DIR, set_project_save_env)
@@ -137,6 +138,80 @@ def load_inputs(components_root: str, complist: str | None,
             raise FileNotFoundError(f'component missing on disk: {m["rsalign"]}')
     logger.info('%d manifested input components', len(picked))
     return picked
+
+
+def measure_input_scales(inputs: list[dict], union_log: str, logger) -> dict:
+    """Metric scale per INPUT component, keyed by component_key.
+
+    Uses each manifest's own image list against the harvest sitting beside its
+    .rsalign, so a component is never mis-identified by ordinal position. The
+    union flight log supplies nav for every image regardless of which zone it
+    came from.
+    """
+    nav = scale_oracle.load_nav_positions(union_log)
+    out = {}
+    for m in inputs:
+        key = component_analysis.component_key(m)
+        comp_dir = os.path.dirname(m.get('rsalign', '')) or '.'
+        try:
+            stats = scale_oracle.scale_for_images(m.get('images', []), comp_dir, nav)
+        except OSError as exc:
+            logger.warning('Scale measurement failed for %s: %s', key, exc)
+            stats = None
+        status, why = scale_oracle.verdict(stats)
+        out[key] = {'status': status, 'explanation': why,
+                    'median': None if stats is None else stats['median'],
+                    'iqr_low': None if stats is None else stats['iqr_low'],
+                    'iqr_high': None if stats is None else stats['iqr_high'],
+                    'cameras_measured': None if stats is None else stats['cameras']}
+        line = 'Scale %s: %s - %s'
+        if status == 'fail':
+            logger.error(line, key, status.upper(), why)
+        elif status == 'unmeasured':
+            logger.warning(line, key, status.upper(), why)
+        else:
+            logger.info(line, key, status.upper(), why)
+    return out
+
+
+def apply_scale_gate(targets: list[dict], input_scales: dict,
+                     scale_min: float, scale_max: float, logger) -> tuple[list, list]:
+    """Drop model targets whose metric scale is out of band or unmeasurable.
+
+    A result component inherits the verdicts of the inputs attributed to it, and
+    the WORST one decides: a fused component containing a 0.236 input is not
+    salvaged by a sound sibling. UNMEASURED blocks too - the whole point is that
+    silence is not evidence, and modelling is the expensive, deliverable-facing
+    step. `--scale_gate false` overrides for a deliberate exception.
+    """
+    kept, blocked = [], []
+    for c in targets:
+        origin_keys = c.get('inputs') or [c.get('key')]
+        verdicts = [input_scales.get(k) for k in origin_keys if k]
+        verdicts = [v for v in verdicts if v]
+        if not verdicts:
+            worst, why = 'unmeasured', 'no scale record for this component'
+        elif any(v['status'] == 'fail' for v in verdicts):
+            bad = next(v for v in verdicts if v['status'] == 'fail')
+            worst, why = 'fail', bad['explanation']
+        elif any(v['status'] == 'unmeasured' for v in verdicts):
+            bad = next(v for v in verdicts if v['status'] == 'unmeasured')
+            worst, why = 'unmeasured', bad['explanation']
+        else:
+            worst, why = 'pass', '; '.join(v['explanation'] for v in verdicts)
+        if worst == 'pass':
+            kept.append(c)
+            continue
+        blocked.append({'key': c.get('key'), 'status': worst, 'reason': why})
+        logger.error(
+            'SCALE GATE blocked %s from model generation: %s (%s). '
+            'Metric scale is not something a camera count can see; re-align '
+            'this component or pass --scale_gate false to override.',
+            c.get('key'), worst.upper(), why)
+    if blocked and not kept:
+        logger.error('SCALE GATE blocked EVERY model target - nothing will be '
+                     'modelled. Fix the alignment before spending model hours.')
+    return kept, blocked
 
 
 def partition_clusters(manifests: list[dict], logger) -> tuple[list[list[dict]], dict]:
@@ -548,6 +623,13 @@ def main() -> int:
                         help='true = run GenerateModel per surviving component >= min_size')
     parser.add_argument('--ladder', default=None,
                         help='merge_first (default) or content_first - see LADDERS')
+    parser.add_argument('--scale_gate', default=None,
+                        help='true (default) = refuse to MODEL a component whose '
+                             'metric scale is out of band or unmeasurable')
+    parser.add_argument('--scale_min', type=float, default=None,
+                        help=f'lower scale bound (default {scale_oracle.DEFAULT_SCALE_MIN})')
+    parser.add_argument('--scale_max', type=float, default=None,
+                        help=f'upper scale bound (default {scale_oracle.DEFAULT_SCALE_MAX})')
     args = parser.parse_args()
 
     def ask(key, cli_value, fallback):
@@ -579,6 +661,9 @@ def main() -> int:
     auto_model = truthy(ask('auto_model', args.auto_model, 'false'))
     ladder_name = ask('ladder', args.ladder, 'merge_first')
     ladder = LADDERS.get(ladder_name, LADDERS['merge_first'])
+    scale_gate = truthy(ask('scale_gate', args.scale_gate, 'true'))
+    scale_min = float(ask('scale_min', args.scale_min, scale_oracle.DEFAULT_SCALE_MIN))
+    scale_max = float(ask('scale_max', args.scale_max, scale_oracle.DEFAULT_SCALE_MAX))
 
     if visible:
         os.environ['RS_HEADLESS'] = '0'
@@ -600,11 +685,27 @@ def main() -> int:
         logger.error('No manifested components under %s', components_root)
         return 1
 
+    # Metric scale FIRST, before any ladder spends GPU hours: a component
+    # that is metrically broken is not worth merging or modelling, and this is
+    # the check that a camera-counting gate cannot make. An H2024 component
+    # solved at 0.236 passed every other check and reached a deliverable.
+    try:
+        gate_log, _gate_params = build_union_flight_log(
+            images_root, output_dir, logger, tag='scalegate')
+        input_scales = measure_input_scales(inputs, gate_log, logger)
+    except (OSError, ValueError) as exc:
+        logger.warning('Could not measure input scale (%s); the model gate will '
+                       'treat every component as UNMEASURED', exc)
+        input_scales = {}
+
     clusters, plan = partition_clusters(inputs, logger)
     total_images = count_unique_images(images_root)
 
     cli = RealityScanCLI(logger)
     report = {'schema': 2,
+              'input_scales': input_scales,
+              'scale_gate': {'enabled': scale_gate, 'min': scale_min,
+                             'max': scale_max},
               'inputs': [component_analysis.component_key(m) for m in inputs],
               'unique_images': total_images,
               'informational_target': target,
@@ -681,6 +782,15 @@ def main() -> int:
               'Multi-component outcomes are CORRECT for multi-feature dives '
               '(bow/hull). Evaluate each component in the GUI before models.',
               '',
+              '', 'METRIC SCALE (testing/scale_oracle.py, band '
+              f'{scale_min:.2f}-{scale_max:.2f}, gate '
+              f'{"ON" if scale_gate else "OFF"}):']
+    if input_scales:
+        for key, v in sorted(input_scales.items()):
+            lines.append(f'  - {key}: {v["status"].upper()} - {v["explanation"]}')
+    else:
+        lines.append('  - not measured')
+    lines += ['',
               'CAMERA COUNTS ARE THE MANIFEST SUM (the inputs). Assemble '
               'mode exports no XMPs, so nothing here observes the assembled '
               'project itself - in particular its METRIC SCALE is unmeasured, '
@@ -701,6 +811,11 @@ def main() -> int:
 
     if auto_model:
         model_targets = [c for c in finals if (c['camera_count'] or 0) >= min_size]
+        if scale_gate:
+            model_targets, blocked = apply_scale_gate(
+                model_targets, input_scales, scale_min, scale_max, logger)
+            report['scale_gate']['blocked'] = blocked
+            flush()
         logger.info('auto_model: generating models for %d component(s)',
                     len(model_targets))
         proj = report['assembly']['project']

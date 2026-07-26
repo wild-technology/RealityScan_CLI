@@ -28,7 +28,7 @@ sys.path.insert(0, REPO)
 from modules import camera_registry
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI
 from modules.realityscan_interface.realityscan_interface import RealityScanAlignment
-from testing import scale_oracle
+from modules import scale_oracle
 
 CELL = r'D:/na156_h2023_fresh/pd_runs/pd6_zone_1_clean'
 ZONE = r'D:/na156_h2023_fresh/batched_images_by_zone/zone_1'

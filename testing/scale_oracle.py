@@ -1,128 +1,41 @@
 #!/usr/bin/env python3
-"""Metric-scale oracle for aligned components.
+"""Compatibility shim - the metric-scale oracle now lives in modules/.
 
-The pipeline's automated checks have historically measured only QUANTITY
-(cameras registered, components produced). This measures QUALITY: whether
-a solved component is metrically consistent with the nav trajectory that
-georeferenced it.
+It was promoted out of testing/ on 2026-07-26 because merge_zones calls it as
+a DELIVERABLE GATE before generating any model, and a gate must not live beside
+the unit tests. This shim exists only so the command recorded throughout
+FINDINGS.md and HANDOFF.md keeps working:
 
-Method: the ratio of solved-to-nav distance over many random camera
-pairs. Pairwise distance is invariant to translation AND rotation, so the
-figure is meaningful even when a component's absolute placement is
-arbitrary - which it often is (see FINDINGS 2026-07-25).
+    py -3.13 testing/scale_oracle.py <components_dir> <flight_log>
 
-    ratio ~= 1.0   metrically sound
-    ratio << 1.0   solve is SMALLER than reality (scale collapse)
-    wide IQR       not a similarity error - drift, fold, or mixed bodies
-
-Discovered by this measurement: fresh-run zone_1 hull components solved
-at 0.175 and 0.220 (5.7x / 4.5x too small) while the bow and other zones
-solved at ~1.0. A uniform scale error is invisible in the viewer, so
-nothing upstream caught it.
-
-Positions come from the pose XMPs of an identity_r<K> harvest directory
-(zone-scene exports carry real stems - B10 only degrades imported-
-component scenes). Components are separated by successive difference,
-exactly as the align workflow's identity loop defines them.
+There is exactly ONE implementation (modules/scale_oracle.py); nothing is
+duplicated here. Prefer importing `modules.scale_oracle` in new code.
 """
 from __future__ import annotations
 
-import glob
-import math
 import os
-import random
-import re
+import sys
 
-POS_RE = re.compile(r'<xcr:Position>([^<]+)</xcr:Position>|xcr:Position="([^"]+)"')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-
-def load_solved_positions(identity_dir: str) -> dict[str, tuple]:
-    """{stem_lower: (x, y, z)} from an identity_r<K> harvest directory."""
-    out = {}
-    for path in glob.glob(os.path.join(identity_dir, '*.xmp')):
-        try:
-            with open(path, encoding='utf-8', errors='replace') as fh:
-                text = fh.read()
-        except OSError:
-            continue
-        m = POS_RE.search(text)
-        if m:
-            raw = m.group(1) or m.group(2)
-            out[os.path.splitext(os.path.basename(path))[0].lower()] = tuple(
-                float(v) for v in raw.split())
-    return out
-
-
-def load_nav_positions(flight_log: str) -> dict[str, tuple]:
-    """{stem_lower: (x, y, alt)} from a flight_log_*_UTM.txt."""
-    out = {}
-    with open(flight_log, encoding='utf-8', errors='replace') as fh:
-        for line in list(fh)[1:]:
-            parts = line.split(';')
-            if len(parts) > 3 and parts[1].strip():
-                out[os.path.splitext(parts[0])[0].lower()] = (
-                    float(parts[1]), float(parts[2]), float(parts[3]))
-    return out
-
-
-def component_members(components_dir: str) -> list[set]:
-    """Member stem sets per component, by successive difference over the
-    identity_r<K> harvest directories (maximal-first, same as the align
-    workflow's own definition)."""
-    rounds = []
-    k = 0
-    while os.path.isdir(os.path.join(components_dir, f'identity_r{k}')):
-        stems = {os.path.splitext(f)[0].lower()
-                 for f in os.listdir(os.path.join(components_dir, f'identity_r{k}'))
-                 if f.lower().endswith('.xmp')}
-        if not stems:
-            break
-        rounds.append(stems)
-        k += 1
-    return [rounds[i] - (rounds[i + 1] if i + 1 < len(rounds) else set())
-            for i in range(len(rounds))]
-
-
-def scale_ratio(members: set, solved: dict, nav: dict,
-                samples: int = 4000, min_nav_distance: float = 3.0,
-                seed: int = 5) -> dict | None:
-    """Median/IQR of solved/nav pairwise-distance ratio for one component."""
-    common = [s for s in members if s in solved and s in nav]
-    if len(common) < 30:
-        return None
-    rng = random.Random(seed)
-    vals = []
-    for _ in range(samples):
-        a, b = rng.sample(common, 2)
-        d_nav = math.dist(nav[a], nav[b])
-        if d_nav > min_nav_distance:
-            vals.append(math.dist(solved[a], solved[b]) / d_nav)
-    if not vals:
-        return None
-    vals.sort()
-    n = len(vals)
-    return {'cameras': len(common), 'median': vals[n // 2],
-            'iqr_low': vals[n // 4], 'iqr_high': vals[3 * n // 4], 'pairs': n}
-
-
-def report(components_dir: str, flight_log: str) -> list[dict]:
-    """Per-component scale for a finished align. Component 0 is maximal."""
-    solved = load_solved_positions(os.path.join(components_dir, 'identity_r0'))
-    nav = load_nav_positions(flight_log)
-    rows = []
-    for i, members in enumerate(component_members(components_dir)):
-        stats = scale_ratio(members, solved, nav)
-        if stats:
-            stats['component'] = i
-            rows.append(stats)
-    return rows
-
+from modules.scale_oracle import (  # noqa: E402,F401
+    DEFAULT_SCALE_MAX,
+    DEFAULT_SCALE_MIN,
+    component_members,
+    load_nav_positions,
+    load_solved_positions,
+    report,
+    scale_for_images,
+    scale_ratio,
+    verdict,
+)
 
 if __name__ == '__main__':
-    import sys
     if len(sys.argv) != 3:
         print('usage: scale_oracle.py <components_dir> <flight_log>')
         raise SystemExit(2)
     for row in report(sys.argv[1], sys.argv[2]):
+        status, why = verdict(row)
         print('c{component}: {cameras:5d} cams  scale {median:.3f}  '
-              'IQR {iqr_low:.3f}-{iqr_high:.3f}'.format(**row))
+              'IQR {iqr_low:.3f}-{iqr_high:.3f}'.format(**row)
+              + f'  [{status.upper()}] {why}')
