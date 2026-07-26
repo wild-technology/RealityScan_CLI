@@ -1597,3 +1597,43 @@ frozen as the NA167 raw log; all new findings go HERE.
   exact near-miss it was written for hours earlier (12,679 images on disk
   against 9,834 reported), now caught mechanically instead of by manually
   counting files. [H2024] (2026-07-26)
+
+- **H2023 HULL MODEL COMPLETE.** Attempt 4 succeeded: `success=True` in
+  384.1 min, all eight recipe steps, no errors, project saved plus dated
+  copy. The only variable changed from the three failures was the cache
+  drive (`RS_CACHE_DIR=E:\rscache`), which closes the loop on the
+  disk-not-memory diagnosis. Resource peaks are worth recording because
+  they are extreme: **CPU 100%, commit used 142.3 GB, minimum available
+  RAM 0.3 GB**, minimum free project disk 672.6 GB, minimum free CACHE
+  disk 6,900.5 GB. So the hull DOES run the box to the edge of memory - it
+  simply never failed there. All three H2023 components (hull 3,738 / bow
+  656 / torpedo 102) now carry models. [H2023] (2026-07-26)
+
+- **CRITICAL: the metric-scale failure REPRODUCED on H2024 zone_3 - 1,192
+  cameras at scale 0.236 - on the first production run with ORIENTATION
+  PRIORS ENABLED.** Full sweep (`testing/scale_oracle.py`, all 16
+  components): zone_1 eight components 0.937-1.119; zone_2 1.086;
+  **zone_3 c0 = 0.236 (IQR 0.217-0.253)**; zone_4 five components
+  0.983-1.196; zone_5 1.023. Registration looked entirely healthy
+  throughout - 8,709 cameras, 82-93% per zone, `Success: True` on every
+  zone - which is exactly the blindness the oracle was built for: a
+  camera-counting gate passes this dataset.
+  This is the SAME failure mode as the fresh-run H2023 hull (0.175) and it
+  is the risk that was explicitly raised and overruled when orientation
+  priors were switched on ("apply the orientations regardless of test...
+  we should not throw away validated data"), with the scale oracle named
+  as the mitigation. The mitigation worked on its first outing.
+  ATTRIBUTION NOT YET ESTABLISHED - and must not be assumed. This run
+  differs from the sound PD-6 run in more than one way: different dataset,
+  orientation priors ON at 15 deg, and the unpinned Euler order / camera
+  mount. The narrow IQR (0.217-0.253) says it is a clean SIMILARITY error,
+  i.e. a whole-component scale collapse rather than drift or a fold -
+  consistent with a focal/attitude conflict rather than a bad solve.
+  DISCRIMINATOR (cheap, decisive, ~20 min for 1,279 images): re-align
+  zone_3 alone with a POSITION-ONLY flight log and the 7-column format
+  GUID, exactly as PD-6 was configured, and re-measure. If scale returns to
+  ~1.0 then orientation priors under an unpinned Euler order are the cause
+  and the priors must come back out until the convention is verified.
+  NOTE zone_4 c2 (1.196) and c4 (1.100) also sit outside a +/-10% band, so
+  zone_3 may be the extreme of a spectrum rather than an isolated fault.
+  [H2024] (2026-07-26)
