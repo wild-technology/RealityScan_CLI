@@ -101,8 +101,13 @@ STALL_WARNING_SECONDS = 2 * 60 * 60
 LOW_MEMORY_WARN_GB = 4.0
 
 
-def _available_ram_gb() -> float | None:
-    """Available physical RAM in GiB (Windows), or None."""
+def _memory_status() -> dict | None:
+    """Physical RAM and commit-charge figures in GiB (Windows), or None.
+
+    One GlobalMemoryStatusEx call - microseconds, no subprocess. Commit
+    charge is included because a run can exhaust commit while physical RAM
+    still looks comfortable.
+    """
     if os.name != 'nt':
         return None
     import ctypes
@@ -117,10 +122,68 @@ def _available_ram_gb() -> float | None:
 
     status = _MemoryStatusEx()
     status.dwLength = ctypes.sizeof(_MemoryStatusEx)
-    if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-        return status.ullAvailPhys / (1024 ** 3)
-    return None
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return None
+    gb = 1024 ** 3
+    return {
+        'ram_avail_gb': status.ullAvailPhys / gb,
+        'ram_total_gb': status.ullTotalPhys / gb,
+        'mem_load_pct': float(status.dwMemoryLoad),
+        # "PageFile" in this struct is the system commit limit/available,
+        # not a paging-file-only figure.
+        'commit_avail_gb': status.ullAvailPageFile / gb,
+        'commit_total_gb': status.ullTotalPageFile / gb,
+    }
+
+
+def _available_ram_gb() -> float | None:
+    """Available physical RAM in GiB (Windows), or None."""
+    status = _memory_status()
+    return None if status is None else status['ram_avail_gb']
+
+
+class _CpuSampler:
+    """System-wide CPU utilisation between successive calls.
+
+    Uses GetSystemTimes tick counters, so a sample costs one syscall and no
+    process spawn - `wmic`/`typeperf`/`Get-Counter` would each cost 50-200 ms
+    and pop a console window under a hidden parent.
+    """
+
+    def __init__(self) -> None:
+        self._prev = None
+
+    def _ticks(self):
+        if os.name != 'nt':
+            return None
+        import ctypes
+        idle, kernel, user = (ctypes.c_uint64(), ctypes.c_uint64(),
+                              ctypes.c_uint64())
+        if not ctypes.windll.kernel32.GetSystemTimes(
+                ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        # kernel time INCLUDES idle time on Windows.
+        return idle.value, kernel.value + user.value
+
+    def percent(self) -> float | None:
+        """CPU busy percent since the previous call; None on the first."""
+        now = self._ticks()
+        if now is None:
+            return None
+        prev, self._prev = self._prev, now
+        if prev is None:
+            return None
+        idle_delta = now[0] - prev[0]
+        total_delta = now[1] - prev[1]
+        if total_delta <= 0:
+            return None
+        return max(0.0, min(100.0, 100.0 * (1.0 - idle_delta / total_delta)))
 PROGRESS_POLL_SECONDS = 2.0
+# Resource trace cadence. The monitor loop already wakes every
+# PROGRESS_POLL_SECONDS, so a sample is two ctypes syscalls plus one buffered
+# CSV line - far too cheap to matter against a multi-hour GPU workload, while
+# 30 s is fine resolution for the memory ramp that precedes an OOM crash.
+RESOURCE_SAMPLE_SECONDS = 30.0
 # Closing a very large scene after -quit can take a long time; override via
 # "realityscan"/"shutdown_timeout" in rs_settings.json if 15 min is not enough.
 SHUTDOWN_VERIFY_TIMEOUT_SECONDS = 900
@@ -384,7 +447,13 @@ class RealityScanCLI:
             raise FileNotFoundError(f'Workflow script not found: {script_path}')
 
         os.makedirs(log_dir, exist_ok=True)
-        log_path = os.path.join(log_dir, f'output_{time.strftime("%Y-%m-%d_%H-%M-%S")}.txt')
+        stamp = time.strftime('%Y-%m-%d_%H-%M-%S')
+        log_path = os.path.join(log_dir, f'output_{stamp}.txt')
+        # Shares the workflow log's timestamp so the trace and the narrative
+        # of the same run are trivially paired. Every workflow gets one -
+        # a crash is never predictable in advance.
+        resource_csv = os.path.join(
+            log_dir, f'resources_{os.path.splitext(script_name)[0]}_{stamp}.csv')
 
         env = os.environ.copy()
         env['RS_EXECUTABLE'] = exe
@@ -435,7 +504,7 @@ class RealityScanCLI:
                     cwd=SCRIPTS_DIR, env=env,
                     creationflags=creationflags,
                 )
-                self._monitor_until_exit(process)
+                self._monitor_until_exit(process, resource_csv)
                 log_path = None
             else:
                 with open(log_path, 'w', encoding='utf-8', errors='replace') as log_file:
@@ -445,7 +514,7 @@ class RealityScanCLI:
                         stdout=log_file, stderr=subprocess.STDOUT,
                         creationflags=creationflags,
                     )
-                    self._monitor_until_exit(process)
+                    self._monitor_until_exit(process, resource_csv)
 
             return_code = process.returncode
 
@@ -478,9 +547,17 @@ class RealityScanCLI:
         finally:
             self._release_lock()
 
-    def _monitor_until_exit(self, process: subprocess.Popen) -> None:
+    def _monitor_until_exit(self, process: subprocess.Popen,
+                            resource_csv: str = None) -> None:
         """Poll the workflow process, relaying progress.txt updates and
-        warning on stalls. No overall timeout by design."""
+        warning on stalls. No overall timeout by design.
+
+        When `resource_csv` is given, a CPU/memory sample is appended every
+        RESOURCE_SAMPLE_SECONDS and flushed immediately. Flushing per sample
+        is the point: when RealityScan dies it takes its own log with it (the
+        next instance overwrites Temp\\RealityScan.log), so the trace across
+        the crash has to be durable as it is written, not at close.
+        """
         progress_path = self._marker('progress')
         last_progress_line = ''
         last_errors = ''
@@ -488,8 +565,52 @@ class RealityScanCLI:
         stall_warned = False
         low_memory_warned = False
 
+        cpu = _CpuSampler()
+        trace = None
+        next_sample = 0.0
+        started = time.monotonic()
+        peak = {'cpu_pct': 0.0, 'commit_used_gb': 0.0, 'ram_avail_gb_min': None}
+        if resource_csv:
+            try:
+                trace = open(resource_csv, 'w', encoding='utf-8', newline='')
+                trace.write('iso_time,elapsed_s,cpu_pct,ram_avail_gb,'
+                            'ram_total_gb,mem_load_pct,commit_used_gb,'
+                            'commit_total_gb,progress\n')
+                trace.flush()
+            except OSError as exc:
+                self.logger.warning('Could not open resource trace %s: %s',
+                                    resource_csv, exc)
+                trace = None
+
+        try:
+            self._monitor_loop(process, progress_path, last_progress_line,
+                               last_errors, last_activity, stall_warned,
+                               low_memory_warned, cpu, trace, next_sample,
+                               started, peak)
+        finally:
+            if trace is not None:
+                trace.close()
+                self.logger.info(
+                    'Resource peaks [%s]: CPU %.0f%%, commit used %.1f GB, '
+                    'minimum available RAM %s. Trace: %s',
+                    self.instance_name, peak['cpu_pct'], peak['commit_used_gb'],
+                    'n/a' if peak['ram_avail_gb_min'] is None
+                    else f"{peak['ram_avail_gb_min']:.1f} GB",
+                    resource_csv)
+
+    def _monitor_loop(self, process, progress_path, last_progress_line,
+                      last_errors, last_activity, stall_warned,
+                      low_memory_warned, cpu, trace, next_sample, started,
+                      peak) -> None:
         while process.poll() is None:
             time.sleep(PROGRESS_POLL_SECONDS)
+
+            if trace is not None:
+                elapsed = time.monotonic() - started
+                if elapsed >= next_sample:
+                    next_sample = elapsed + RESOURCE_SAMPLE_SECONDS
+                    self._sample_resources(trace, cpu, peak, elapsed,
+                                           last_progress_line)
 
             # Near-OOM crawl detection (owner-observed): RealityScan slows
             # drastically without crashing or spilling to disk. Warn once
@@ -543,6 +664,40 @@ class RealityScanCLI:
                         'Long silences are normal for very large datasets; check the '
                         'instance manually if this persists.%s',
                         self.instance_name, STALL_WARNING_SECONDS / 3600, ram_note)
+
+    def _sample_resources(self, trace, cpu: '_CpuSampler', peak: dict,
+                          elapsed: float, progress_line: str) -> None:
+        """Append one CPU/memory row and update running peaks.
+
+        Deliberately tolerant: a failed sample must never take down a
+        multi-hour run, so a bad read is skipped rather than raised. The
+        progress line is carried along so a spike can be attributed to the
+        operation that was running.
+        """
+        mem = _memory_status()
+        cpu_pct = cpu.percent()
+        if mem is None:
+            return
+        commit_used = mem['commit_total_gb'] - mem['commit_avail_gb']
+        if cpu_pct is not None:
+            peak['cpu_pct'] = max(peak['cpu_pct'], cpu_pct)
+        peak['commit_used_gb'] = max(peak['commit_used_gb'], commit_used)
+        if (peak['ram_avail_gb_min'] is None
+                or mem['ram_avail_gb'] < peak['ram_avail_gb_min']):
+            peak['ram_avail_gb_min'] = mem['ram_avail_gb']
+        try:
+            trace.write(
+                '{iso},{el:.0f},{cpu},{avail:.2f},{total:.2f},{load:.0f},'
+                '{cu:.2f},{ct:.2f},"{prog}"\n'.format(
+                    iso=time.strftime('%Y-%m-%dT%H:%M:%S'), el=elapsed,
+                    cpu='' if cpu_pct is None else f'{cpu_pct:.1f}',
+                    avail=mem['ram_avail_gb'], total=mem['ram_total_gb'],
+                    load=mem['mem_load_pct'], cu=commit_used,
+                    ct=mem['commit_total_gb'],
+                    prog=progress_line.replace('"', "'")[:120]))
+            trace.flush()
+        except (OSError, ValueError) as exc:
+            self.logger.warning('Resource trace write failed: %s', exc)
 
     @staticmethod
     def _tail_line(path: str) -> str:
