@@ -1157,3 +1157,52 @@ frozen as the NA167 raw log; all new findings go HERE.
   `xcr:CalibrationGroup="-1"`/`DistortionGroup="-1"` alongside
   `Camera:CalibrationGroup="3"`; the -1 is an export artifact, not a
   lost grouping. [H2023] (2026-07-26)
+
+- **OWNER REPORT + DIAGNOSIS: the bow model sits ~45 deg off the true
+  ground plane (site is a flat mud floor). The ALIGN is not the culprit;
+  orientation priors are absent where they would constrain geometry and
+  present only where they can merely rotate a finished component.**
+  Measured from the PD-6 harvest: the bow's solved camera cloud matches
+  nav to **0.8 deg** in best-fit-plane attitude (solved 8.1 deg off
+  vertical vs nav 7.3 deg), with shape ratios agreeing to three decimals
+  (mid/max 0.371 vs 0.370), and its optical axes are statistically
+  identical to the hull's (median 148.1 vs 147.7 deg from local up, same
+  ~50 deg spread). So there is no 45 deg rotation in the zone solve.
+  WHERE YPR ACTUALLY ENTERS: the PD-6 align log is 7-column
+  position-only, while the assembly's union log is 13-column carrying
+  Yaw/Pitch/Roll at 3/5/3 accuracies - so the ONLY consumer of
+  orientation was `-update` in the assembly, a rigid/similarity fit
+  applied AFTER reconstruction, which can rotate a component but cannot
+  stiffen or repair its geometry.
+  RANKED CANDIDATES:
+  1. `-update` rotated the bow to satisfy MIS-CONVERTED orientation
+     priors. The Euler order / camera-mount convention for imported YPR
+     is explicitly UNVERIFIED (the planned one-minute GUI check was
+     never done) and mount offsets are independently known wrong (Port
+     lever arm off by ~1 m). A 656-camera component spanning 9.3 m on a
+     near-1D track is cheap to rotate about that track - the fit trades
+     a small position penalty for the orientation term - whereas the
+     hull (3,738 cams over 17.9 m) is far stiffer. Predicts a clean
+     near-rigid tilt, which matches a crisp "45 degrees".
+  2. Internal deformation of the bow: scale IQR width **0.444** vs the
+     hull's 0.081 (5.5x wider), which by the oracle's own semantics means
+     drift/fold, not a similarity error. Explains floor NON-FLATNESS but
+     not a clean 45 deg plane.
+  BLINDNESS NOW LOAD-BEARING (escalation condition): assemble mode
+  exports no poses, so the assembled project - the artifact the owner
+  actually looked at - cannot be measured. Hypotheses can only be ranked
+  until poses are harvested from a copy of the assembly.
+  CHEAP DECISIVE TEST: re-run the assembly `-update` with a
+  POSITION-ONLY union log and re-measure the bow's attitude; the
+  assembly stage costs ~2 min. If the tilt disappears, candidate 1 is
+  confirmed and the remedy is to verify the YPR convention before
+  importing orientation anywhere.
+  OWNER POSITION (agreed, with a caveat): pitch/roll/yaw belong in the
+  ALIGNMENT priors, not merely in the post-hoc georeferencing fit - that
+  is where they would anchor absolute attitude AND stiffen a solve
+  against exactly the drift measured in candidate 2. Caveat: they must be
+  imported at the validated 15 deg accuracy, not the 3/5/3 currently in
+  the zone logs (tight orientation at dense scale is already suspect
+  from PD-4), and the convention must be verified first - importing
+  wrong-convention YPR is itself a mechanism for this defect. [H2023]
+  (2026-07-26)
