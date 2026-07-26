@@ -133,8 +133,13 @@ def parse_arguments(argv, params, logger) -> None:
     parser = argparse.ArgumentParser()
     for p in params.values():
         arg_type = str_to_bool if p.get_type() is bool else p.get_type()
+        # argparse %-expands help text at print_help() time, so a literal
+        # percent in a description (e.g. "96.3% -> 89.6%") crashes --help
+        # and every argparse error path. Descriptions stay human-readable
+        # for the interactive prompts; the escaping belongs here.
         parser.add_argument(f'-{p.cli_short}', f'--{p.cli_long}',
-                            type=arg_type, help=p.get_description())
+                            type=arg_type,
+                            help=p.get_description().replace('%', '%%'))
     args = parser.parse_args(argv[1:])
 
     settings = SettingsStore()
