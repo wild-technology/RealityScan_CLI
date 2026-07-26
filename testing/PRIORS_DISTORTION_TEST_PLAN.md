@@ -77,15 +77,15 @@ Change ONE variable per cell; all others pinned at fresh-run values.
 
 | Cell | Fixture | Variable under test | Hypothesis | Status |
 |---|---|---|---|---|
-| PD-0 | Z3 | 13-col import live + 1/1/0.1 acc + tight YPR acc (3-5°) | orientation+accuracy priors change the solve | DONE — **BAD CELL (two variables at once)**: 101/124 in FOUR comps [62,18,11,10] vs baseline 102/1. Superseded by the a/b split |
+| PD-0 | Z3 | 13-col import live + 1/1/0.1 acc + tight YPR acc (3-5°) | orientation+accuracy priors change the solve | DONE — **BAD CELL (two variables at once)**: 101/124 in FOUR comps [62,18,11,10] vs baseline 102/1. Superseded by the a/b split **[CONTAMINATED 2026-07-26: ran with Euler order and Camera mount UNPINNED - see FINDINGS contamination flag. Count stands; attribution to orientation priors does not.]** |
 | PD-0a | Z3 | position-only, 1/1/0.1 (stock 7-col format) | tight position accuracies alone are safe | DONE: 101/124, ONE comp — safe, neutral |
-| PD-0b | Z3 | + orientation at HONEST 15° YPR accuracy | orientation helps when honestly weighted | DONE: **109/124 (+7 vs baseline)**, comps [99,10]. Dose-response proven: 5°→fragments, 15°→gains |
+| PD-0b | Z3 | + orientation at HONEST 15° YPR accuracy | orientation helps when honestly weighted | DONE: **109/124 (+7 vs baseline)**, comps [99,10]. Dose-response proven: 5°→fragments, 15°→gains **[CONTAMINATED 2026-07-26: ran with Euler order and Camera mount UNPINNED - see FINDINGS contamination flag. Count stands; attribution to orientation priors does not.]** |
 | PD-1 | Z3 | global sfmDistortionModel=Division (on PD-0a config) | Division fits the fisheye; C may degrade | DONE: **112/124, best result**, comps [102,10]; BOTH cameras solved division — C did not degrade |
 | PD-2 | Z3 | are per-image XMP models honored vs global key | — | DONE (from fresh-run data + PD-1): the GLOBAL key owns the model; Camera:DistortionModel element does NOT override. Mixed-optics rigs need a global choice (or an Epic feature request) |
-| PD-1b | Z3 | Division + orientation@15° combined | additive gains | DONE: 112/124 [102,10] — same as PD-1; orientation gains not additive on Z3 (its weak frames rescued by either lever) |
+| PD-1b | Z3 | Division + orientation@15° combined | additive gains | DONE: 112/124 [102,10] — same as PD-1; orientation gains not additive on Z3 (its weak frames rescued by either lever) **[CONTAMINATED 2026-07-26: ran with Euler order and Camera mount UNPINNED - see FINDINGS contamination flag. Count stands; attribution to orientation priors does not.]** |
 | PD-3 | Z3 | priors v2 focals (C 16.4 / P 15.4 35-eq, Approximate) | faster convergence, marginal gains | PLANNED |
-| PD-4 | Z1 | Division + orientation@15° + 1/1/0.1 | ≥97.0%, fewer comps | DONE — **COLLAPSED: 669/4540 (14.7%), ONE comp = the BOW box.** The hull band did not solve at all. Ran under heavy contention (owner tests, ~4 GB free) — partially confounded |
-| M-DIV / M-DIV-ORI | smoke mini_a (hull-band strip) | Division alone / + orientation@15 | is hull IMAGERY incompatible with v2? | DONE — both PERFECT: 118/120, 1 comp each. Hull imagery is fine at single-pass scale; PD-4's collapse is SCALE- or ENVIRONMENT-dependent (orientation priors tearing across maneuvering passes, or memory pressure) |
+| PD-4 | Z1 | Division + orientation@15° + 1/1/0.1 | ≥97.0%, fewer comps | DONE — **COLLAPSED: 669/4540 (14.7%), ONE comp = the BOW box.** The hull band did not solve at all. Ran under heavy contention (owner tests, ~4 GB free) — partially confounded **[CONTAMINATED 2026-07-26: ran with Euler order and Camera mount UNPINNED - see FINDINGS contamination flag. Count stands; attribution to orientation priors does not.]** |
+| M-DIV / M-DIV-ORI | smoke mini_a (hull-band strip) | Division alone / + orientation@15 | is hull IMAGERY incompatible with v2? | DONE — both PERFECT: 118/120, 1 comp each. Hull imagery is fine at single-pass scale; PD-4's collapse is SCALE- or ENVIRONMENT-dependent (orientation priors tearing across maneuvering passes, or memory pressure) **[CONTAMINATED 2026-07-26: ran with Euler order and Camera mount UNPINNED - see FINDINGS contamination flag. Count stands; attribution to orientation priors does not.]** |
 | PD-4a | Z1 | Division + POSITION-ONLY (orientation off) | if ≥97% → orientation-at-scale is the poison; dense zones ship position-only | RUNNING |
 | PD-5 | Z1 | full priors v2 production config | next-dive configuration | SUPERSEDED by PD-6 |
 | **PD-6** | Z1 | Division + LOOSE 10/10/1 + sidecars intact | does the hull scale error survive a correct config? | DONE — **NO: hull scale 0.175 -> 0.981.** 4,394/4,540 in TWO components (hull 3,738 @ 0.981, bow 656 @ 1.076), 67.7 min. Registration unchanged vs baseline (-0.24%); metric validity restored; the hull's within-zone split was a configuration artifact |
@@ -120,7 +120,9 @@ QUEUED: an intermediate ladder (3/3/0.5, 5/5/1) to find the real
 sweet spot - loose is proven, not necessarily optimal.
 
 **Interim v2-config policy (until PD-4a lands):** Division is validated
-everywhere; orientation@15° is validated on SPARSE zones (zone_2 8x,
+everywhere; orientation@15° is **PROVISIONAL, NOT validated** (downgraded
+2026-07-26: every orientation cell ran with the import's Euler order and
+Camera mount unpinned) on SPARSE zones (zone_2 8x,
 zone_3 +7) and suspect at dense-maneuvering scale. The clean-slate v2
 align stage is HELD for zone_1's config decision.
 

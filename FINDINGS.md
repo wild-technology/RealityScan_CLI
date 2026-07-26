@@ -1218,27 +1218,45 @@ frozen as the NA167 raw log; all new findings go HERE.
   **YPR is interpreted in NED** (OPK is the ENU variant), that "Euler
   angles order (YPR)" is a SETTING evaluated right-to-left, and that a
   **"Camera mount"** option exists whenever YPR is included.
-  THE DEFECT: `_get_camera_pitch_offset` documents its return as "degrees
-  down from vehicle forward axis" - i.e. measured from HORIZONTAL - and
-  the flight log writes vehicle pitch plus that offset. RealityScan
-  measures Pitch from STRAIGHT DOWN. Consequences per camera:
-  - **Cinema (45 deg offset): coincidentally CORRECT.** 45 deg from
-    horizontal and 45 deg from vertical are the same angle - 45 is the
-    fixed point of this 90 deg convention flip, which is exactly why the
-    error was never noticed.
-  - **Port (0 deg offset, "aligned with the vehicle" = horizontal):
-    90 deg WRONG.** We write ~0, RealityScan reads "looking straight
-    down".
-  So the two cameras of one rig carry orientation priors that disagree by
-  90 deg. A component containing both gets contradictory constraints and
-  a rigid fit lands between them - the mechanism for the owner-reported
-  ~45 deg bow tilt. Also unset: our `FlightLogParams.xml` carries no
-  Euler-order or Camera-mount keys, so both fall to defaults.
-  SCOPE: harmless to every align run so far, because production aligns
-  ran POSITION-ONLY; it bites only where orientation is consumed, which
-  today is the assembly's `-update`. Discovered by forum mining at owner
+  OUR PITCH CONVERSION IS CORRECT - verified against the written logs.
+  `_convert_to_rc_orientation` already computes
+  `rc_pitch = 90 + (pitch_vehicle - camera_offset)`, i.e. it already
+  references pitch to nadir. Measured in `zone_1`'s flight log: **Port
+  median 88.11 deg** (n=2,267; range 86.6-89.4) = essentially horizontal
+  on a 90-deg-is-horizontal scale, and **Cinema median 43.11 deg**
+  (n=2,273; range 41.5-44.3) = ~45 deg down from horizontal. Both match
+  the rig as the owner describes it. Discovered by forum mining at owner
   instruction (owner recalled a staff post confirming the convention -
-  correct). [H2023] (2026-07-26)
+  correct, and it is OndrejTrhan's above). [H2023] (2026-07-26)
+  - **SUPERSEDED (same session, within minutes, by reading the written
+    logs): "we write pitch from horizontal, so Port is 90 deg wrong and
+    Cinema is coincidentally right."** FALSE. I read
+    `_get_camera_pitch_offset`'s "degrees down from vehicle forward axis"
+    docstring and the flight-log writer, and asserted the defect WITHOUT
+    checking the function between them or the actual column values. The
+    +90 conversion was already there, and one `grep` of P231C rows
+    (88.1 deg, not ~0 deg) refutes the claim outright. Lesson, and it is
+    the same one as the earlier contention hypothesis this session: an
+    output claim must be checked against the OUTPUT, not inferred from
+    two ends of a call chain. Cost: a wrong diagnosis reported to the
+    owner and committed. (2026-07-26)
+  STILL OPEN after the correction - the import-side settings, which our
+  `FlightLogParams.xml` does NOT pin, so both fall to defaults:
+  1. **Euler angles order (YPR)** - a documented import setting evaluated
+     right-to-left. Our angles assume intrinsic Roll -> Pitch -> Yaw per
+     OndrejTrhan; if the default order differs, the composition is wrong
+     even though each individual angle is right.
+  2. **Camera mount** - offered whenever YPR is included. We already bake
+     the camera mount into the angles (adding `camera_offset`), so a
+     non-identity default here would DOUBLE-APPLY the mount.
+  3. **Near-singular Port geometry**: Port's pitch sits at ~88 deg, within
+     2 deg of the 90 deg degeneracy where roll and yaw axes collapse in
+     this parameterisation. Small pitch noise then produces large
+     attitude swings - a plausible contributor to a component that holds
+     mostly Port frames.
+  SCOPE unchanged: harmless to every align so far (production aligns ran
+  POSITION-ONLY); orientation is consumed only by the assembly's
+  `-update`.
 
 - **Rig lever arms corrected: Port and Cinema are level, not 1 m apart in
   Z.** Owner (2026-07-26): both cameras are roughly the same distance
@@ -1252,4 +1270,49 @@ frozen as the NA167 raw log; all new findings go HERE.
   force when the error was found. Rig-internal quantities are observable
   regardless of how weakly absolute attitude is constrained, which is why
   this derivation is trusted where the mount-ANGLE derivation was not.
+  [H2023] (2026-07-26)
+
+- **CONTAMINATION FLAG: every prior conclusion about whether ORIENTATION
+  PRIORS help or hurt was measured through an unverified import path, and
+  none of them isolates what was actually being tested.** The orientation
+  work above establishes that (a) imported YPR is read in NED with a
+  CONFIGURABLE Euler order evaluated right-to-left, (b) a **Camera mount**
+  option applies whenever YPR is included, and (c) our
+  `FlightLogParams.xml` pins NEITHER - so every orientation cell ran on
+  whatever the import defaults are, composing angles in a possibly
+  different order than the intrinsic Roll -> Pitch -> Yaw our numbers
+  assume, and possibly double-applying a camera mount we already baked in.
+  Additionally Port's pitch sits at ~88 deg, within 2 deg of the
+  parameterisation's 90 deg degeneracy.
+  CELLS AFFECTED (registration counts stand as measurements; the
+  ATTRIBUTION to "orientation priors" does not):
+  - **PD-0** (13-col + tight YPR 3-5 deg) - already a bad cell for
+    changing two variables; now doubly so.
+  - **PD-0b** ("orientation at HONEST 15 deg", 109/124, +7 vs baseline,
+    "dose-response proven: 5 deg fragments, 15 deg gains"). The ACCURACY
+    dose-response may well survive, since weighting is independent of
+    composition order, but "orientation helps" really means "these
+    particular numbers, composed by an unknown default order, helped".
+  - **PD-1b** (Division + orientation@15, 112/124, "gains not additive").
+  - **PD-4** (Division + orientation@15 + 1/1/0.1, COLLAPSED to
+    669/4540) - already confounded by the sidecar-stripping defect AND by
+    memory contention; the unpinned import is a third confound. Its
+    reading that "orientation-at-scale is the poison" is not supported.
+  - **M-DIV-ORI** (smoke + orientation@15, 118/120).
+  - **Interim v2-config policy** "orientation@15 deg is validated on
+    SPARSE zones (zone_2 8x, zone_3 +7)" - downgrade from validated to
+    PROVISIONAL.
+  - **Mount-angle derivation from solved scenes** (zone_3 C~58 deg down vs
+    a zone_1 strip C~-42 deg, both with tight IQRs) - already recorded as
+    unreliable because position-only georeferencing leaves absolute
+    attitude weakly constrained; any re-derivation must pin the import
+    settings FIRST or it will inherit the same ambiguity.
+  NOT affected: everything position-only, which is every production align
+  including the fresh run and PD-6, plus all scale-oracle results and the
+  rig-INTERNAL geometry (relative axis angle, relative camera separation)
+  that the lever-arm correction rests on - those are observable regardless
+  of absolute attitude.
+  REQUIRED BEFORE ANY FURTHER ORIENTATION CELL: pin Euler order and camera
+  mount explicitly in `FlightLogParams.xml`, then re-run one cheap sparse
+  cell (Z3) to see whether the PD-0b gain survives a pinned import.
   [H2023] (2026-07-26)
