@@ -23,8 +23,11 @@ setlocal
 :: nodata patches. Never texture the holey model and reproject onto the
 :: closed one. (docs/settings-evaluation-2026-07.md)
 ::
-:: Models kept: HighPoly_Raw (generate high), HighPoly_Textured
-:: (textured, pre-simplification), Simplified_Textured (final).
+:: Models kept, each prefixed with the component name (see model_tag
+:: below): <comp>_HighPoly_Raw (generate high), <comp>_HighPoly_Textured
+:: (textured, pre-simplification), <comp>_Simplified_Textured (final).
+:: The prefix is what makes running this once per component against one
+:: shared project safe.
 ::
 :: Arguments:
 ::   %1 .rsproj scene path (from AlignZone.bat or MergeZoneComponents.bat)
@@ -55,6 +58,16 @@ set "component_name=%~2"
 set "large_tri_threshold=%~3"
 if "%large_tri_threshold%" == "" set "large_tri_threshold=30"
 
+:: Every model name is namespaced by the component being modelled.
+:: WHY: this workflow is run ONCE PER COMPONENT against the SAME saved
+:: project (merge_zones --auto_model), so fixed names collide across runs.
+:: The killer is step [8/8], which resolves its operands BY NAME - with a
+:: second component's "HighPoly_Textured" in the scene, -reprojectTexture
+:: can map one component's texture onto another's mesh, silently. Names
+:: are also how the intermediate-cleanup loop finds what to delete.
+set "model_tag=%component_name%"
+if "%model_tag%" == "" set "model_tag=maximal"
+
 if not exist "%scene_path%" ( echo ERROR: scene not found: %scene_path% & exit /b 1 )
 
 echo Scene: %scene_path%
@@ -76,35 +89,35 @@ if "%component_name%" == "" (
 
 echo [1/8] Generating high model
 call :run -calculateHighModel || goto :fail
-call :run -renameSelectedModel "HighPoly_Raw" || goto :fail
+call :run -renameSelectedModel "%model_tag%_HighPoly_Raw" || goto :fail
 
 echo [2/8] Removing marginal (edge) triangles
 set "step_skipped="
 call :try_filter -selectMarginalTriangles
-if not defined step_skipped call :run -renameSelectedModel "Cleanup1" || goto :fail
+if not defined step_skipped call :run -renameSelectedModel "%model_tag%_Cleanup1" || goto :fail
 
 echo [3/8] Removing large triangles (threshold %large_tri_threshold%)
 set "step_skipped="
 call :try_filter -selectLargeTrianglesRel %large_tri_threshold%
-if not defined step_skipped call :run -renameSelectedModel "Cleanup2" || goto :fail
+if not defined step_skipped call :run -renameSelectedModel "%model_tag%_Cleanup2" || goto :fail
 
 echo [4/8] Keeping only the largest connected component
 call :run -selectLargestModelComponent || goto :fail
 call :run -invertTrianglesSelection || goto :fail
 set "step_skipped="
 call :try_remove
-if not defined step_skipped call :run -renameSelectedModel "Cleanup3" || goto :fail
+if not defined step_skipped call :run -renameSelectedModel "%model_tag%_Cleanup3" || goto :fail
 
 echo [5/8] Closing holes and cleaning to a manifold model
 call :run -closeHoles || goto :fail
 call :run -cleanModel || goto :fail
-call :run -renameSelectedModel "Manifold" || goto :fail
+call :run -renameSelectedModel "%model_tag%_Manifold" || goto :fail
 
 echo [6/8] Noise-reduction simplify + texture
 call :run -simplify "%SimplifyNoise%" || goto :fail
-call :run -renameSelectedModel "HighPoly" || goto :fail
+call :run -renameSelectedModel "%model_tag%_HighPoly" || goto :fail
 call :run -calculateTexture "%HighModelTexture%" || goto :fail
-call :run -renameSelectedModel "HighPoly_Textured" || goto :fail
+call :run -renameSelectedModel "%model_tag%_HighPoly_Textured" || goto :fail
 
 if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
     if not exist "%RS_PROJECTS_DIR%" mkdir "%RS_PROJECTS_DIR%"
@@ -114,34 +127,34 @@ if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
 
 echo [7/8] Smooth simplification - four 80%% passes with clean between
 call :run -simplify "%SimplifySmooth%" || goto :fail
-call :run -renameSelectedModel "SimplifyPass1Raw" || goto :fail
+call :run -renameSelectedModel "%model_tag%_SimplifyPass1Raw" || goto :fail
 call :run -cleanModel || goto :fail
-call :run -renameSelectedModel "SimplifyPass1" || goto :fail
+call :run -renameSelectedModel "%model_tag%_SimplifyPass1" || goto :fail
 
 call :run -simplify "%SimplifySmooth%" || goto :fail
-call :run -renameSelectedModel "SimplifyPass2Raw" || goto :fail
+call :run -renameSelectedModel "%model_tag%_SimplifyPass2Raw" || goto :fail
 call :run -cleanModel || goto :fail
-call :run -renameSelectedModel "SimplifyPass2" || goto :fail
+call :run -renameSelectedModel "%model_tag%_SimplifyPass2" || goto :fail
 
 call :run -simplify "%SimplifySmooth%" || goto :fail
-call :run -renameSelectedModel "SimplifyPass3Raw" || goto :fail
+call :run -renameSelectedModel "%model_tag%_SimplifyPass3Raw" || goto :fail
 call :run -cleanModel || goto :fail
-call :run -renameSelectedModel "SimplifyPass3" || goto :fail
+call :run -renameSelectedModel "%model_tag%_SimplifyPass3" || goto :fail
 
 call :run -simplify "%SimplifySmooth%" || goto :fail
-call :run -renameSelectedModel "SimplifyPass4Raw" || goto :fail
+call :run -renameSelectedModel "%model_tag%_SimplifyPass4Raw" || goto :fail
 call :run -cleanModel || goto :fail
-call :run -renameSelectedModel "Simplified" || goto :fail
+call :run -renameSelectedModel "%model_tag%_Simplified" || goto :fail
 
 echo [8/8] Unwrapping and reprojecting high-poly texture
 call :run -unwrap "%UnwrapSimplified%" || goto :fail
-call :run -reprojectTexture "HighPoly_Textured" "Simplified" "%ReprojectionParams%" || goto :fail
-call :run -selectModel "Simplified" || goto :fail
-call :run -renameSelectedModel "Simplified_Textured" || goto :fail
+call :run -reprojectTexture "%model_tag%_HighPoly_Textured" "%model_tag%_Simplified" "%ReprojectionParams%" || goto :fail
+call :run -selectModel "%model_tag%_Simplified" || goto :fail
+call :run -renameSelectedModel "%model_tag%_Simplified_Textured" || goto :fail
 
 echo Deleting intermediate models
 for %%M in (Cleanup1 Cleanup2 Cleanup3 Manifold HighPoly SimplifyPass1Raw SimplifyPass1 SimplifyPass2Raw SimplifyPass2 SimplifyPass3Raw SimplifyPass3 SimplifyPass4Raw) do (
-    call :try_delete_model %%M
+    call :try_delete_model "%model_tag%_%%M"
 )
 
 echo Saving project
