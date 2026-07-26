@@ -1316,3 +1316,61 @@ frozen as the NA167 raw log; all new findings go HERE.
   mount explicitly in `FlightLogParams.xml`, then re-run one cheap sparse
   cell (Z3) to see whether the PD-0b gain survives a pinned import.
   [H2023] (2026-07-26)
+
+- **CORRECTION to the contamination-flag scope, and a THIRD candidate for
+  the PD-6 scale fix.** I wrote that "production aligns ran POSITION-ONLY,
+  so the unpinned orientation import was harmless". That is FALSE for the
+  fresh run. The params files differ by format GUID:
+  - production `FlightLogParams.xml` -> `{B438A617-...}` = the 13-column
+    format whose parser maps **Yaw/Pitch/Roll at indices 7/8/9**, with
+    `ifUseOriAcc=true`. So the 2026-07-24 fresh-run aligns (zone_1/2/3)
+    DID import orientation, at the then-current **3/5/3** accuracies.
+  - PD-6's cell `FlightLogParams_4Q.xml` -> `{0E9850E2-...}`, a 7-column
+    position-only format. PD-6 genuinely had no orientation.
+  CONSEQUENCE: PD-6 vs the fresh run differs in THREE ways, not two -
+  (a) Brown3 -> Division, (b) accuracy columns actually imported, and
+  (c) **orientation priors REMOVED**. Since the fresh run is exactly the
+  run whose hull solved at scale **0.175** and PD-6 the one that solved at
+  **0.982**, "removing tight, possibly mis-composed orientation priors" is
+  a live candidate for the scale repair and was never listed. It is also
+  mechanically plausible: orientation priors composed under the wrong
+  Euler order fight the visual solution on every frame, and this geometry
+  maps attitude error into focal/scale error.
+  DOES NOT change the bow diagnosis: the bow the owner inspected comes
+  from PD-6 (position-only), so its tilt cannot have been caused by
+  align-time orientation priors - the assembly's `-update` remains the
+  leading suspect. Discovered while pinning the import settings, by
+  reading the two params files instead of assuming they matched. [H2023]
+  (2026-07-26)
+
+- **OWNER DECISION (2026-07-26): apply orientation priors at alignment
+  regardless of the outstanding discriminator test, staying conservative
+  on the claimed accuracy.** Rationale given: validated data should not be
+  thrown away. Concern raised and overruled, recorded per the working
+  agreement: the Euler order and Camera-mount import settings are still
+  unpinned, and the correction above makes "tight orientation priors" a
+  live candidate for the fresh run's scale collapse - so orientation ON
+  with an unverified composition carries a real scale risk. MITIGATIONS in
+  force: accuracies are already the conservative **15 deg** for yaw, pitch
+  and roll (`_get_camera_pitch_accuracy` returns 15 for P/C, `yaw_acc` and
+  `roll_acc` are 15) rather than the fresh run's 3/5/3, and every H2024
+  component will be measured with `testing/scale_oracle.py` before it is
+  used, so a repeat of the 0.175 failure is caught by evidence rather than
+  by eye. [H2024] (2026-07-26)
+
+- **Import settings `ifKGrp` and `ifKmode` cannot be pinned by
+  inspection - they are the only plausible carriers of Euler order and
+  Camera mount, and their value mapping is undocumented.** The Help
+  documents the SETTINGS ("Euler angles order (YPR)", "Camera mount",
+  both present whenever YPR is imported) but not their config keys;
+  `flightlogs.xml` defines only column mapping; and neither key string
+  appears in any file under the RealityScan install, so both are compiled
+  into the binary. Current values, unchanged since the template was
+  written: `ifKGrp=2`, `ifKmode=0x0`. Guessing a value here would silently
+  change orientation handling - the exact failure class under
+  investigation - so nothing was changed. TWO WAYS TO SETTLE IT: (1) set
+  the two dropdowns in the GUI import dialog, save the params, and diff
+  against this template (one minute, needs the GUI); (2) a CLI probe -
+  align the smoke fixture with orientation at several `ifKmode` values and
+  read the resulting camera attitudes out of the pose XMPs, which is
+  fully headless and about 2 min per cell. [H2023] (2026-07-26)
