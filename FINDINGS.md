@@ -940,3 +940,51 @@ frozen as the NA167 raw log; all new findings go HERE.
   outrank user lore; only posts ≤4 years old trusted; pre-rename
   (RealityCapture-era) posts get most suspicion; every adopted gem goes
   here with URL, author status, date, verification status.
+
+## H2024 run + ROVDataConcat (2026-07-25 evening)
+
+- **Hook-chain liveness PASSED — the standing self-test owed since the
+  2026-07-24 CRLF normalization is now CLOSED.** `results_RS1.log` grew
+  with fresh entries (22:17:02 → 22:17:12, six completions) during the
+  H2023 model run, so `appProcessAction=ExecuteProgram` →
+  `ErrorWriterLaunch.vbs` → `ErrorWriter.bat` still fires end to end
+  after the .vbs/.bat line-ending changes. Discovered by reading the
+  marker directory during a live run. [H2023] (2026-07-25)
+
+- **ROVDataConcat: `main_kalman.py` exits 0 even when a module FAILS.**
+  The H2024 stage-2 run printed `ERROR in kalman_offset: No GeoTIFF
+  matching 'H2024_k2mapping_geotiff*.tif'`, then `Aborting:
+  kalman_offset failed; downstream modules depend on its output`, and
+  the run summary listed `kalman_offset FAILED` — yet the process
+  returned exit code 0. Any caller gating on exit status treats a
+  failed pipeline as success. Discovered by reading the log of a run
+  whose exit code said success. Harmless for photogrammetry (the
+  needed `*_final_datatable.csv` comes from `kalman_filter`, which
+  succeeded; `kalman_offset` only produces the Unreal upload file),
+  but it is a silent-failure channel in a tool this pipeline depends
+  on. [H2024] (2026-07-25)
+
+- **ROVDataConcat stage-1 resume detection is EXPEDITION-WIDE, not
+  per-dive** — `STEP_OUTPUT_GLOBS` matches `*/[!.]*_<output>.csv` under
+  `RUMI_processed`, so a step counts as done if ANY dive has its
+  output. Consequence: a single new dive cannot be extracted by simply
+  running the orchestrator (every step is skipped because older dives
+  satisfy the glob), and `--force` is all-or-nothing across the whole
+  expedition. This is why the first H2024 attempt "finished way too
+  fast": stage 1 was skipped entirely and stage 2 consumed pre-existing
+  2026-07-23 extracts. Discovered by reading `step_outputs_exist` after
+  the owner flagged the runtime as implausible. Mitigation used:
+  backed up `RUMI_processed` and ran `main.py --force` for the whole
+  expedition. [H2024] (2026-07-25)
+
+- **H2024 imagery is clean and rig-identical to H2023.** All 8,197 JPGs
+  under `F:\H2024\Images\edited` fully DECODE (not merely verify) with
+  zero corruption, and `camera_registry.identify` classifies every one:
+  cinema 4,100 + port 4,097, zero unknown — confirming the owner's
+  "camera locations are the same as H2023". ANOMALY: exactly one image,
+  `C231C2370_20231104202628_edt.jpg`, is 3846x2163 while the other
+  8,196 are 4244x2827. A different sensor footprint means different
+  intrinsics, so RealityScan will group it separately from the rest of
+  the cinema set regardless of its XMP calibration group. Discovered by
+  a full-decode validation pass with a dimension census. [H2024]
+  (2026-07-25)
