@@ -15,7 +15,10 @@ EXIF-identical (Z CAM E2-F6, no focal tag) -- without the XMP groups
 RealityScan cannot separate the cameras at all.
 
 Mount geometry (pitch offsets, lever arms) is deliberately NOT here:
-it changes per cruise; see modules/georeference/georeference_images.py.
+it changes per cruise -- the same Cinema unit sits at 10 deg down under
+legacy camlower names and 45 deg under WCA names. Geometry therefore
+keys off family() below, not off the camera; see
+modules/georeference/georeference_images.py for the table.
 """
 from __future__ import annotations
 
@@ -25,6 +28,10 @@ from dataclasses import dataclass
 # WCA rendered-still naming: P231C0003_<ts>_edt.jpg (P=Port, C=Cinema,
 # S=Starboard; digits vary by cruise/sequence).
 _WCA_PREFIX = re.compile(r'^([pcs])\d+c', re.IGNORECASE)
+# Delimiter-bounded, so 'zeuss'/'herc' cannot be matched from the middle of
+# an otherwise-anchored WCA name. The previous unanchored `'herc' in name`
+# test ran FIRST and would have won against an anchored WCA prefix.
+_ZEUSS_TOKEN = re.compile(r'(^|[_\-.])(zeuss|herc)([_\-.]|$)', re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -65,18 +72,59 @@ _LEGACY_PREFIXES = {
 _WCA_LETTER = {'p': 'port', 'c': 'cinema', 's': 'starboard'}
 
 
-def identify(filename: str) -> Camera | None:
-    """Physical camera for an image filename, or None when unknown."""
+# Filename family -> physical camera. The family is the MOUNT identity and the
+# camera is the OPTICAL identity; they are deliberately separate because the
+# same physical camera has been mounted at different angles across cruises
+# (legacy camlower sits 10 deg down, while the same Cinema unit under WCA names
+# sits at 45 deg). Keying mount geometry off the CAMERA would silently change
+# every legacy dataset by tens of degrees.
+FAMILY_CAMERA: dict[str, str] = {
+    'zeuss': 'zeuss',
+    'legacy_camupper': 'starboard',
+    'legacy_cammid': 'port',
+    'legacy_camlower': 'cinema',
+    'wca_port': 'port',
+    'wca_cinema': 'cinema',
+    'wca_starboard': 'starboard',
+}
+
+_WCA_FAMILY = {'p': 'wca_port', 'c': 'wca_cinema', 's': 'wca_starboard'}
+
+_LEGACY_FAMILY = (
+    ('camupper', 'legacy_camupper'),
+    ('cammid', 'legacy_cammid'),
+    ('camlower', 'legacy_camlower'),
+)
+
+
+def family(filename: str) -> str | None:
+    """Mount family for an image filename, or None when unknown.
+
+    Matching is MOST SPECIFIC FIRST: anchored WCA prefix, then anchored legacy
+    prefix, then a delimiter-bounded zeuss/herc token.
+
+    Callers needing per-cruise mount geometry must key off THIS, never off
+    cruise digits. The literal 'p231c'/'c231c' tests that used to live in the
+    georeferencer meant the next cruise's 'C245C0007_*.jpg' fell through to a
+    zero lever arm and 0 deg pitch offset - a wrong prior asserted at 10 deg
+    confidence, with one suppressed warning for the whole run.
+    """
     name = filename.lower()
-    if 'zeuss' in name or 'herc' in name:
-        return CAMERAS['zeuss']
-    for prefix, key in _LEGACY_PREFIXES.items():
-        if name.startswith(prefix):
-            return CAMERAS[key]
     match = _WCA_PREFIX.match(name)
     if match:
-        return CAMERAS[_WCA_LETTER[match.group(1).lower()]]
+        return _WCA_FAMILY[match.group(1).lower()]
+    for prefix, fam in _LEGACY_FAMILY:
+        if name.startswith(prefix):
+            return fam
+    if _ZEUSS_TOKEN.search(name):
+        return 'zeuss'
     return None
+
+
+def identify(filename: str) -> Camera | None:
+    """Physical camera for an image filename, or None when unknown."""
+    fam = family(filename)
+    return None if fam is None else CAMERAS[FAMILY_CAMERA[fam]]
 
 
 def calibration_xmp(camera: Camera) -> str:

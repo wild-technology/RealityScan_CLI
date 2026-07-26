@@ -10,8 +10,46 @@ import utm
 from PIL import Image
 
 from ..file_metadata_parser import parse_timestamp
+from .. import camera_registry
+
+
 from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
+
+
+# Mount geometry per FILENAME FAMILY (camera_registry.family), NOT per physical
+# camera. The same Cinema unit sits 10 deg down under legacy 'camlower' names and
+# 45 deg down under WCA 'C###C' names, so keying this off the camera would
+# silently change every legacy dataset by tens of degrees.
+#
+#   fwd  : + ahead of the vehicle reference point (m)
+#   lat  : + to the right (m; zero for every known mount)
+#   down : + below the reference point (m)
+#   pitch: camera down-tilt from the vehicle forward axis (deg)
+#   p_acc: claimed accuracy of that pitch prior (deg)
+#
+# These are the values in force on 2026-07-26, pinned by
+# testing/test_rig_mounts.py so the table cannot drift unnoticed.
+MOUNTS: dict[str, dict | None] = {
+    'zeuss': {'fwd': 0.5, 'lat': 0.0, 'down': 0.5, 'pitch': 30.0, 'p_acc': 30.0},
+    'legacy_camupper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 70.0, 'p_acc': 10.0},
+    'legacy_cammid': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 20.0, 'p_acc': 10.0},
+    'legacy_camlower': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 10.0, 'p_acc': 5.0},
+    # WCA Port/Cinema lever arms are VALIDATED on two independent metrically
+    # sound solves (bow c2, zone_2/PD-2b): C above P by +1.12 m and +1.03 m
+    # against the +1.00 m implied here. Do NOT flatten them to equal height on
+    # the strength of the 0.22 m / 0.00 m figures in FINDINGS - those came from
+    # the 0.175-scale hull and are scale-corrupted (retracted 2026-07-25, then
+    # briefly re-applied 2026-07-26 until a contradiction audit caught it).
+    # Pitch accuracy is 15 deg, not 3-5: tighter FRAGMENTS the solve (PD-0).
+    'wca_port': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
+    'wca_cinema': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
+    # Starboard's mount has NEVER been measured. The owner excludes Starboard
+    # from photogrammetry, so this should not be reached - and if it is, the run
+    # must SAY SO rather than invent a zero lever arm and a 0 deg tilt.
+    # Inventing rig numbers is what produced the Port-1 m incident.
+    'wca_starboard': None,
+}
 
 
 class GeoreferenceImages(RSModule):
@@ -89,31 +127,48 @@ class GeoreferenceImages(RSModule):
         """Wrap angle to [0, 360) range."""
         return angle_deg % 360.0
 
-    def _get_camera_pitch_accuracy(self, filename: str) -> float:
-        """
-        Return pitch accuracy (degrees) for a camera based on its name.
-        Yaw and Roll are fixed at 3° for all cameras.
-        """
-        filename_lower = filename.lower()
+    def _mount_for(self, filename: str) -> dict | None:
+        """Mount geometry for an image, or None when it is not known.
 
-        if filename_lower.startswith('camupper'):
-            return 10.0
-        elif filename_lower.startswith('cammid'):
-            return 10.0
-        elif filename_lower.startswith('camlower'):
-            return 5.0
-        elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
-            return 30.0
-        elif filename_lower.startswith('p231c') or filename_lower.startswith('c231c'):
-            # WCA Port/Cinema: mounts are rigid but NOT ground-truthed -
-            # solved-vs-log comparison showed a systematic 10-15 deg pitch
-            # bias, and 5 deg claimed accuracy FRAGMENTED the solve
-            # (PD-0 cell, 2026-07-25). Honest 15 deg until the mount
-            # angles are measured; then tighten.
-            return 15.0
-        else:
-            self._note_unknown_camera(filename, "using default pitch accuracy 10°")
-            return 10.0
+        ONE resolution point for all three priors, so an image can never take a
+        lever arm from one table and a pitch from another. Unknown families and
+        known-but-unmeasured mounts are both reported once, via the existing
+        unknown-camera counter, so the run summary carries a single number for
+        "images that got no usable prior".
+        """
+        fam = camera_registry.family(filename)
+        mount = MOUNTS.get(fam) if fam else None
+        if mount is None:
+            if fam is None:
+                self._note_unknown_camera(
+                    filename, 'no camera family matches it, so it gets NO '
+                    'position or orientation prior - add its prefix to '
+                    'camera_registry.family() before trusting this run')
+            else:
+                self._note_unknown_camera(
+                    filename, f'family "{fam}" has NO measured mount geometry, '
+                    'so it gets no position or orientation prior - measure the '
+                    'mount or exclude the camera, do not guess')
+        return mount
+
+    def _get_camera_offsets(self, filename: str) -> tuple[float, float, float]:
+        """(forward, lateral, down) lever arm in metres; zeros when unknown."""
+        mount = self._mount_for(filename)
+        if mount is None:
+            return (0.0, 0.0, 0.0)
+        return (mount['fwd'], mount['lat'], mount['down'])
+
+    def _get_camera_pitch_offset(self, filename: str) -> float:
+        """Camera down-tilt from the vehicle forward axis, in degrees."""
+        mount = self._mount_for(filename)
+        return 0.0 if mount is None else mount['pitch']
+
+    def _get_camera_pitch_accuracy(self, filename: str) -> float:
+        """Claimed accuracy of the pitch prior, in degrees."""
+        mount = self._mount_for(filename)
+        # 10 deg is the historical fallback and deliberately NOT tighter: a
+        # confident claim on an unknown mount is the worst possible case.
+        return 10.0 if mount is None else mount['p_acc']
 
     def _apply_camera_position_offset(self, utm_x: float | None, utm_y: float | None,
                                       altitude: float | None, heading_deg: float | None,
@@ -458,77 +513,6 @@ class GeoreferenceImages(RSModule):
                   f"(e.g. {self._unknown_camera_example}) - default offsets/accuracies used")
 
         return matches_made
-
-    def _get_camera_offsets(self, filename: str) -> tuple[float, float, float]:
-        """
-        Return camera position offsets relative to vehicle center.
-
-        Returns:
-            (forward_offset, lateral_offset, down_offset) in meters
-            - forward: positive = ahead of vehicle center
-            - lateral: positive = right of vehicle center (not used currently)
-            - down: positive = below vehicle center
-        """
-        filename_lower = filename.lower()
-
-        # Check specific camera types first (most specific to least specific)
-        if filename_lower.startswith('camupper'):
-            return (1.0, 0.0, 0.0)  # 1m forward, same depth
-        elif filename_lower.startswith('cammid'):
-            return (1.0, 0.0, 1.0)  # 1m forward, 1m down
-        elif filename_lower.startswith('camlower'):
-            return (1.0, 0.0, 1.0)  # 1m forward, 1m down
-        elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
-            return (0.5, 0.0, 0.5)  # 0.5m forward, 0.5m down
-        elif filename_lower.startswith('p231c'):
-            # WCA Port: 1 m forward of the point of rotation, 1 m down.
-            # VALIDATED on two INDEPENDENT metrically-sound solves (bow c2
-            # from the zone_1 align, and zone_2 from PD-2b): C sits above P
-            # by +1.12 m and +1.03 m against this code's implied +1.00 m,
-            # with |P-C| separation 1.21 m / 1.11 m.
-            # DO NOT "flatten" these to equal height on the strength of the
-            # 0.22 m / 0.00 m figures that appear in FINDINGS: those were
-            # measured inside hull c0, the 0.175-SCALE component, so they are
-            # scale-corrupted (0.22 x 5.7 ~= 1.25 m, which is what the sound
-            # solves report). They were retracted on 2026-07-25, and briefly
-            # re-applied here on 2026-07-26 before the contradiction audit
-            # caught it. Only the ANGLE from that measurement was ever valid,
-            # angles being invariant under scale.
-            return (1.0, 0.0, 1.0)
-        elif filename_lower.startswith('c231c'):
-            # WCA Cinema: 1 m forward of the point of rotation, same depth.
-            return (1.0, 0.0, 0.0)
-        else:
-            self._note_unknown_camera(filename, "assuming no position offset")
-            return (0.0, 0.0, 0.0)
-
-    def _get_camera_pitch_offset(self, filename: str) -> float:
-        """
-        Return camera pitch offset (degrees down from vehicle forward axis).
-        Positive values = camera pointing down relative to vehicle.
-        """
-        filename_lower = filename.lower()
-
-        # Check specific camera types first (most specific to least specific)
-        if filename_lower.startswith('camupper'):
-            return 70.0  # pointing down 70°
-        elif filename_lower.startswith('cammid'):
-            return 20.0  # pointing down 20°
-        elif filename_lower.startswith('camlower'):
-            return 10.0  # pointing down 10°
-        elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
-            return 30.0  # Zeuss pointing down 30°
-        # Widefield Camera Array (Z CAM E2-F6, NA156-era P/C/S231C names):
-        # Port is aligned with the vehicle's orientation; Cinema faces 45°
-        # downward with the vehicle's yaw/roll. (Starboard exists but is
-        # not used for photogrammetry.)
-        elif filename_lower.startswith('p231c'):
-            return 0.0
-        elif filename_lower.startswith('c231c'):
-            return 45.0
-        else:
-            self._note_unknown_camera(filename, "assuming 0° pitch offset")
-            return 0.0
 
     def __generate_flight_log(self, image_data, image_folder):
         """Generate a flight log file with position and orientation accuracy."""

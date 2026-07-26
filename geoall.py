@@ -20,6 +20,13 @@ from collections import defaultdict
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
 
+# ONE rig table, shared with the georeference module. geoall used to carry a
+# parallel copy that had no WCA cameras and claimed 3 deg orientation
+# accuracy where the module claims 15 - two contradictory answers for the
+# same rig, in the file the docs call canonical (review finding M4).
+from modules.georeference.georeference_images import MOUNTS as _MOUNTS
+from modules import camera_registry as _camera_registry
+
 import utm
 from PIL import Image
 from tqdm import tqdm
@@ -90,36 +97,35 @@ def get_camera_pitch_accuracy(filename: str) -> float:
         return 10.0
 
 
-def get_camera_pitch_offset(filename: str) -> float:
-    """Return camera pitch offset (degrees down from vehicle forward axis)."""
-    filename_lower = filename.lower()
 
-    if 'cammid' in filename_lower:
-        return 20.0
-    elif 'camupper' in filename_lower:
-        return 70.0
-    elif 'camlower' in filename_lower:
-        return 10.0
-    elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
-        return 30.0
-    else:
-        return 0.0
+def _mount(filename: str) -> dict | None:
+    """Shared mount lookup; None when the family or its geometry is unknown."""
+    fam = _camera_registry.family(filename)
+    return _MOUNTS.get(fam) if fam else None
+
+
+def get_camera_pitch_offset(filename: str) -> float:
+    """Camera down-tilt from the vehicle forward axis, in degrees.
+
+    Delegates to the shared table; the local prefix chain had no WCA branch so
+    Cinema silently lost its 45 deg down-look in standalone runs.
+    """
+    mount = _mount(filename)
+    return 0.0 if mount is None else mount['pitch']
 
 
 def get_camera_offsets(filename: str) -> tuple[float, float, float]:
-    """Return camera position offsets relative to vehicle center."""
-    filename_lower = filename.lower()
+    """(forward, lateral, down) lever arm in metres, or zeros when unknown.
 
-    if filename_lower.startswith('camupper'):
-        return (1.0, 0.0, 0.0)
-    elif filename_lower.startswith('cammid'):
-        return (1.0, 0.0, 1.0)
-    elif filename_lower.startswith('camlower'):
-        return (1.0, 0.0, 1.0)
-    elif '_herc_' in filename_lower:
-        return (0.5, 0.0, 0.5)
-    else:
+    Delegates to the SHARED table in modules/georeference/georeference_images.py.
+    This function previously had no WCA branch at all, so every P###C/C###C
+    still fell through to a zero lever arm - and geoall is the georeferencer the
+    docs call canonical.
+    """
+    mount = _mount(filename)
+    if mount is None:
         return (0.0, 0.0, 0.0)
+    return (mount['fwd'], mount['lat'], mount['down'])
 
 
 def apply_camera_position_offset(utm_x: float | None, utm_y: float | None,
@@ -712,8 +718,11 @@ def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: 
     pos_x_acc = 10.0
     pos_y_acc = 10.0
     alt_acc = 1.0
-    yaw_acc = 3.0
-    roll_acc = 3.0
+    # 15.0, not 3.0: PD-0 measured 3-5 deg claimed accuracy FRAGMENTING
+    # the solve while 15 deg gained registration. geoall claimed 3.0 while
+    # the georeference module claimed 15.0 - the same rig, two answers.
+    yaw_acc = 15.0
+    roll_acc = 15.0
 
     with open(flight_log_filename, "w") as f:
         f.write(

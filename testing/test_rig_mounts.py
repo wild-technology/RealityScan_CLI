@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Pins the rig mount table and its family resolution (review M4/M5).
+
+Three bugs motivated this, all found 2026-07-26:
+
+M5  The georeferencer matched literal cruise digits ('p231c', 'c231c'), so the
+    next cruise's 'C245C0007_*.jpg' fell through to a ZERO lever arm and a 0 deg
+    pitch offset - Cinema losing its 45 deg down-look - asserted at 10 deg
+    confidence, with one suppressed warning for the whole run. WCA Starboard
+    ('S231C*') fell through even for the CURRENT cruise.
+
+M4  geoall.py - which CLAUDE.md hard rule 6 and the README call the CANONICAL
+    georeferencer - had no WCA branch at all and claimed 3 deg orientation
+    accuracy where the module claimed 15. Same rig, two answers.
+
+A design trap this test guards: geometry belongs to the FILENAME FAMILY, not to
+the physical camera. Legacy 'camlower' and WCA 'C###C' are the SAME Cinema unit
+mounted 35 deg apart, so keying geometry off camera_registry.identify() would
+silently rewrite every legacy dataset.
+
+Values below are the ones in force on 2026-07-26. If a change is intended,
+change them here deliberately - that is the point.
+
+Run:  py -3.13 -m pytest testing/test_rig_mounts.py
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+
+import pytest
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, REPO_ROOT)
+
+import geoall  # noqa: E402
+from modules import camera_registry  # noqa: E402
+from modules.georeference.georeference_images import (  # noqa: E402
+    MOUNTS,
+    GeoreferenceImages,
+)
+
+# family -> (lever arm (fwd, lat, down), pitch offset deg, pitch accuracy deg)
+EXPECTED = {
+    'zeuss': ((0.5, 0.0, 0.5), 30.0, 30.0),
+    'legacy_camupper': ((1.0, 0.0, 0.0), 70.0, 10.0),
+    'legacy_cammid': ((1.0, 0.0, 1.0), 20.0, 10.0),
+    'legacy_camlower': ((1.0, 0.0, 1.0), 10.0, 5.0),
+    'wca_port': ((1.0, 0.0, 1.0), 0.0, 15.0),
+    'wca_cinema': ((1.0, 0.0, 0.0), 45.0, 15.0),
+}
+
+SAMPLE = {
+    'zeuss': 'zeuss_0001.jpg',
+    'legacy_camupper': 'camupper_0001.jpg',
+    'legacy_cammid': 'cammid_0001.jpg',
+    'legacy_camlower': 'camlower_0001.jpg',
+    'wca_port': 'P231C0003_20231103235906_edt.jpg',
+    'wca_cinema': 'C231C0003_20231103235906_edt.jpg',
+}
+
+
+@pytest.fixture()
+def geo():
+    logging.disable(logging.CRITICAL)
+    return GeoreferenceImages(logging.getLogger('test'))
+
+
+# ------------------------------------------------------------------- families
+
+@pytest.mark.parametrize('filename,expected', [
+    ('camupper_1.jpg', 'legacy_camupper'),
+    ('cammid_1.jpg', 'legacy_cammid'),
+    ('camlower_1.jpg', 'legacy_camlower'),
+    ('zeuss_1.jpg', 'zeuss'),
+    ('dive_herc_1.jpg', 'zeuss'),
+    ('P231C0003_x.jpg', 'wca_port'),
+    ('C231C0003_x.jpg', 'wca_cinema'),
+    ('S231C0003_x.jpg', 'wca_starboard'),
+    # M5: cruise digits vary and must NOT decide the family
+    ('P245C0007_x.jpg', 'wca_port'),
+    ('C245C0007_x.jpg', 'wca_cinema'),
+    ('c9999c0001_x.jpg', 'wca_cinema'),
+    ('unrecognised.jpg', None),
+])
+def test_family_resolution(filename, expected):
+    assert camera_registry.family(filename) == expected
+
+
+def test_anchored_wca_beats_a_herc_substring():
+    """'herc' used to be tested first, unanchored, and would have won."""
+    assert camera_registry.family('P231C0003_herc.jpg') == 'wca_port'
+
+
+def test_family_and_camera_are_separate_concepts():
+    """Same physical camera, two mounts 35 deg apart - the design trap."""
+    assert camera_registry.identify('camlower_1.jpg').key == 'cinema'
+    assert camera_registry.identify('C231C0003_x.jpg').key == 'cinema'
+    assert MOUNTS['legacy_camlower']['pitch'] == 10.0
+    assert MOUNTS['wca_cinema']['pitch'] == 45.0
+
+
+def test_every_family_maps_to_a_known_camera():
+    for fam in camera_registry.FAMILY_CAMERA.values():
+        assert fam in camera_registry.CAMERAS
+
+
+def test_every_family_has_a_mount_entry():
+    """A family with no MOUNTS key would silently get zeros."""
+    for fam in camera_registry.FAMILY_CAMERA:
+        assert fam in MOUNTS, f'{fam} has no MOUNTS entry'
+
+
+# -------------------------------------------------------------------- values
+
+@pytest.mark.parametrize('family,expected', EXPECTED.items())
+def test_mount_values_are_pinned(family, expected):
+    lever, pitch, p_acc = expected
+    m = MOUNTS[family]
+    assert (m['fwd'], m['lat'], m['down']) == lever
+    assert m['pitch'] == pitch
+    assert m['p_acc'] == p_acc
+
+
+@pytest.mark.parametrize('family,filename', SAMPLE.items())
+def test_georeference_resolves_each_family(geo, family, filename):
+    lever, pitch, p_acc = EXPECTED[family]
+    assert geo._get_camera_offsets(filename) == lever
+    assert geo._get_camera_pitch_offset(filename) == pitch
+    assert geo._get_camera_pitch_accuracy(filename) == p_acc
+
+
+def test_port_sits_one_metre_below_cinema(geo):
+    """The validated relationship. Two metrically-sound solves put C above P by
+    +1.12 m and +1.03 m; the 0.22 m / 0.00 m figures in FINDINGS came from the
+    0.175-scale hull and are scale-corrupted."""
+    _, _, port_down = geo._get_camera_offsets('P231C0003_x.jpg')
+    _, _, cinema_down = geo._get_camera_offsets('C231C0003_x.jpg')
+    assert port_down - cinema_down == pytest.approx(1.0)
+
+
+def test_next_cruise_digits_get_real_geometry(geo):
+    """M5 regression: this used to be a zero lever arm at 10 deg confidence."""
+    assert geo._get_camera_offsets('C245C0007_x.jpg') == (1.0, 0.0, 0.0)
+    assert geo._get_camera_pitch_offset('C245C0007_x.jpg') == 45.0
+    assert geo._get_camera_pitch_accuracy('C245C0007_x.jpg') == 15.0
+
+
+def test_unmeasured_starboard_is_counted_not_silently_zeroed(geo):
+    """Starboard's mount was never measured; the run must say so."""
+    before = geo._unknown_camera_count
+    assert geo._get_camera_offsets('S231C0003_x.jpg') == (0.0, 0.0, 0.0)
+    assert geo._unknown_camera_count > before
+    assert MOUNTS['wca_starboard'] is None, 'do not invent starboard geometry'
+
+
+def test_unknown_family_is_counted(geo):
+    before = geo._unknown_camera_count
+    geo._get_camera_offsets('totally_unknown.jpg')
+    assert geo._unknown_camera_count > before
+
+
+# ------------------------------------------------------- geoall parity (M4)
+
+@pytest.mark.parametrize('family,filename', SAMPLE.items())
+def test_geoall_matches_the_module(geo, family, filename):
+    """geoall is documented canonical; it must not disagree with the module."""
+    assert geoall.get_camera_offsets(filename) == geo._get_camera_offsets(filename)
+    assert geoall.get_camera_pitch_offset(filename) == geo._get_camera_pitch_offset(filename)
+
+
+def test_geoall_covers_wca_at_all(geo):
+    """geoall had NO WCA branch, so Cinema lost its 45 deg down-look."""
+    assert geoall.get_camera_pitch_offset('C231C0003_x.jpg') == 45.0
+    assert geoall.get_camera_offsets('P231C0003_x.jpg') == (1.0, 0.0, 1.0)
+
+
+def test_geoall_orientation_accuracy_is_the_measured_value():
+    """3 deg FRAGMENTS the solve (PD-0); 15 deg is the measured figure."""
+    src = open(os.path.join(REPO_ROOT, 'geoall.py'), encoding='utf-8').read()
+    assert 'yaw_acc = 15.0' in src
+    assert 'roll_acc = 15.0' in src
+    assert 'yaw_acc = 3.0' not in src
+
+
+if __name__ == '__main__':
+    sys.exit(pytest.main([__file__, '-v']))
