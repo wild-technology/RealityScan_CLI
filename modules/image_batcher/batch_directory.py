@@ -143,7 +143,21 @@ class BatchDirectory(RSModule):
     FINGERPRINT_NAME = 'batch_inputs.json'
 
     def _input_fingerprint(self, flight_log_path: str) -> dict:
-        """Identity of the inputs that determine zone membership."""
+        """Identity of everything that determines what ends up in the zones.
+
+        This covers the zoning inputs (flight log + parameters) AND THE IMAGE
+        SOURCE. The source matters because `__get_input_dir` silently switches
+        to <output>/preprocessed_images the moment that folder exists, and
+        preprocess writes the SAME FILENAMES as the raw set - while
+        `__copy_files` skips any destination that already exists BY NAME. So a
+        fingerprint over the flight log alone is byte-identical between a raw
+        run and a CLAHE run, the folder gets reused, every copy is skipped, and
+        the zones still hold raw pixels that this project's own A/B says
+        register at nearly zero. Nothing in the logs would distinguish it.
+        The content signature is deliberately cheap - count, total bytes and
+        newest mtime, no hashing - because it runs against tens of thousands of
+        images and only has to detect "a different set of pixels".
+        """
         digest = None
         if flight_log_path and os.path.isfile(flight_log_path):
             h = hashlib.sha256()
@@ -154,12 +168,35 @@ class BatchDirectory(RSModule):
         keys = ('batch_target_images_per_zone', 'batch_min_zone_size',
                 'batch_max_zone_size', 'batch_initial_overlap_percent',
                 'batch_density_weight', 'batch_kde_bandwidth')
+        input_dir = self.__get_input_dir()
         return {
             'flight_log': os.path.basename(flight_log_path or ''),
             'flight_log_sha256': digest,
+            'input_dir': os.path.normcase(os.path.abspath(input_dir)) if input_dir else None,
+            'input_signature': self._source_signature(input_dir),
             'params': {k: str(self.params[k].get_value())
                        for k in keys if k in self.params},
         }
+
+    def _source_signature(self, input_dir: str | None) -> dict | None:
+        """Cheap content signature of the image source: count, bytes, newest."""
+        if not input_dir or not os.path.isdir(input_dir):
+            return None
+        count = 0
+        total = 0
+        newest = 0.0
+        for root, _dirs, names in os.walk(input_dir):
+            for n in names:
+                if os.path.splitext(n)[1].lower() not in self.ACCEPTED_EXTENSIONS:
+                    continue
+                try:
+                    st = os.stat(os.path.join(root, n))
+                except OSError:
+                    continue
+                count += 1
+                total += st.st_size
+                newest = max(newest, st.st_mtime)
+        return {'images': count, 'bytes': total, 'newest_mtime': round(newest, 0)}
 
     def _check_reuse_is_safe(self, output_dir: str, flight_log_path: str):
         """Refuse to reuse a zone folder built from DIFFERENT inputs.
@@ -176,28 +213,74 @@ class BatchDirectory(RSModule):
         """
         marker = os.path.join(output_dir, self.FINGERPRINT_NAME)
         current = self._input_fingerprint(flight_log_path)
-        if not os.path.isfile(marker):
+        remedy = (f'Delete "{output_dir}" and re-run to rebuild cleanly.')
+
+        # FAIL CLOSED on a missing or unreadable marker when zones already hold
+        # images. The earlier version returned "safe" here, which is precisely
+        # backwards: the marker used to be written only AFTER all copying, so
+        # an interrupted copy - the exact case this guard exists for - left no
+        # marker at all and sailed through. An empty tree is still fine to use.
+        if self._zone_tree_has_images(output_dir):
+            if not os.path.isfile(marker):
+                return False, (
+                    'Existing batched zones carry images but no '
+                    f'{self.FINGERPRINT_NAME}, so what produced them is '
+                    'unknown - most likely an interrupted copy. ' + remedy)
+            try:
+                with open(marker, encoding='utf-8') as fh:
+                    previous = json.load(fh)
+            except (OSError, ValueError) as exc:
+                return False, (
+                    f'{self.FINGERPRINT_NAME} is unreadable ({exc}), so reuse '
+                    'cannot be justified. ' + remedy)
+            if previous.get('status') != 'complete':
+                return False, (
+                    'Existing batched zones were left mid-build '
+                    f'(status={previous.get("status")!r}), so the copy never '
+                    'finished. ' + remedy)
+        elif not os.path.isfile(marker):
             return True, None
-        try:
-            with open(marker, encoding='utf-8') as fh:
-                previous = json.load(fh)
-        except (OSError, ValueError):
+        else:
+            try:
+                with open(marker, encoding='utf-8') as fh:
+                    previous = json.load(fh)
+            except (OSError, ValueError):
+                return True, None
+
+        comparable = {k: v for k, v in previous.items() if k != 'status'}
+        if comparable == current:
             return True, None
-        if previous == current:
-            return True, None
-        changed = [k for k in current
-                   if previous.get(k) != current.get(k)]
+        changed = [k for k in current if comparable.get(k) != current.get(k)]
         return False, (
             'Existing batched zones were built from DIFFERENT inputs '
             f'(changed: {", ".join(changed)}). Reusing them would mix two '
             'zonings, because copies are skipped but stale members are never '
-            f'removed. Delete "{output_dir}" and re-run to rebuild cleanly.')
+            f'removed. {remedy}')
 
-    def _write_fingerprint(self, output_dir: str, flight_log_path: str) -> None:
+    def _zone_tree_has_images(self, output_dir: str) -> bool:
+        """True when the batched tree already contains at least one image."""
+        if not os.path.isdir(output_dir):
+            return False
+        for _root, _dirs, names in os.walk(output_dir):
+            for n in names:
+                if os.path.splitext(n)[1].lower() in self.ACCEPTED_EXTENSIONS:
+                    return True
+        return False
+
+    def _write_fingerprint(self, output_dir: str, flight_log_path: str,
+                           status: str = 'complete') -> None:
+        """Record what these zones were built from.
+
+        Written TWICE per run: 'in_progress' before any copying starts and
+        'complete' after it finishes, so an interrupted copy leaves a marker
+        that says so instead of leaving none at all.
+        """
+        data = self._input_fingerprint(flight_log_path)
+        data['status'] = status
         try:
             with open(os.path.join(output_dir, self.FINGERPRINT_NAME), 'w',
                       encoding='utf-8') as fh:
-                json.dump(self._input_fingerprint(flight_log_path), fh, indent=2)
+                json.dump(data, fh, indent=2)
         except OSError as exc:
             self.logger.warning('Could not write batch fingerprint: %s', exc)
 
@@ -885,10 +968,11 @@ class BatchDirectory(RSModule):
                 print("Invalid input. Please enter 'a' or 'r'.")
 
         try:
+            # in_progress FIRST: if the copy dies half way, the next run must
+            # find a marker saying "unfinished", not an absent one.
+            self._write_fingerprint(output_dir, flight_log_path, status='in_progress')
             self.__create_batch_folders(output_dir, final_zones, input_dir, flight_log_path)
-            # Record what these zones were built from, so a later run can tell
-            # whether reusing them is safe instead of assuming it.
-            self._write_fingerprint(output_dir, flight_log_path)
+            self._write_fingerprint(output_dir, flight_log_path, status='complete')
 
             avg_zone_size = total_in_batches / len(final_zones) if final_zones else 0
 
