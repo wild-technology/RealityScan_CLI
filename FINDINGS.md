@@ -720,6 +720,49 @@ frozen as the NA167 raw log; all new findings go HERE.
   0.982 (3,738) / c1 1.075 (656) — only the old zone_1 hull was ever
   metrically broken. [H2023] (2026-07-25)
 
+- **The corrected assembly is built: 3 components, 4,496/4,600 (97.7%).**
+  `merged_pd6` ran in 1.5 min of solve time — three singleton clusters,
+  zero merge attempts, straight to assembly; project
+  `D:\na156_h2023_fresh\merged_pd6\assembly\H2023_PD6_Assembly.rsproj`
+  (sfm0/1/2 = 2,489/295/44 MB, proportional to 3,738/656/102 cameras).
+  The run's ONE error line — `result code 2181038335` = **0x820000FF**,
+  the documented err:18002 warning class — was verified benign by
+  matching all 102 "not found in the current scene" images against every
+  component manifest: **zero overlap**, i.e. they are exactly the
+  unregistered remainder (4,598 union-log rows − 4,496 cameras = 102).
+  `Trajectory imported successfully` and `update` both followed.
+  Confirms the standing rule: importing a union log that covers
+  unregistered images always raises this warning, and the census, not
+  the exit status, is what settles a merge. [H2023] (2026-07-25)
+
+- **DEFECT (fixed): `merge_report.json`'s `census_after_update` was
+  structurally incapable of measuring the assembly, and reported 0 for a
+  sound 4,496-camera result.** Assemble mode exports no XMPs by design
+  (it imports components and georeferences them), so the
+  `sanitize_and_census(images_root)` call after it scans pose sidecars
+  that assembly never wrote — it reads leftovers from whichever stage
+  ran last, and reads zero once a prior stage has sanitized the tree.
+  Discovered by disbelieving a 0 next to `workflow_success: true`.
+  Replaced with `cameras_from_manifests` (the manifest sum, the same
+  number EVALUATION READY reports), tagged as coming from the inputs.
+  LESSON per provenance: a number keeps the tag it had when produced, and
+  a census that cannot see its subject must not be published under a name
+  that claims it did. [H2023] (2026-07-25)
+
+- **BLINDNESS (open): the metric-scale oracle cannot see the
+  DELIVERABLE.** `scale_oracle.py` needs pose XMPs, which only an
+  identity harvest produces; assemble mode saves and quits without
+  exporting any. So scale is measured on the assembly's INPUTS while
+  `-update` — a similarity fit to the nav constraints, and therefore
+  exactly the step that can set scale — runs afterwards unobserved.
+  The 0.982/1.075/0.990 figures for `merged_pd6` are pre-assembly.
+  EVALUATION_READY.txt now says so in the report itself rather than
+  leaving the reader to assume. Closing it means porting the
+  successive-difference harvest to a dated COPY of the assembly project
+  (already queued as workflow-evaluation item 3), which yields
+  per-component membership and a measurable deliverable in one step.
+  [H2023] (2026-07-25)
+
 ## Resource envelope & monitoring
 
 - **Near-OOM, RealityScan slows to a crawl WITHOUT crashing and WITHOUT

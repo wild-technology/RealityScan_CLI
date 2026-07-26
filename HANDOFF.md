@@ -10,7 +10,31 @@ The delivered assembly at `D:\na156_h2023_fresh\merged\assembly\` is
 still **METRICALLY INVALID** (hull at 0.175/0.221) and must not be
 modelled or shipped. Its replacement inputs now exist.
 
-### Metrically sound inputs, ready for assembly
+### The corrected assembly — BUILT, awaiting owner evaluation
+
+`D:\na156_h2023_fresh\merged_pd6\assembly\H2023_PD6_Assembly.rsproj`
+— 3 components, **4,496 / 4,600 unique images (97.7%)**, built
+2026-07-25 22:00 in ~1.5 min of solve time (zero merge attempts).
+Gate: `D:\na156_h2023_fresh\merged_pd6\EVALUATION_READY.txt`.
+Daily save copy: `RC_projects\NA156_H2023_PD6_merged_20260725.rsproj`.
+
+**The instance quit at the end of the workflow — the project is saved,
+NOT left open on the desktop.** Reopen it to evaluate.
+
+Please glance at, in the GUI: (a) each of the three components is a
+coherent feature (hull / bow / west pocket); (b) georeferencing took
+(U7 is still GUI-only); (c) the hull, now ONE native 3,738-camera
+component, has no seam where the old c0/c1 split used to be.
+
+The single ERROR line in `driver.log` (`result code 2181038335` =
+0x820000FF) is the documented benign err:18002 — verified by matching
+all 102 "not in scene" images against every manifest: zero overlap,
+they are the unregistered remainder. Not a defect.
+
+Superseded by this: `D:\na156_h2023_fresh\merged\assembly\` (the
+metrically invalid one). Do not model or ship it.
+
+### Metrically sound inputs (the assembly's sources)
 
 Scale oracle over every fresh-workspace component (all measured
 2026-07-25 evening):
@@ -33,17 +57,13 @@ fresh run spent ~75 min trying to fuse now solves natively. The
 remaining work is the ASSEMBLY stage only: import all three, union
 flight log + CRS + `-update`, save, census, evaluation gate.
 
-Exact next command (complist already dry-verified; `--components_root`
+The command that built the assembly, kept for re-runs (`--components_root`
 is the workspace root so the complist's three paths all resolve, and
 components stay at their original export locations per hard rule 7):
 
 ```bash
-py -3.13 merge_zones.py --components_root D:/na156_h2023_fresh --complist <complist> --images_root D:/na156_h2023_fresh/batched_images_by_zone --output D:/na156_h2023_fresh/merged_pd6 --name H2023_PD6_Assembly --min_size 50 --project_label NA156_H2023_PD6 --visible true
+py -3.13 merge_zones.py --components_root D:/na156_h2023_fresh --complist D:/na156_h2023_fresh/merged_pd6/inputs.complist --images_root D:/na156_h2023_fresh/batched_images_by_zone --output D:/na156_h2023_fresh/merged_pd6 --name H2023_PD6_Assembly --min_size 50 --target 0.95 --project_label NA156_H2023_PD6 --visible true --auto_model false --ladder merge_first
 ```
-
-where `<complist>` lists, one per line:
-`pd6_zone_1_c0.rsalign`, `pd6_zone_1_c1.rsalign`, `zone_3_c0.rsalign`
-at the full paths in the table above.
 
 ### Fixed this session
 
@@ -73,11 +93,16 @@ at the full paths in the table above.
 
 ### Open, in priority order
 
-1. **Build the corrected assembly** from the three sound components
-   (command above), reaching EVALUATION READY. Expect no merge
-   attempts, so far cheaper than the fresh run's ~75 min.
-2. Owner evaluation gate on the new assembly, then models per surviving
-   feature component (hull / bow / west pocket each get their own).
+1. **Owner evaluation gate on the new assembly** (built 2026-07-25
+   evening, see below), then models per surviving feature component
+   (hull / bow / west pocket each get their own).
+2. **Close the deliverable-scale blindness**: assemble mode exports no
+   XMPs, so `scale_oracle` sees the assembly's INPUTS and not the
+   assembled project, while `-update` (a similarity fit) runs after.
+   Fix = port the successive-difference harvest to a dated COPY of the
+   assembly project — workflow-evaluation item 3, which also yields
+   per-component membership. Until then the deliverable's scale is
+   inferred from its inputs, not measured.
 3. Intermediate accuracy ladder (3/3/0.5, 5/5/1) — loose is proven, not
    proven optimal. Optional now that scale is sound; each cell is a
    ~70 min zone_1 re-align.

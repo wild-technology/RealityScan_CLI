@@ -643,13 +643,18 @@ def main() -> int:
         union_log, union_params, images_root, logs_dir, harvest=False,
         logger=logger)
     snapshot_rs_log(os.path.join(assembly_dir, 'rslog.txt'), logger)
-    registered, _r, _d = camera_registry.sanitize_and_census(images_root)
+    # Sidecar hygiene only. Assemble mode exports NO XMPs (it imports
+    # components and georeferences them), so a sidecar scan here cannot
+    # observe the assembly - it reads leftovers from whatever ran last,
+    # and reported 0 for a sound 4,496-camera assembly on 2026-07-25.
+    # The assembly's camera count is the manifest sum, tagged as such.
+    camera_registry.sanitize_and_census(images_root)
 
     report['assembly'] = {
         'workflow_success': result.success,
         'errors': result.errors,
         'project': os.path.join(assembly_dir, f'{merged_name}.rsproj'),
-        'census_after_update': registered,
+        'cameras_from_manifests': sum(c['camera_count'] or 0 for c in finals),
     }
     flush()
 
@@ -674,7 +679,15 @@ def main() -> int:
               f'({100.0 * total_registered / max(total_images, 1):.1f}% of unique '
               f'images; informational target was {target:.0%})',
               'Multi-component outcomes are CORRECT for multi-feature dives '
-              '(bow/hull). Evaluate each component in the GUI before models.']
+              '(bow/hull). Evaluate each component in the GUI before models.',
+              '',
+              'CAMERA COUNTS ARE THE MANIFEST SUM (the inputs). Assemble '
+              'mode exports no XMPs, so nothing here observes the assembled '
+              'project itself - in particular its METRIC SCALE is unmeasured, '
+              'and -update is a similarity fit that can set it. Run '
+              'testing/scale_oracle.py on the input components for the '
+              'pre-assembly figure; measuring the deliverable needs a pose '
+              'export from a COPY of the saved project.']
     eval_path = os.path.join(output_dir, 'EVALUATION_READY.txt')
     with open(eval_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
