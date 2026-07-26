@@ -21,14 +21,14 @@ junction, RealityScan kept caching to D: even after the bytes moved to F: -
 the junction defeated the move. Now pinned explicitly:
 
 ```bash
-RS_CACHE_DIR=E:scache    # E: has 7,393 GB free
+RS_CACHE_DIR=E:\scache    # E: has 7,393 GB free
 ```
 
 `startRealityScan.bat` honours `RS_CACHE_DIR` (opt-in; unset = RealityScan
 default) and the resource trace now carries a `cache_free_gb` column,
 because the earlier `disk_free_gb` column watched the PROJECT drive and read
 773.9 GB free while the CACHE drive hit zero. Verified at boot: log says
-`Cache location: E:scache`, E: is filling, D: steady at 1,089.5 GB.
+`Cache location: E:\scache`, E: is filling, D: steady at 1,089.5 GB.
 
 State when this was written: step **[1/8] Generating high model, 65%**,
 ~67 min left on that step alone, then steps [2/8]–[8/8] including texture
@@ -107,14 +107,62 @@ NOT copied, owner instruction).
   calibration sidecars**, per-zone flight logs, `batch_inputs.json`
   fingerprint present.
 
-**Exact next command (NO models — owner wants to inspect alignments):**
+**H2024 ALIGNS ARE DONE (2026-07-26).** All five zones aligned on instance
+RS2 while the hull modelled on RS1 — 8,709 cameras, 82–93% per zone.
+Components in `F:
+a156_h2024ligned_components\<zone>\`.
+
+**WARNING — the command previously written here was WRONG.** It said
+`RS_MODULES="RealityScan Alignment"`. That makes `rs_input_image_dir`
+PRESENT (it is only suppressed when Batch Directory is in the chain), so
+the per-zone loop over `batched_images_by_zone` is unreachable: the run
+either exits 1 for a missing `-r_i`, or aligns all 9,834 images of five
+zones as ONE scene. What actually worked is ONE INVOCATION PER ZONE:
 
 ```bash
-RS_MODULES="RealityScan Alignment" RS_NO_INTERACTIVE=1 py -3.13 main.py -o F:/na156_h2024 -c true -r_p NA156_H2024 -r_m false
+for z in zone_1 zone_2 zone_3 zone_4 zone_5; do
+  RS_MODULES="RealityScan Alignment" RS_NO_INTERACTIVE=1 RS_CACHE_DIR="E:scache"   py -3.13 main.py -o F:/na156_h2024 -c true     -r_i "F:/na156_h2024/batched_images_by_zone/$z"     -r_f "F:/na156_h2024/batched_images_by_zone/$z/flight_log_4Q_UTM.txt"     -r_p NA156_H2024 -r_m false
+done
 ```
 
-Verify `-r_*` flags against `main.py --help` before launching, then run
-`testing/scale_oracle.py` on every component that comes out.
+Same `__align_zone` code path and same output layout as the batched branch.
+Fixing the branch to decide from the VALUE rather than the parameter's
+presence is review finding M3.
+
+### SCALE GATE FAILED ON zone_3 — do not build on it
+
+`testing/scale_oracle.py` over all 16 components: zone_1 (8 comps)
+0.937–1.119, zone_2 1.086, **zone_3 c0 = 0.236 (IQR 0.217–0.253, 1,192
+cams)**, zone_4 (5 comps) 0.983–1.196, zone_5 1.023. zone_3 is the same
+collapse as the old H2023 hull (0.175). Narrow IQR ⇒ clean whole-component
+similarity error, not drift. Registration was healthy and every zone
+reported `Success: True`, so only the oracle caught it.
+ATTRIBUTION UNPROVEN — three variables differ from the sound PD-6 run:
+dataset, orientation priors ON at 15°, and the unpinned Euler order.
+DISCRIMINATOR (~20 min): re-align zone_3 alone with a POSITION-ONLY log and
+the 7-column format GUID `{0E9850E2-73E1-4538-B2CF-B18BEF6CECEB}`, exactly
+as PD-6 was configured, then re-measure.
+
+### FULL CODE REVIEW LANDED 2026-07-26 — read before touching the pipeline
+
+Two adversarially-verified reviews (23 agents) are saved at:
+- `F:\_copylogseview_synthesis.md` — 58 confirmed findings, bugs/QA/
+  security/ergonomics, with a 9-mechanism configuration inventory and a
+  concrete consolidation design
+- `F:\_copylogseview_critique.md` — completeness critique of the above
+- `F:\_copylogs\defensive_design.md` — 23 defensive-coding defects ranked
+  by how SILENTLY they corrupt a result, plus a validation-layer design
+
+Highest-risk items, all confirmed: a driver silently `-quit`s a live
+instance and `RS_INSTANCE` is not read as an input (M1); the batch
+fingerprint omits the input directory so raw pixels can be reused as
+preprocessed (M2); rig geometry is keyed three different ways and
+`geoall.py` has no WCA table at all while docs call it canonical (M4/M5);
+the metric-scale oracle gates nothing (D3); ROVDataConcat cannot propagate
+a module failure to its exit code (M8/M9); and DVL dead-reckoning is fused
+as an absolute fix at σ=3 m, 23× tighter than USBL, giving it 96% weight —
+which means every output since the DVL gate flip is an unvalidated regime
+(M7).
 
 ### Next, in strict order
 
