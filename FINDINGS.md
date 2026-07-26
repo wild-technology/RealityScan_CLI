@@ -1545,3 +1545,38 @@ frozen as the NA167 raw log; all new findings go HERE.
   reported 773.9 GB free for the whole run while the CACHE drive went to
   zero. Watching the right RESOURCE is not enough; it has to be the right
   INSTANCE of that resource. [H2023] (2026-07-26)
+
+- **ROVDataConcat is DETERMINISTIC end to end — verified, not assumed.** A
+  full forced re-run for H2024 (stage 1 raw extraction over the whole
+  expedition, then stage 2 kalman) reproduced **all nine output CSVs
+  byte-identically** (sha256 over USBL Atalanta/Hercules, dvl_lat_long,
+  octans, sealog_sensors_merged, filtered_datatable, kalman_filtered_data,
+  final_datatable, kalman_assessment). Confirmed the work actually re-ran:
+  every stage-1 step reported `done` rather than `skipped (resume)`. Worth
+  having as a fact rather than a belief, because several "deterministic for
+  the same inputs" assumptions failed elsewhere this session (the batcher's
+  zone-reuse premise most notably). Also re-confirms that the camera lever
+  arm lives entirely in THIS repo's georeference module - it has no effect
+  on nav, so a lever-arm change never requires re-running ROVDataConcat.
+  [H2024] (2026-07-26)
+
+- **DEFECT (fixed): `main.py` exited 0 when a module REFUSED to run.** On
+  `validate_parameters()` returning False the orchestrator logged the error
+  and did a bare `return`, which exits 0 - while the module-FAILURE branch a
+  few lines below has always used `sys.exit(1)`. So a refused run was
+  indistinguishable from a successful one to any caller gating on exit
+  status. Discovered because the batcher's new fingerprint guard correctly
+  refused to reuse zones built from a different flight log, and the process
+  still reported success. Fixed to `sys.exit(1)` and verified by re-running
+  the same refusal: now exit 1. NOTE this is the second silent-failure exit
+  code found this session, after ROVDataConcat's `main_kalman.py` returning
+  0 with a FAILED module - worth checking any other orchestrator here for
+  the same shape. [H2024] (2026-07-26)
+
+- **The batcher's input fingerprint WORKS IN ANGER.** After the lever-arm
+  revert changed every Port position, the re-batch was refused with
+  `Existing batched zones were built from DIFFERENT inputs (changed:
+  flight_log_sha256). Reusing them would mix two zonings...`. This is the
+  exact near-miss it was written for hours earlier (12,679 images on disk
+  against 9,834 reported), now caught mechanically instead of by manually
+  counting files. [H2024] (2026-07-26)

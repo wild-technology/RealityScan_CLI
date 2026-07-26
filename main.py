@@ -209,8 +209,14 @@ def main(argv) -> None:
     for idx, mod in enumerate(modules.values()):
         ok, msg = mod.validate_parameters()
         if not ok:
+            # sys.exit(1), NOT a bare return: a bare return exits 0, so an
+            # unattended caller gating on exit status reads a refused run as
+            # success. Surfaced 2026-07-26 when the batcher correctly refused
+            # to reuse zones built from a different flight log and main.py
+            # still reported 0 - the same silent-failure shape as the
+            # module-failure branch below, which has always exited 1.
             logger.error(msg)
-            return
+            sys.exit(1)
 
         logger.info(f'Running module: {mod.get_name()}')
         out = mod.run()
