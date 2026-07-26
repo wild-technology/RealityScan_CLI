@@ -1284,7 +1284,12 @@ frozen as the NA167 raw log; all new findings go HERE.
   position-only. Orientation is consumed by BOTH the fresh-run aligns and
   the assembly's `-update`.
 
-- **DISPUTED — THIS CHANGE RESTS ON RETRACTED EVIDENCE AND SHOULD PROBABLY
+- **REVERTED 2026-07-26 (owner: "change lever"). The entry below is
+  SUPERSEDED; the code is back to Port (1.0 fwd, 0.0 lat, 1.0 down) and
+  Cinema (1.0, 0.0, 0.0), the values two metrically-sound solves validated.
+  H2024's nav, flight log and zones are being regenerated from raw under
+  the restored geometry.** Original flag follows:
+  **DISPUTED — THIS CHANGE RESTS ON RETRACTED EVIDENCE AND SHOULD PROBABLY
   BE REVERTED (flagged 2026-07-26 by a contradiction audit).** The entry
   below cites "|P-C| separation 0.22 m, vertical component 0.00 m, P ~0.17 m
   ahead" as corroboration. Those figures were **already retracted on

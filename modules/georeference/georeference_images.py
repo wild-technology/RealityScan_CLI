@@ -481,17 +481,22 @@ class GeoreferenceImages(RSModule):
         elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
             return (0.5, 0.0, 0.5)  # 0.5m forward, 0.5m down
         elif filename_lower.startswith('p231c'):
-            # WCA Port and Cinema sit at essentially the SAME height and
-            # nearly the same distance forward (owner, 2026-07-26: both are
-            # roughly the same distance forward of the USBL; the Z figure in
-            # the notes was the doubtful one). Solve-derived rig-internal
-            # geometry agrees: |P-C| separation 0.22 m (IQR 0.21-0.28) with a
-            # VERTICAL component of 0.00 m (IQR -0.09..+0.04), P about 0.17 m
-            # ahead of C. The old values put P a full 1 m below C, which at
-            # 0.1 m Z accuracy was a ~10-sigma conflict on every Port frame.
-            return (1.17, 0.0, 0.0)
+            # WCA Port: 1 m forward of the point of rotation, 1 m down.
+            # VALIDATED on two INDEPENDENT metrically-sound solves (bow c2
+            # from the zone_1 align, and zone_2 from PD-2b): C sits above P
+            # by +1.12 m and +1.03 m against this code's implied +1.00 m,
+            # with |P-C| separation 1.21 m / 1.11 m.
+            # DO NOT "flatten" these to equal height on the strength of the
+            # 0.22 m / 0.00 m figures that appear in FINDINGS: those were
+            # measured inside hull c0, the 0.175-SCALE component, so they are
+            # scale-corrupted (0.22 x 5.7 ~= 1.25 m, which is what the sound
+            # solves report). They were retracted on 2026-07-25, and briefly
+            # re-applied here on 2026-07-26 before the contradiction audit
+            # caught it. Only the ANGLE from that measurement was ever valid,
+            # angles being invariant under scale.
+            return (1.0, 0.0, 1.0)
         elif filename_lower.startswith('c231c'):
-            # WCA Cinema: reference camera for the pair above.
+            # WCA Cinema: 1 m forward of the point of rotation, same depth.
             return (1.0, 0.0, 0.0)
         else:
             self._note_unknown_camera(filename, "assuming no position offset")
