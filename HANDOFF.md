@@ -91,6 +91,18 @@ py -3.13 merge_zones.py --components_root D:/na156_h2023_fresh --complist D:/na1
   format is installed in Program Files (re-check after any RS update).
 - `camera_registry`: C and P both 16 mm 35-eq, Approximate throughout.
 
+### Decision in force (owner, 2026-07-26)
+
+**CLAHE stays where it is — upstream of batch/align — until Q-05 is
+settled.** No preprocessing changes land while the evidence is split
+(LilyJean/COLMAP: CLAHE cut registration ~30%; H2023 zone_9: baseline
+aligned to nothing). Consequence to keep in mind: aligned AND textured
+imagery is currently the CLAHE'd imagery. Owner agrees RealityScan
+**Image Layers** (`.geometry`/`.texture`) is the right eventual
+mechanism — align on originals, texture from enhanced. REVISIT TRIGGER:
+Q-05 resolves, or an H2024 align shows CLAHE hurting registration on
+this rig.
+
 ### Open, in priority order
 
 1. **Owner evaluation gate on the new assembly** (built 2026-07-25
