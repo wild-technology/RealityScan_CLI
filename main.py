@@ -230,7 +230,16 @@ def main(argv) -> None:
             sys.exit(1)
 
         if not params['continue_automatically'].get_value() and idx < len(modules) - 1:
-            input("Press enter to continue...")
+            # isatty() lies under hidden consoles and redirected pipes, so
+            # this gate cannot be reached only when a human is present.
+            # Unattended, stdin is at EOF immediately: continue rather than
+            # crash the chain between two modules that both succeeded
+            # (observed on the H2024 run - georeference finished 8,197/8,197
+            # and the pipeline died here before preprocessing).
+            try:
+                input("Press enter to continue...")
+            except EOFError:
+                logger.info('No console attached - continuing automatically.')
 
     logger.info("Output Data:")
     log_output_data(logger, overall_data)
