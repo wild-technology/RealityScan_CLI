@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
+import sys
 import warnings
 
 import numpy as np
@@ -136,6 +139,86 @@ class BatchDirectory(RSModule):
         )
 
         return {**super().get_parameters(), **additional_params}
+
+    FINGERPRINT_NAME = 'batch_inputs.json'
+
+    def _input_fingerprint(self, flight_log_path: str) -> dict:
+        """Identity of the inputs that determine zone membership."""
+        digest = None
+        if flight_log_path and os.path.isfile(flight_log_path):
+            h = hashlib.sha256()
+            with open(flight_log_path, 'rb') as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b''):
+                    h.update(chunk)
+            digest = h.hexdigest()
+        keys = ('batch_target_images_per_zone', 'batch_min_zone_size',
+                'batch_max_zone_size', 'batch_initial_overlap_percent',
+                'batch_density_weight', 'batch_kde_bandwidth')
+        return {
+            'flight_log': os.path.basename(flight_log_path or ''),
+            'flight_log_sha256': digest,
+            'params': {k: str(self.params[k].get_value())
+                       for k in keys if k in self.params},
+        }
+
+    def _check_reuse_is_safe(self, output_dir: str, flight_log_path: str):
+        """Refuse to reuse a zone folder built from DIFFERENT inputs.
+
+        The unattended resume path reuses an existing batched folder, which is
+        only sound while the flight log and batching parameters are unchanged -
+        `__copy_files` skips files already present, so it cannot remove a zone
+        member that the new zoning no longer wants. When the lever-arm fix
+        changed every Port position, reuse left the previous zoning in place
+        and the folders ended up holding 12,679 images against a reported
+        9,834 (2026-07-26). Nothing detected it. Now the premise is checked.
+
+        Returns (ok, message).
+        """
+        marker = os.path.join(output_dir, self.FINGERPRINT_NAME)
+        current = self._input_fingerprint(flight_log_path)
+        if not os.path.isfile(marker):
+            return True, None
+        try:
+            with open(marker, encoding='utf-8') as fh:
+                previous = json.load(fh)
+        except (OSError, ValueError):
+            return True, None
+        if previous == current:
+            return True, None
+        changed = [k for k in current
+                   if previous.get(k) != current.get(k)]
+        return False, (
+            'Existing batched zones were built from DIFFERENT inputs '
+            f'(changed: {", ".join(changed)}). Reusing them would mix two '
+            'zonings, because copies are skipped but stale members are never '
+            f'removed. Delete "{output_dir}" and re-run to rebuild cleanly.')
+
+    def _write_fingerprint(self, output_dir: str, flight_log_path: str) -> None:
+        try:
+            with open(os.path.join(output_dir, self.FINGERPRINT_NAME), 'w',
+                      encoding='utf-8') as fh:
+                json.dump(self._input_fingerprint(flight_log_path), fh, indent=2)
+        except OSError as exc:
+            self.logger.warning('Could not write batch fingerprint: %s', exc)
+
+    @staticmethod
+    def _show_if_interactive() -> None:
+        """Show a figure ONLY when a human is present to close it.
+
+        plt.show() BLOCKS on an interactive backend until the window is
+        dismissed, and the second plot cannot even appear until the first is
+        closed (owner-observed). Unattended that stalls the whole batch stage
+        indefinitely: the first H2024 batch took 4 h 10 min against 28.9 min
+        for identical work, which was a window waiting to be closed, not
+        computation. Both figures are already written as PNGs beside the
+        zones, so showing them is pure convenience.
+        """
+        if not sys.stdin.isatty():
+            return
+        try:
+            plt.show()
+        except Exception:
+            pass
 
     def __get_input_dir(self):
         if 'batch_input_image_dir' in self.params:
@@ -464,10 +547,7 @@ class BatchDirectory(RSModule):
         ax1.set_ylabel('Y (Northing)')
         kernel_plot_path = os.path.join(output_dir, 'kernel_density.png')
         fig1.savefig(kernel_plot_path, bbox_inches='tight')
-        try:
-            plt.show()
-        except Exception:
-            pass
+        self._show_if_interactive()
         plt.close(fig1)
         self.logger.info(f"Kernel density plot saved to: {kernel_plot_path}")
 
@@ -497,10 +577,7 @@ class BatchDirectory(RSModule):
         ax2.legend()
         zones_plot_path = os.path.join(output_dir, 'batch_zones.png')
         fig2.savefig(zones_plot_path, bbox_inches='tight')
-        try:
-            plt.show()
-        except Exception:
-            pass
+        self._show_if_interactive()
         plt.close(fig2)
         self.logger.info(f"Batch zones plot saved to: {zones_plot_path}")
 
@@ -809,6 +886,9 @@ class BatchDirectory(RSModule):
 
         try:
             self.__create_batch_folders(output_dir, final_zones, input_dir, flight_log_path)
+            # Record what these zones were built from, so a later run can tell
+            # whether reusing them is safe instead of assuming it.
+            self._write_fingerprint(output_dir, flight_log_path)
 
             avg_zone_size = total_in_batches / len(final_zones) if final_zones else 0
 
@@ -872,6 +952,11 @@ class BatchDirectory(RSModule):
                 # same log+parameters and __copy_files skips files already
                 # present, so this is the resume path, not data loss.
                 # (Interactive 'y' still wipes for a truly clean rebuild.)
+                # Reuse is ONLY sound while the inputs are unchanged; that
+                # premise is now verified rather than asserted.
+                safe, why = self._check_reuse_is_safe(output_dir, flight_log_path)
+                if not safe:
+                    return False, why
                 self.logger.info('Non-interactive: reusing existing batched '
                                  'folder (copies are skipped if present).')
                 overwrite = None
