@@ -15,8 +15,7 @@ restart freely.
 The first three failed on DISK - not memory, not `closeHoles`. RealityScan's
 cache (`rccache`) is placed by DRIVE of the path it is given, is rebuilt
 every run, is auto-cleared on exit, and a single hull model needs >197 GB of
-it. Because the project is addressed through the `D:
-a156_h2023_fresh`
+it. Because the project is addressed through the `D:/na156_h2023_fresh`
 junction, RealityScan kept caching to D: even after the bytes moved to F: -
 the junction defeated the move. Now pinned explicitly:
 
@@ -109,8 +108,7 @@ NOT copied, owner instruction).
 
 **H2024 ALIGNS ARE DONE (2026-07-26).** All five zones aligned on instance
 RS2 while the hull modelled on RS1 — 8,709 cameras, 82–93% per zone.
-Components in `F:
-a156_h2024ligned_components\<zone>\`.
+Components in `F:/na156_h2024/aligned_components/<zone>/`.
 
 **WARNING — the command previously written here was WRONG.** It said
 `RS_MODULES="RealityScan Alignment"`. That makes `rs_input_image_dir`
@@ -121,7 +119,7 @@ zones as ONE scene. What actually worked is ONE INVOCATION PER ZONE:
 
 ```bash
 for z in zone_1 zone_2 zone_3 zone_4 zone_5; do
-  RS_MODULES="RealityScan Alignment" RS_NO_INTERACTIVE=1 RS_CACHE_DIR="E:scache"   py -3.13 main.py -o F:/na156_h2024 -c true     -r_i "F:/na156_h2024/batched_images_by_zone/$z"     -r_f "F:/na156_h2024/batched_images_by_zone/$z/flight_log_4Q_UTM.txt"     -r_p NA156_H2024 -r_m false
+  RS_MODULES="RealityScan Alignment" RS_NO_INTERACTIVE=1 RS_CACHE_DIR="E:\rscache"   py -3.13 main.py -o F:/na156_h2024 -c true     -r_i "F:/na156_h2024/batched_images_by_zone/$z"     -r_f "F:/na156_h2024/batched_images_by_zone/$z/flight_log_4Q_UTM.txt"     -r_p NA156_H2024 -r_m false
 done
 ```
 
@@ -146,10 +144,10 @@ as PD-6 was configured, then re-measure.
 ### FULL CODE REVIEW LANDED 2026-07-26 — read before touching the pipeline
 
 Two adversarially-verified reviews (23 agents) are saved at:
-- `F:\_copylogseview_synthesis.md` — 58 confirmed findings, bugs/QA/
+- `F:\_copylogs\review_synthesis.md` — 58 confirmed findings, bugs/QA/
   security/ergonomics, with a 9-mechanism configuration inventory and a
   concrete consolidation design
-- `F:\_copylogseview_critique.md` — completeness critique of the above
+- `F:\_copylogs\review_critique.md` — completeness critique of the above
 - `F:\_copylogs\defensive_design.md` — 23 defensive-coding defects ranked
   by how SILENTLY they corrupt a result, plus a validation-layer design
 
