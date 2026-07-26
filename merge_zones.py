@@ -708,9 +708,20 @@ def main() -> int:
             comp_name = os.path.splitext(os.path.basename(c['rsalign']))[0]
             res = cli.run_batch_script('GenerateModel.bat',
                                        [proj, comp_name], logs_dir)
+            # Snapshot per component, ALWAYS. RealityScan overwrites
+            # Temp\RealityScan.log when the next instance starts, and the
+            # next component starts seconds later - so a crash here leaves
+            # no authoritative log at all unless it is copied now. Learned
+            # from the 2026-07-26 hull crash, whose log was overwritten
+            # three seconds after the minidump was written.
+            rslog = os.path.join(logs_dir, f'rslog_model_{comp_name}.txt')
+            snapshot_rs_log(rslog, logger)
+            if not res.success:
+                logger.error('Model workflow FAILED for %s - RealityScan log '
+                             'snapshot: %s', comp_name, rslog)
             report.setdefault('models', []).append(
                 {'component': comp_name, 'success': res.success,
-                 'errors': res.errors})
+                 'errors': res.errors, 'rslog': rslog})
             flush()
 
     logger.info('Merge stage complete. Owner evaluation gate: %s', eval_path)
