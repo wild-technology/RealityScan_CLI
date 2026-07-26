@@ -1,5 +1,58 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-07-26 (overnight) CURRENT STATE — read this first
+
+### In flight
+
+**H2023 hull model** — `GenerateModel.bat` on `pd6_zone_1_c0` (3,738 cams),
+driven through `RealityScanCLI` exactly as `--auto_model` does it. Verified
+doing real work (9.1 cores, 33% GPU) but PAGING: available RAM hit 3.1 GB,
+commit charge ~105 GB against a limit Windows grew to ~120 GB. Step [1/8]
+alone has run far longer than the entire bow. Resource trace:
+`D:\na156_h2023_fresh\merged_pd6\logs\resources_GenerateModel_*.csv`.
+Driver log: `merged_pd6\hull_retry.log`. **May crash again** - if it does,
+the levers are all owner decisions (model detail, harder pre-closeHoles
+culling, bigger pagefile); nothing is auto-changed.
+
+### Done tonight
+
+- **Bow + torpedo models COMPLETE** and saved into
+  `D:\na156_h2023_fresh\merged_pd6\assembly\H2023_PD6_Assembly.rsproj`
+  (~30 GB, 13 model payloads, two texture sets). Hull is the only gap.
+- **H2024 fully staged through batching, verified clean**: nav re-run from
+  raw, georeference 8,197/8,197 at 100% (all exact matches, zone 4Q),
+  CLAHE 8,197/0 failed, 5 zones = **9,834 jpgs with 1:1 calibration
+  sidecars**, `batch_inputs.json` fingerprint present. Workspace
+  `F:\na156_h2024`, images `F:\H2024\Images\edited` (copy verified
+  byte-for-byte; prior-projects copy deliberately NOT made).
+- **Orientation priors ON at 15 deg** per owner decision, lever arms
+  corrected (Port now level with Cinema, 0.17 m ahead).
+
+### Next, in order
+
+1. Hull model finishes (or fails - then owner picks a lever).
+2. **GUI save-and-diff for `ifKGrp` / `ifKmode`** (owner agreed, after the
+   hull): open the trajectory-import dialog on our 13-column format, save
+   params at defaults, then once more after changing ONLY *Euler angles
+   order (YPR)*, then once more after changing ONLY *Camera mount*. Three
+   XMLs plus the chosen option names identify which key is which. Both
+   currently sit at `ifKGrp=2`, `ifKmode=0x0` and neither string exists in
+   any installed file.
+3. **H2024: 5 zone aligns, NO models** (owner wants to inspect alignments).
+   Hold until the hull is done - do not add load to a paging box. Run the
+   scale oracle on every component.
+4. Bow ground-plane tilt: still unconfirmed. Leading suspect is the
+   assembly's `-update`; the discriminator is a position-only union log,
+   and it needs poses harvested from a COPY of the assembly.
+
+### Standing gotcha discovered tonight
+
+The batcher's unattended reuse path silently blended two zonings when the
+flight log changed. Fixed via fingerprint, but the general lesson applies
+to every resume path here: **count the output directory, do not trust
+`Success: True`.**
+
+
 ## 2026-07-25 (evening) RESTART POINT — read this first
 
 **PD-6 COMPLETED and answered the metric-scale question: NO, the hull
