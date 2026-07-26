@@ -1055,6 +1055,23 @@ frozen as the NA167 raw log; all new findings go HERE.
     imagined one: an unattended pipeline stage that stalls forever on a
     window nobody is there to close. Fixed, and the plots are still written
     as PNGs. (2026-07-26)
+  - **RE-OPENED (2026-07-26, later): the retraction above was itself WRONG.
+    The zone computation really is slow.** A third run, with `plt.show()`
+    gated off and NO window in existence, wrote `kernel_density.png` at
+    12:38:31 and `batch_zones.png` at **15:31:17** - **2 h 53 min** of
+    genuine compute between the two saves, since everything between them is
+    KMeans + zone split/merge + overlap scoring. So the ORIGINAL finding
+    stands: the batch stage is dominated by analysis, not I/O, and an
+    O(N^2)-ish path is worth hunting after all. What does NOT stand is my
+    explanation for it. The 28.9 min run I retracted on is now the
+    UNEXPLAINED outlier - it processed the same 8,197 images with the same
+    parameters and cannot have done this work in that time; whatever it
+    skipped is unidentified. LESSON: I used a single faster run as a control
+    without establishing that it did equivalent work, which is the same
+    error as reading elapsed time as compute in the first place. The
+    `plt.show()` gate remains correct on its own merits - a blocking window
+    in an unattended stage is a real hazard, owner-observed - it just was
+    not the cause of the 4 h. (2026-07-26)
 
 - **Zone copies happen only AFTER the accept gate, as designed** - the
   batcher prints its per-zone table, asks `Accept these batches?
