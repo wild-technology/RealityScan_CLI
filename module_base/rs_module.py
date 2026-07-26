@@ -61,7 +61,24 @@ class RSModule(abc.ABC):
     def validate_parameters(self) -> tuple[bool, str | None]:
         """
         Default parameter validation (override if needed).
+
+        Catches the whole class of "unattended run died on a None": a
+        parameter gated by ``disable_when_module_active`` is PRESENT
+        (and therefore required) whenever its gating module is not in the
+        chain, but nothing supplies it without a console to prompt on. Six
+        parameters across four modules are shaped this way, and each one
+        used to surface as ``TypeError: _path_isdir: path should be
+        string... not NoneType`` from whichever line dereferenced it first
+        (observed twice on the H2024 run - preprocess and the batcher).
+        Reporting the missing flag by name here fixes all of them at once,
+        and subclasses that override this should call super() first.
         """
+        for param in self.params.values():
+            if param.get_value() is None and getattr(param, 'prompt_user', False):
+                return False, (
+                    f'{param.get_name()} is not set - pass '
+                    f'-{param.cli_short}/--{param.cli_long} '
+                    f'(no console available to prompt on)')
         return True, None
 
     def _initialize_loading_bar(self, total: int, description: str) -> tqdm:
