@@ -1206,3 +1206,50 @@ frozen as the NA167 raw log; all new findings go HERE.
   from PD-4), and the convention must be verified first - importing
   wrong-convention YPR is itself a mechanism for this defect. [H2023]
   (2026-07-26)
+
+- **RESOLVED BY FORUM MINING: the RealityScan YPR convention, and our
+  flight log is 90 deg wrong for the Port camera.** Epic staff
+  **OndrejTrhan** (2023-10-23, Epic Developer Community knowledge base
+  "Registration export and camera orientations"): *"Yaw = 0, image is
+  oriented to Y (upper side of image is oriented that way), Pitch = 0,
+  image is looking down, Roll = 0, image is parallel with X axis."*
+  Composition is intrinsic Roll -> Pitch -> Yaw; Yaw about Z, Pitch about
+  Y, Roll about X. The Help's Trajectory Import page adds that imported
+  **YPR is interpreted in NED** (OPK is the ENU variant), that "Euler
+  angles order (YPR)" is a SETTING evaluated right-to-left, and that a
+  **"Camera mount"** option exists whenever YPR is included.
+  THE DEFECT: `_get_camera_pitch_offset` documents its return as "degrees
+  down from vehicle forward axis" - i.e. measured from HORIZONTAL - and
+  the flight log writes vehicle pitch plus that offset. RealityScan
+  measures Pitch from STRAIGHT DOWN. Consequences per camera:
+  - **Cinema (45 deg offset): coincidentally CORRECT.** 45 deg from
+    horizontal and 45 deg from vertical are the same angle - 45 is the
+    fixed point of this 90 deg convention flip, which is exactly why the
+    error was never noticed.
+  - **Port (0 deg offset, "aligned with the vehicle" = horizontal):
+    90 deg WRONG.** We write ~0, RealityScan reads "looking straight
+    down".
+  So the two cameras of one rig carry orientation priors that disagree by
+  90 deg. A component containing both gets contradictory constraints and
+  a rigid fit lands between them - the mechanism for the owner-reported
+  ~45 deg bow tilt. Also unset: our `FlightLogParams.xml` carries no
+  Euler-order or Camera-mount keys, so both fall to defaults.
+  SCOPE: harmless to every align run so far, because production aligns
+  ran POSITION-ONLY; it bites only where orientation is consumed, which
+  today is the assembly's `-update`. Discovered by forum mining at owner
+  instruction (owner recalled a staff post confirming the convention -
+  correct). [H2023] (2026-07-26)
+
+- **Rig lever arms corrected: Port and Cinema are level, not 1 m apart in
+  Z.** Owner (2026-07-26): both cameras are roughly the same distance
+  forward of the USBL, and the Z figure in the notes was the doubtful
+  one. This matches the solve-derived rig-internal geometry already
+  recorded - |P-C| separation 0.22 m (IQR 0.21-0.28), vertical component
+  **0.00 m** (IQR -0.09..+0.04), P about 0.17 m ahead of C. Applied in
+  `_get_camera_offsets`: Port 1.0 m forward / 1.0 m DOWN -> **1.17 m
+  forward / 0.0 m down**, Cinema unchanged at 1.0 / 0.0. Removes a
+  ~10-sigma-per-Port-frame conflict at the 0.1 m Z accuracy that was in
+  force when the error was found. Rig-internal quantities are observable
+  regardless of how weakly absolute attitude is constrained, which is why
+  this derivation is trusted where the mount-ANGLE derivation was not.
+  [H2023] (2026-07-26)
