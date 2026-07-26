@@ -988,3 +988,30 @@ frozen as the NA167 raw log; all new findings go HERE.
   the cinema set regardless of its XMP calibration group. Discovered by
   a full-decode validation pass with a dimension census. [H2024]
   (2026-07-25)
+
+- **The hull model CRASHED RealityScan at `closeHoles`/`cleanModel`** —
+  minidump `RealityScanCrash-20260726-054742.dmp` written at 01:47:42
+  local, and the workflow's next command could not be delegated at all
+  (`ERROR: Failed to delegate command: -renameSelectedModel
+  "pd6_zone_1_c0_Manifold"`), which is the signature of a dead instance
+  rather than a rejected operation. Step [5/8] on the 3,738-camera hull
+  is the largest mesh in the deliverable. `merge_zones` recorded
+  `success: false` for `pd6_zone_1_c0` and correctly carried on to the
+  next component, so bow and torpedo were unaffected. PRIME SUSPECT is
+  resource contention, not the recipe: the H2024 preprocessing chain
+  (CLAHE at 12 workers, then a 9,835-file zone copy) ran CONCURRENTLY
+  with the hull model for the whole window. Consistent with the recorded
+  near-OOM behavior, except this time it crashed rather than crawled.
+  Retry plan follows one-variable discipline: re-run the hull model with
+  NOTHING else running before touching the owner's recipe. [H2023]
+  (2026-07-26)
+
+- **H2024 prep completed clean end to end.** Georeference 8,197/8,197
+  (100% acceptance, all exact matches, zone 4Q), CLAHE 2.0/8x8 on
+  8,197 with 0 failures, density batch into 5 zones (2,983 / 1,537 /
+  1,279 / 1,413 / 2,623 = 9,835 with overlap bands, 8,197 unique).
+  Every zone carries per-camera subfolders, a per-zone flight log, and
+  a 1:1 calibration sidecar for every image (`b_xmp_priors true`
+  verified by count). Reaching this took four attempts, each blocked by
+  a separate real defect - see the four fixes committed 2026-07-25
+  evening. [H2024] (2026-07-26)

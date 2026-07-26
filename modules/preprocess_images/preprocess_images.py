@@ -233,8 +233,15 @@ class PreprocessImages(RSModule):
         input_dir = self.__get_input_dir()
         # When chained after Extract Images the input folder is produced at
         # runtime, so only validate an explicitly given directory.
-        if 'pre_input_image_dir' in self.params and not os.path.isdir(input_dir):
-            return False, f'Preprocess input directory does not exist: {input_dir}'
+        if 'pre_input_image_dir' in self.params:
+            # Unattended runs never see the prompt, so the value can arrive
+            # as None; say which flag is missing instead of raising
+            # TypeError out of os.path.isdir.
+            if input_dir is None:
+                return False, ('Preprocess input directory not set - pass '
+                               '-p_i/--p_input (no console to prompt on)')
+            if not os.path.isdir(input_dir):
+                return False, f'Preprocess input directory does not exist: {input_dir}'
 
         clip = float(self.params['pre_clahe_clip'].get_value())
         if clip < 0:
