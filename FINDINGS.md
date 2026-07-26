@@ -1508,3 +1508,35 @@ frozen as the NA167 raw log; all new findings go HERE.
   restored (`New-Item -ItemType Junction -Path D:\na156_h2023_fresh -Target
   F:\na156_h2023_fresh`) or every recorded path in this log breaks.
   [H2023] (2026-07-26)
+
+- **TRUE ROOT CAUSE of all three hull-model failures: RealityScan's CACHE
+  DISK, not the project disk.** The instance log - snapshotted for the
+  first time thanks to the per-model snapshot added earlier - says it
+  outright: `Processing failed: Out of disk space..` during
+  `simplify` (step [6/8], after `closeHoles` 125 s and `cleanModel` 230 s
+  had both SUCCEEDED). The cache lives at **`D:\rccache`, 1,089 GB**, and
+  it refilled the 197 GB freed by the owner-approved cleanup within one
+  run. Moving the PROJECT to F: did nothing, because the cache does not
+  move with it. Epic's own "Out of Disk Space" page confirms the
+  mechanism - "processing cannot continue without freeing up some space on
+  it", the process is aborted and "the progress will be lost" - and warns
+  **"don't delete the files from your cache folder since this may lead to
+  some failures in the project"**, so hand-clearing `rccache` is NOT a
+  legitimate remedy. Their sanctioned levers are freeing space on the cache
+  disk or changing the cache disk.
+  SETTINGS (from `tutorials/setkeyvaluetable.htm`): `appCacheLocation` =
+  `SystemTemp` | `Custom`; `appCacheCustomLocation` = path (used when
+  Custom); `appAutoClearCache` = retention in days, where 999999 = never
+  clear, 0 = clear all, and 3/7/14/30/90 select an age cutoff. `-clearCache`
+  is also a CLI command, and requires the project be saved first.
+  APPLIED: `startRealityScan.bat` now honours an opt-in `RS_CACHE_DIR` -
+  when set it boots with `appCacheLocation=Custom` +
+  `appCacheCustomLocation`, and unset keeps RealityScan's default, so
+  nothing changes silently. `appAutoClearCache` deliberately untouched:
+  retention is owner policy.
+  INSTRUMENTATION LESSON, the third variation of the same mistake: after
+  the disk-full diagnosis I added a `disk_free_gb` column - and pointed it
+  at the drive holding the trace, i.e. the PROJECT drive. It faithfully
+  reported 773.9 GB free for the whole run while the CACHE drive went to
+  zero. Watching the right RESOURCE is not enough; it has to be the right
+  INSTANCE of that resource. [H2023] (2026-07-26)

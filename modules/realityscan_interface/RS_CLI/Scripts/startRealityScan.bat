@@ -36,10 +36,29 @@ if defined RS_GPU_DEVICES set CUDA_VISIBLE_DEVICES=%RS_GPU_DEVICES%
 :: escaped quotes (\") because checkout paths routinely contain spaces;
 :: without them the trigger would silently launch nothing and all error
 :: detection would vanish.
+:: Cache location (RS_CACHE_DIR, opt-in - unset keeps RealityScan's own
+:: default). WHY THIS EXISTS: processing writes cache files to the cache
+:: disk, and when that disk fills RealityScan aborts the operation and the
+:: progress is lost (Epic's own "Out of Disk Space" page). The H2023 hull
+:: model was killed three times this way - twice reported only as
+:: "result code 2147942512" (0x80070070) until the instance log was
+:: snapshotted and read "Processing failed: Out of disk space.". The cache
+:: was pinned to D:ccache (1,089 GB) and filled the drive even after the
+:: PROJECT was moved to another disk, because the cache never moves with it.
+:: Epic warns NOT to delete cache files by hand, so relocating is the safe
+:: lever. appAutoClearCache is deliberately left alone here - retention is
+:: an owner policy, not a per-run decision.
+set "RS_CACHE_ARGS="
+if defined RS_CACHE_DIR (
+    if not exist "%RS_CACHE_DIR%" mkdir "%RS_CACHE_DIR%"
+    set "RS_CACHE_ARGS=-set "appCacheLocation=Custom" -set "appCacheCustomLocation=%RS_CACHE_DIR%""
+    echo Cache location: %RS_CACHE_DIR%
+)
+
 :: (-stdConsole removed 2026-07-23: it allocates a console window per
 :: instance boot; nothing reads instance stdout - progress comes from
 :: -writeProgress and results from the ErrorWriter hook.)
-start "" %RealityScan% %RS_HEADLESS_FLAG% -silent "%ErrorPath%" -setInstanceName %RS_INSTANCE% -set "appAutoSaveMode=false" -set "appQuitOnError=false" -set "appProcessActionTime=0" -set "appProcessAction=ExecuteProgram" -set "appProcessExecCmd=wscript.exe //B \"%ErrorPath%\ErrorWriterLaunch.vbs\" $(processResult) $(processId) $(processDuration:d) %RS_INSTANCE%" -writeProgress "%ErrorPath%\progress_%RS_INSTANCE%.txt" 600
+start "" %RealityScan% %RS_HEADLESS_FLAG% -silent "%ErrorPath%" -setInstanceName %RS_INSTANCE% %RS_CACHE_ARGS% -set "appAutoSaveMode=false" -set "appQuitOnError=false" -set "appProcessActionTime=0" -set "appProcessAction=ExecuteProgram" -set "appProcessExecCmd=wscript.exe //B \"%ErrorPath%\ErrorWriterLaunch.vbs\" $(processResult) $(processId) $(processDuration:d) %RS_INSTANCE%" -writeProgress "%ErrorPath%\progress_%RS_INSTANCE%.txt" 600
 
 echo Waiting until the RealityScan instance %RS_INSTANCE% is ready
 
