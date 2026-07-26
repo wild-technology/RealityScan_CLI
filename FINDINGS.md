@@ -1119,3 +1119,41 @@ frozen as the NA167 raw log; all new findings go HERE.
   dataset since the overhaul, and all three failures were in the
   scaffolding around working modules, not the modules themselves.
   [H2024] (2026-07-25)
+
+- **`sfmDistortionModel` is GLOBAL and all-or-nothing; the per-camera XMP
+  `Camera:DistortionModel` hint does NOT switch models per camera.** The
+  cinema sidecars declare `brown3`, yet every one of 2,558 cinema pose
+  XMPs from PD-6 came back `xcr:DistortionModel="division"` - the same
+  model as the 2,492 port records. Discovered by aggregating solved
+  intrinsics out of the PD-6 identity harvest. This SETTLES the open
+  decision rule in `testing/PRIORS_DISTORTION_TEST_PLAN.md` ("adopt
+  division-for-P only if ... if the global key is all-or-nothing"): it
+  is all-or-nothing, so a mixed-optics rig gets ONE distortion model and
+  only the coefficients differ per calibration group. Consequence for
+  PD-6's attribution: Division was not applied to the fisheye
+  selectively - it was applied to everything, and the rectilinear camera
+  tolerated it (k1 -0.038, tight IQR, hull scale 0.982). Supplying
+  measured coefficients remains per-group and therefore still useful.
+  [H2023] (2026-07-26)
+
+- **Solved intrinsics under the corrected (PD-6) config, and the
+  calibration groups are demonstrably working.** Over 5,050 harvest
+  records (4,394 unique cameras; bow members appear in two laps by the
+  successive-difference design):
+  - cinema, 2,558 records: focal 35mm-eq **16.374** (IQR 16.302-16.476),
+    division k1 **-0.0378** (IQR -0.0415..-0.0336), principal point
+    (-0.0071, -0.0031), skew 0, aspect 1.
+  - port, 2,492 records: focal 35mm-eq **15.499** (IQR 15.435-15.574),
+    division k1 **-0.3875** (IQR -0.3933..-0.3832), principal point
+    (+0.0027, +0.0056), skew 0, aspect 1.
+  Both cameras were given the SAME 16.0 mm prior, and the solve
+  separated them by 5.6% with IQRs of only about +/-0.5%. Because the
+  WCA JPGs are EXIF-identical, the XMP calibration groups (3 cinema /
+  2 port) are the only mechanism that could have separated them - so
+  this is independent confirmation that the sidecar grouping works, not
+  just that it is written. The order-of-magnitude k1 gap is the fisheye
+  declaring itself. Discovered by parsing `xcr:` attributes from the
+  PD-6 harvest XMPs. NOTE the exports also carry
+  `xcr:CalibrationGroup="-1"`/`DistortionGroup="-1"` alongside
+  `Camera:CalibrationGroup="3"`; the -1 is an export artifact, not a
+  lost grouping. [H2023] (2026-07-26)
