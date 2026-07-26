@@ -8,8 +8,27 @@ The hull model is driven by a Python process owned by the Claude session.
 **A session restart kills that driver.** The detached RealityScan instance
 may keep solving, but nothing will save, export or harvest it, so the run
 is lost — the same trap PD-6 hit on 2026-07-25. Wait for
-`merged_pd6\hull_retry2.log` to print `HULL RETRY 2 success=...`, then
+`merged_pd6\hull_retry3.log` to print `HULL RETRY 3 success=...`, then
 restart freely.
+
+**ATTEMPT 4 (retry3), launched 2026-07-26 ~11:20 with the cache on E:.**
+The first three failed on DISK - not memory, not `closeHoles`. RealityScan's
+cache (`rccache`) is placed by DRIVE of the path it is given, is rebuilt
+every run, is auto-cleared on exit, and a single hull model needs >197 GB of
+it. Because the project is addressed through the `D:
+a156_h2023_fresh`
+junction, RealityScan kept caching to D: even after the bytes moved to F: -
+the junction defeated the move. Now pinned explicitly:
+
+```bash
+RS_CACHE_DIR=E:scache    # E: has 7,393 GB free
+```
+
+`startRealityScan.bat` honours `RS_CACHE_DIR` (opt-in; unset = RealityScan
+default) and the resource trace now carries a `cache_free_gb` column,
+because the earlier `disk_free_gb` column watched the PROJECT drive and read
+773.9 GB free while the CACHE drive hit zero. Verified at boot: log says
+`Cache location: E:scache`, E: is filling, D: steady at 1,089.5 GB.
 
 State when this was written: step **[1/8] Generating high model, 65%**,
 ~67 min left on that step alone, then steps [2/8]–[8/8] including texture
