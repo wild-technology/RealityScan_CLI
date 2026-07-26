@@ -997,14 +997,23 @@ frozen as the NA167 raw log; all new findings go HERE.
   rather than a rejected operation. Step [5/8] on the 3,738-camera hull
   is the largest mesh in the deliverable. `merge_zones` recorded
   `success: false` for `pd6_zone_1_c0` and correctly carried on to the
-  next component, so bow and torpedo were unaffected. PRIME SUSPECT is
-  resource contention, not the recipe: the H2024 preprocessing chain
-  (CLAHE at 12 workers, then a 9,835-file zone copy) ran CONCURRENTLY
-  with the hull model for the whole window. Consistent with the recorded
-  near-OOM behavior, except this time it crashed rather than crawled.
-  Retry plan follows one-variable discipline: re-run the hull model with
-  NOTHING else running before touching the owner's recipe. [H2023]
-  (2026-07-26)
+  next component, so bow and torpedo were unaffected. The crash itself
+  is ESTABLISHED; its attribution is not - see the SUPERSEDED clause
+  next. [H2023] (2026-07-26)
+  - **SUPERSEDED (same night, by timeline evidence): "the crash was
+    caused by contention from the H2024 CLAHE + zone copy."** The claim
+    was that CLAHE at 12 workers and a 9,835-file copy ran concurrently
+    with the hull "for the whole window". File mtimes refute it: CLAHE
+    output spans 22:30:42-22:33:51 (THREE minutes) and the zone copy
+    02:43:57-02:45:15 (78 seconds), while the crash was at 01:47:43 -
+    neither was running. The only concurrent load was the batcher's
+    zone-computation phase, a single Python process. Lesson: "was
+    something else running?" is answerable from mtimes and should be
+    checked before it is asserted as a prime suspect; the near-OOM
+    precedent made a memory story feel plausible without evidence.
+    Corrected reading: the crash is most likely INTRINSIC to
+    `closeHoles`/`cleanModel` at this mesh size, so a clean-box retry is
+    a cheap discriminator rather than an expected fix. (2026-07-26)
 
 - **H2024 prep completed clean end to end.** Georeference 8,197/8,197
   (100% acceptance, all exact matches, zone 4Q), CLAHE 2.0/8x8 on
@@ -1015,3 +1024,98 @@ frozen as the NA167 raw log; all new findings go HERE.
   verified by count). Reaching this took four attempts, each blocked by
   a separate real defect - see the four fixes committed 2026-07-25
   evening. [H2024] (2026-07-26)
+
+- **The image batcher spends HOURS in zone computation and seconds
+  copying.** On 8,197 H2024 images the run georeferenced in ~1 min and
+  CLAHE'd in 3 min, then sat in the batcher's zone-analysis phase from
+  ~22:34 to 02:43 - roughly **4 h 10 min** - before writing all five
+  zones in **78 seconds** (02:43:57-02:45:15). So >99% of the batch
+  stage's wall clock is analysis, not I/O, on a dataset of only 8k
+  points. Discovered while reconstructing the hull-crash timeline from
+  file mtimes. Not yet root-caused; the KDE/overlap search is the
+  obvious place to look for an O(N^2) or repeated-rebuild path. Matters
+  for scheduling (this phase, not the copy, is what shares the box with
+  a GPU job) and for the 19k-image datasets ahead. [H2024] (2026-07-26)
+
+- **Zone copies happen only AFTER the accept gate, as designed** - the
+  batcher prints its per-zone table, asks `Accept these batches?
+  (a)ccept, (r)eject and set new params:`, and copies only once
+  accepted. Under `RS_NO_INTERACTIVE` it logs `Non-interactive run:
+  batches auto-accepted` and proceeds. Confirmed in the H2024 log plus
+  mtimes showing every zone file written after that line. Worth keeping
+  in mind: unattended runs therefore accept whatever zoning the KDE
+  produced, with no human look at the table. [H2024] (2026-07-26)
+
+- **CLAHE 2.0/8x8 visually verified on H2024 output, with its cost
+  visible too.** Eight random frames compared against the pipeline's
+  actual `preprocessed_images` artifacts (read from disk, not
+  re-applied): hull plating goes from flat grey to legible painted
+  characters and rivet lines (`C231C4652`), and encrustation texture
+  emerges from near-uniform murk (`C231C5220`, `C231C2970`) - i.e. real
+  local structure for feature detection. Cost: particulate is amplified
+  with the signal, invisible marine snow becomes distinct speckle, and
+  water-column haze lifts with it; `C231C3153` is a near-featureless
+  frame that ends up merely brighter and noisier. Consistent with the
+  staff caution about detectors manufacturing noise points on turbid
+  imagery, and it sharpens Q-05 rather than settling it. NOTE the
+  current pipeline order (Georeference -> Preprocess -> Batch -> Align)
+  means CLAHE'd imagery is what gets BOTH aligned and textured;
+  RealityScan Image Layers (`.geometry`/`.texture`) is the mechanism if
+  geometry should come from originals and appearance from enhanced
+  images. [H2024] (2026-07-26)
+
+- **H2024 imagery spans 2023-11-04 ~20:26 to 2023-11-05 ~01:28**, not
+  the 20:26-22:24 first stated - that figure came from sorting
+  filenames rather than timestamps, and the two camera prefixes
+  interleave in time. Well inside the nav window (17:27 11-04 to
+  02:03 11-05), which the 100%-exact georeference match confirms
+  independently. Lesson: for two-camera filename families, name order
+  is not time order. [H2024] (2026-07-26)
+
+- **DEFECT (fixed): `GenerateModel.bat` used FIXED model names while
+  being run once per component against ONE shared project.** Every
+  `-renameSelectedModel` wrote a constant name, so from the second
+  component onward the scene held duplicates - and step [8/8] resolves
+  its operands by name (`-reprojectTexture "HighPoly_Textured"
+  "Simplified"`), so the bow's reprojection could map the HULL's texture
+  onto the bow's mesh with a clean exit status. The intermediate-cleanup
+  loop also deletes by name and could remove another component's models.
+  All 19 references now carry a `%model_tag%` prefix taken from the
+  component. Discovered by reading the workflow before the second
+  component started, not by a failure; the run was stopped mid-hull and
+  restarted rather than risk a silently wrong deliverable. [H2023]
+  (2026-07-25)
+
+- **`-selectComponent` DOES resolve manifest component names in an
+  assembled project.** The standing worry (manifest names vs in-scene
+  names never matching, because zone scenes were saved pre-rename) does
+  NOT apply to the assembly: components are imported from `.rsalign`
+  files that were renamed BEFORE export, so `-selectComponent
+  "pd6_zone_1_c0"` and `"pd6_zone_1_c1"` both selected and modelled
+  correctly. Discovered by running the real `--auto_model` path and
+  reading the per-component workflow logs. Scope note: this says nothing
+  about zone scenes, where the pre-rename save still applies. [H2023]
+  (2026-07-26)
+
+- **Three unattended-run defects in the orchestrator, all fixed.**
+  Found by driving the documented `RS_MODULES` / `RS_NO_INTERACTIVE`
+  entry point on a new dataset; each cost one failed attempt:
+  - `main.py --help` crashed with `ValueError: unsupported format
+    character '>'`. argparse %-expands help text at `print_help()` time
+    and `batch_xmp_priors`' description contains `96.3% -> 89.6%`. This
+    killed `--help` AND every argparse error path. Escaped at the
+    argparse layer, so descriptions stay readable for prompts and no
+    future percent can reintroduce it.
+  - The inter-module `input("Press enter to continue...")` was
+    unguarded, so an unattended chain died with `EOFError` BETWEEN two
+    successful modules - georeference finished 8,197/8,197 and the
+    pipeline stopped there. EOF now means continue. The codebase already
+    guarded its other `input()` sites; this one was missed.
+  - `preprocess_images.validate_parameters` raised `TypeError:
+    _path_isdir: path should be string... not NoneType` when `-p_i` was
+    absent, instead of naming the missing flag. Now reports which flag
+    to pass.
+  LESSON: the non-TTY path had not been exercised end to end on a fresh
+  dataset since the overhaul, and all three failures were in the
+  scaffolding around working modules, not the modules themselves.
+  [H2024] (2026-07-25)
