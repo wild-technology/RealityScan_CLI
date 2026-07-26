@@ -1011,9 +1011,15 @@ frozen as the NA167 raw log; all new findings go HERE.
     something else running?" is answerable from mtimes and should be
     checked before it is asserted as a prime suspect; the near-OOM
     precedent made a memory story feel plausible without evidence.
-    Corrected reading: the crash is most likely INTRINSIC to
+    Corrected reading at the time: the crash is most likely INTRINSIC to
     `closeHoles`/`cleanModel` at this mesh size, so a clean-box retry is
     a cheap discriminator rather than an expected fix. (2026-07-26)
+  - **SUPERSEDED IN TURN (2026-07-26, by the retry's exit code): the cause
+    was neither contention NOR intrinsic memory - it was the DISK.** The
+    clean-box retry reached step [6/8] and failed with
+    `0x80070070 ERROR_DISK_FULL` on a `D:` drive at 0 bytes free. See the
+    ROOT CAUSE entry below. Both memory stories are retired as causes; the
+    memory readings were real but incidental.
 
 - **H2024 prep completed clean end to end.** Georeference 8,197/8,197
   (100% acceptance, all exact matches, zone 4Q), CLAHE 2.0/8x8 on
@@ -1191,8 +1197,11 @@ frozen as the NA167 raw log; all new findings go HERE.
   1. `-update` rotated the bow to satisfy MIS-CONVERTED orientation
      priors. The Euler order / camera-mount convention for imported YPR
      is explicitly UNVERIFIED (the planned one-minute GUI check was
-     never done) and mount offsets are independently known wrong (Port
-     lever arm off by ~1 m). A 656-camera component spanning 9.3 m on a
+     never done). NOTE: an earlier version of this candidate also cited
+     "Port lever arm off by ~1 m" as independent support - that claim was
+     RETRACTED on 2026-07-25 (measured inside the 0.175-scale hull) and
+     must not be used as evidence here; the validated lever arms are the
+     code's originals. A 656-camera component spanning 9.3 m on a
      near-1D track is cheap to rotate about that track - the fit trades
      a small position penalty for the orientation term - whereas the
      hull (3,738 cams over 17.9 m) is far stiffer. Predicts a clean
@@ -1214,8 +1223,8 @@ frozen as the NA167 raw log; all new findings go HERE.
   ALIGNMENT priors, not merely in the post-hoc georeferencing fit - that
   is where they would anchor absolute attitude AND stiffen a solve
   against exactly the drift measured in candidate 2. Caveat: they must be
-  imported at the validated 15 deg accuracy, not the 3/5/3 currently in
-  the zone logs (tight orientation at dense scale is already suspect
+  imported at 15 deg accuracy - PROVISIONAL, not validated, see the
+  contamination flag - rather than the 3/5/3 in the zone logs (tight orientation at dense scale is already suspect
   from PD-4), and the convention must be verified first - importing
   wrong-convention YPR is itself a mechanism for this defect. [H2023]
   (2026-07-26)
@@ -1267,9 +1276,34 @@ frozen as the NA167 raw log; all new findings go HERE.
      this parameterisation. Small pitch noise then produces large
      attitude swings - a plausible contributor to a component that holds
      mostly Port frames.
-  SCOPE unchanged: harmless to every align so far (production aligns ran
-  POSITION-ONLY); orientation is consumed only by the assembly's
-  `-update`.
+  SCOPE — **CORRECTED, see the scope-correction entry below.** I first
+  wrote "harmless to every align so far (production aligns ran
+  POSITION-ONLY)". That is FALSE: the production params point at the
+  13-column format with `ifUseOriAcc=true`, so the 2026-07-24 fresh-run
+  aligns DID import orientation at 3/5/3. Only PD-6's cell was
+  position-only. Orientation is consumed by BOTH the fresh-run aligns and
+  the assembly's `-update`.
+
+- **DISPUTED — THIS CHANGE RESTS ON RETRACTED EVIDENCE AND SHOULD PROBABLY
+  BE REVERTED (flagged 2026-07-26 by a contradiction audit).** The entry
+  below cites "|P-C| separation 0.22 m, vertical component 0.00 m, P ~0.17 m
+  ahead" as corroboration. Those figures were **already retracted on
+  2026-07-25**: they were measured inside hull c0, the **0.175-scale**
+  component, so both the separation and its vertical part are meaningless
+  (0.22 x 5.7 ~= 1.25 m, which is what the sound solves actually report).
+  The RETRACTION entry above validated the ORIGINAL code on two
+  INDEPENDENT metrically-sound solves - bow c2 and zone_2 from PD-2b -
+  finding **C above P by +1.12 m and +1.03 m** against the code's implied
+  +1.00 m, separation 1.21/1.11 m, and concluded "the code's 1.0 m stands,
+  corroborated twice".
+  So the owner's 2026-07-26 instruction ("roughly the same distance
+  forward, the Z in my notes may be wrong") conflicts with the measured
+  evidence, and I implemented it while quoting numbers the log had already
+  thrown out. CONSEQUENCE: H2024's flight log and its re-batched zones are
+  currently built with Port 1 m too HIGH and 0.17 m too far forward. H2023
+  is unaffected (it was not re-georeferenced). AWAITING OWNER DECISION;
+  if reverted, H2024 needs its flight log and zones regenerated again.
+  [H2023] (2026-07-26)
 
 - **Rig lever arms corrected: Port and Cinema are level, not 1 m apart in
   Z.** Owner (2026-07-26): both cameras are roughly the same distance
@@ -1320,11 +1354,16 @@ frozen as the NA167 raw log; all new findings go HERE.
     unreliable because position-only georeferencing leaves absolute
     attitude weakly constrained; any re-derivation must pin the import
     settings FIRST or it will inherit the same ambiguity.
-  NOT affected: everything position-only, which is every production align
-  including the fresh run and PD-6, plus all scale-oracle results and the
-  rig-INTERNAL geometry (relative axis angle, relative camera separation)
-  that the lever-arm correction rests on - those are observable regardless
-  of absolute attitude.
+  NOT affected: **PD-6 only** among the production aligns (its cell params
+  point at a 7-column position-only format), plus all scale-oracle results
+  and the rig-INTERNAL geometry (relative axis angle, relative camera
+  separation) that the lever-arm correction rests on - those are observable
+  regardless of absolute attitude.
+  **AFFECTED, corrected 2026-07-26: the 2026-07-24 FRESH RUN.** An earlier
+  version of this line claimed the fresh run was position-only. It was not -
+  production `FlightLogParams.xml` selects the 13-column YPR format with
+  `ifUseOriAcc=true`, so zone_1/2/3 imported orientation at 3/5/3 under the
+  same unpinned Euler order. See the scope-correction entry below.
   REQUIRED BEFORE ANY FURTHER ORIENTATION CELL: pin Euler order and camera
   mount explicitly in `FlightLogParams.xml`, then re-run one cheap sparse
   cell (Z3) to see whether the PD-0b gain survives a pinned import.
@@ -1417,16 +1456,19 @@ frozen as the NA167 raw log; all new findings go HERE.
   after which the run oscillated at 87-105 GB committed with 7-32 GB free
   for the next half hour. RealityScan's working set peaked at 62.5 GB.
   Confirmed still doing real work rather than hanging: 9.1 cores busy and
-  33% GPU measured over a 20 s window. So the FIRST hull attempt's crash
-  at `closeHoles`/`cleanModel` is best explained by memory exhaustion
-  INTRINSIC to this component's mesh at High detail - not by the
-  concurrent-load story that was already retracted. The bow (656 cams)
-  and torpedo (102) completed comfortably; the hull is 5.7x the bow.
-  IMPLICATION for the recipe: at this camera count, High detail plus
-  `closeHoles` does not fit in 93.6 GB of RAM without paging, so the
-  levers are model detail, harder pre-`closeHoles` culling, or a
-  deliberately larger pagefile. All three are owner decisions. [H2023]
-  (2026-07-26)
+  33% GPU measured over a 20 s window. The bow (656 cams) and torpedo (102)
+  completed comfortably; the hull is 5.7x the bow.
+  **These figures stand as a MEMORY PROFILE and NOT as the cause of any
+  failure.** An earlier version of this entry read them as "memory
+  exhaustion INTRINSIC to this component's mesh" and inferred that High
+  detail plus `closeHoles` "does not fit in 93.6 GB without paging". The
+  retry then failed on `ERROR_DISK_FULL`, not memory, so that inference is
+  withdrawn - see the ROOT CAUSE entry below. What survives: the hull does
+  page heavily at High detail, which makes it SLOW (step [1/8] alone ran
+  far longer than the bow's entire recipe), and the pagefile is only
+  6.9 GB. Whether the recipe needs a lever for the hull is therefore still
+  open, but it is a THROUGHPUT question, not the explanation for the two
+  crashes. [H2023] (2026-07-26)
 
 - **ROOT CAUSE of the hull model failures: the DISK, not memory.** The
   retry ran 143.5 min, got past `closeHoles` (step [5/8], which the first
