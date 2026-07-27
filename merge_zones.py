@@ -214,6 +214,40 @@ def apply_scale_gate(targets: list[dict], input_scales: dict,
     return kept, blocked
 
 
+
+def neighbour_subset(current: list[dict], target_key: str,
+                     logger) -> list[dict]:
+    """`target_key` plus every component whose bbox borders it.
+
+    Uses the same find_borders margin as clustering, so "neighbour" means exactly
+    what it means one level up. Note the margin is applied to BOTH bboxes, so the
+    default 10 m tolerates a 20 m gap. A component with a null bbox borders
+    everything by construction, which is the conservative direction.
+    """
+    borders = component_analysis.find_borders(current)
+    neighbours = set()
+    for entry in borders:
+        a, b = entry['pair']
+        if a == target_key:
+            neighbours.add(b)
+        elif b == target_key:
+            neighbours.add(a)
+    keys = {target_key} | neighbours
+    return [m for m in current
+            if component_analysis.component_key(m) in keys]
+
+
+def growth_order(current: list[dict]) -> list[str]:
+    """Component keys largest-first - the growth order grow_zone also uses.
+
+    Largest first because a big component is the most likely anchor: absorbing a
+    fragment into it keeps membership attribution simple, and it front-loads the
+    attempts most likely to pay off.
+    """
+    return [component_analysis.component_key(m)
+            for m in sorted(current, key=lambda m: -(m.get('camera_count') or 0))]
+
+
 def partition_clusters(manifests: list[dict], logger) -> tuple[list[list[dict]], dict]:
     """Twin-drop, then connected components of the border graph.
 
@@ -458,7 +492,8 @@ def peel_counts_from(out_dir: str) -> list[int]:
 
 def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                   output_dir: str, images_root: str, ladder: list[dict],
-                  min_size: int, logs_dir: str, logger) -> dict:
+                  min_size: int, logs_dir: str, logger,
+                  merge_scope: str = 'neighbour') -> dict:
     """Run the escalation ladder on one border-connected cluster until
     convergence. Returns the cluster record for the report, including the
     final component list (paths + manifests) for the assembly stage."""
@@ -495,93 +530,148 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
         only_basenames={b.lower() for b in members_union}, tag=tag)
 
     attempt_no = 0
-    rung = 0
-    while rung < len(ladder):
-        step = ladder[rung]
-        attempt_no += 1
-        adir = os.path.join(cdir, f'attempt_{attempt_no}_{step["label"]}')
-        os.makedirs(adir, exist_ok=True)
-        complist = os.path.join(adir, 'cluster.complist')
-        with open(complist, 'w', encoding='utf-8', newline='\r\n') as f:
-            f.write('\n'.join(m['rsalign'] for m in current) + '\n')
-
-        logger.info('--- %s attempt %d: %s over %d components ---',
-                    tag, attempt_no, step['label'], len(current))
-        t0 = time.time()
-        result = run_merge_workflow(
-            cli, complist, adir, f'{tag}_m', step['mode'], step['settings'],
-            log_path, params_path, images_root, logs_dir, harvest=True,
-            logger=logger)
-        snapshot_rs_log(os.path.join(adir, 'rslog.txt'), logger)
-        registered, _r, _d = camera_registry.sanitize_and_census(images_root)
-
-        sizes = peel_counts_from(adir)
-        attributed, confidence = attribute_result(current, sizes, logger)
-        adopted = [r for r in attributed if r['inputs']]
-        residuals = [r for r in attributed if r['residual']]
-        input_cams = sum(m['camera_count'] for m in current)
-        adopted_cams = sum(r['camera_count'] for r in adopted)
-        lost = input_cams - adopted_cams if adopted else None
-
-        entry = {'attempt': attempt_no, 'label': step['label'],
-                 'mode': step['mode'], 'workflow_success': result.success,
-                 'errors': result.errors, 'census_leftover': registered,
-                 'peel_sizes': sizes, 'attribution': confidence,
-                 'input_count': len(current), 'adopted_count': len(adopted),
-                 'residual_count': len(residuals),
-                 'camera_delta': (adopted_cams - input_cams) if adopted else None,
-                 'duration_s': round(time.time() - t0, 1)}
-        record['attempts'].append(entry)
-
-        fused = any(len(r['inputs']) >= 2 for r in adopted)
-        accept = (result.success and adopted and fused
-                  and confidence == 'exact'
-                  and lost is not None and lost <= 0)
-        if result.success and adopted and lost and lost > 0:
-            logger.warning('%s attempt %d SHRANK by %d cameras - rejected '
-                           '(never-shrink invariant)', tag, attempt_no, lost)
-            entry['rejected'] = 'shrink'
-        if result.success and fused and confidence != 'exact':
-            logger.warning('%s attempt %d fused but attribution is %s - '
-                           'rejected (membership would be untrustworthy)',
-                           tag, attempt_no, confidence)
-            entry['rejected'] = 'ambiguous_attribution'
-        if accept:
-            # Adopt the exported fused/unfused components (peel_index ->
-            # <tag>_m_c<K>.rsalign); residual source copies stay on disk
-            # but never travel forward.
-            new_current = []
-            for res in adopted:
-                rsalign = os.path.join(
-                    adir, f'{tag}_m_c{res["peel_index"]}.rsalign')
-                if not os.path.isfile(rsalign):
-                    logger.warning('expected export missing: %s', rsalign)
-                    continue
-                comp_name = f'{tag}_m_c{res["peel_index"]}'
-                manifest = component_manifest.build_manifest(
-                    zone=tag, component=comp_name, rsalign_path=rsalign,
-                    images=res['members'] or [],
-                    bbox_utm=component_manifest.bbox_from_flight_log(
-                        log_path, res['members'] or []),
-                    event='cluster_merge_attribution')
-                manifest['camera_count'] = res['camera_count']
-                manifest['attribution'] = {'inputs': res['inputs'],
-                                           'confidence': confidence}
-                component_manifest.write_manifest(manifest)
-                new_current.append(manifest)
-            if len(new_current) == len(adopted):
-                current = new_current
-                logger.info('%s: fused to %d component(s) - ladder restarts',
-                            tag, len(current))
-                entry['accepted'] = True
-                if len(current) == 1:
-                    break
-                rung = 0
+    # Growth targets, largest first (the order grow_zone also uses: a big
+    # component is the best anchor to absorb a fragment into).
+    #
+    # In 'neighbour' scope each attempt is scoped to ONE target plus the
+    # components whose bbox borders it (find_borders expands BOTH boxes by
+    # DEFAULT_BORDER_MARGIN_M, so the effective gap tolerance is 20 m) - exactly
+    # what find_borders' docstring says merging should be attempted between, and
+    # which the pre-2026-07-27 code computed and then threw away. Observed cost
+    # of throwing it away: H2024 cluster_1 put 12 components in one scene, so a
+    # failure named no pair; cluster_0 ran all three rungs with a 0.236-scale
+    # component in the scene every time, so we never learned whether its two
+    # sound siblings would have fused alone.
+    #
+    # 'cluster' scope keeps the old all-at-once behaviour so the two can be
+    # COMPARED rather than assumed.
+    exhausted: set[str] = set()
+    while True:
+        if merge_scope == 'neighbour':
+            target_key = next((k for k in growth_order(current)
+                               if k not in exhausted), None)
+            if target_key is None:
+                break
+            subset = neighbour_subset(current, target_key, logger)
+            if len(subset) < 2:
+                logger.info('%s: %s borders nothing else - no merge attempted',
+                            tag, target_key)
+                exhausted.add(target_key)
                 continue
-            logger.warning('%s: exports incomplete (%d of %d) - treating '
-                           'attempt as failed', tag, len(new_current),
-                           len(adopted))
-        rung += 1
+            logger.info('%s: growing %s against %d bordering neighbour(s)',
+                        tag, target_key, len(subset) - 1)
+        else:
+            target_key = None
+            subset = list(current)
+            if len(subset) < 2:
+                break
+
+        rung = 0
+        fused_this_target = False
+        while rung < len(ladder):
+            step = ladder[rung]
+            attempt_no += 1
+            adir = os.path.join(cdir, f'attempt_{attempt_no}_{step["label"]}')
+            os.makedirs(adir, exist_ok=True)
+            complist = os.path.join(adir, 'cluster.complist')
+            with open(complist, 'w', encoding='utf-8', newline='\r\n') as f:
+                f.write('\n'.join(m['rsalign'] for m in subset) + '\n')
+
+            logger.info('--- %s attempt %d: %s over %d components%s ---',
+                        tag, attempt_no, step['label'], len(subset),
+                        f' (target {target_key})' if target_key else '')
+            t0 = time.time()
+            result = run_merge_workflow(
+                cli, complist, adir, f'{tag}_m', step['mode'], step['settings'],
+                log_path, params_path, images_root, logs_dir, harvest=True,
+                logger=logger)
+            snapshot_rs_log(os.path.join(adir, 'rslog.txt'), logger)
+            registered, _r, _d = camera_registry.sanitize_and_census(images_root)
+
+            sizes = peel_counts_from(adir)
+            attributed, confidence = attribute_result(subset, sizes, logger)
+            adopted = [r for r in attributed if r['inputs']]
+            residuals = [r for r in attributed if r['residual']]
+            input_cams = sum(m['camera_count'] for m in subset)
+            adopted_cams = sum(r['camera_count'] for r in adopted)
+            lost = input_cams - adopted_cams if adopted else None
+
+            entry = {'attempt': attempt_no, 'label': step['label'],
+                     'mode': step['mode'], 'workflow_success': result.success,
+                     'errors': result.errors, 'census_leftover': registered,
+                     'peel_sizes': sizes, 'attribution': confidence,
+                     'scope': merge_scope, 'target': target_key,
+                     'input_count': len(subset), 'adopted_count': len(adopted),
+                     'residual_count': len(residuals),
+                     'camera_delta': (adopted_cams - input_cams) if adopted else None,
+                     'duration_s': round(time.time() - t0, 1)}
+            record['attempts'].append(entry)
+
+            fused = any(len(r['inputs']) >= 2 for r in adopted)
+            accept = (result.success and adopted and fused
+                      and confidence == 'exact'
+                      and lost is not None and lost <= 0)
+            if result.success and adopted and lost and lost > 0:
+                logger.warning('%s attempt %d SHRANK by %d cameras - rejected '
+                               '(never-shrink invariant)', tag, attempt_no, lost)
+                entry['rejected'] = 'shrink'
+            if result.success and fused and confidence != 'exact':
+                logger.warning('%s attempt %d fused but attribution is %s - '
+                               'rejected (membership would be untrustworthy)',
+                               tag, attempt_no, confidence)
+                entry['rejected'] = 'ambiguous_attribution'
+            if accept:
+                new_subset = []
+                for res in adopted:
+                    rsalign = os.path.join(
+                        adir, f'{tag}_m_c{res["peel_index"]}.rsalign')
+                    if not os.path.isfile(rsalign):
+                        logger.warning('expected export missing: %s', rsalign)
+                        continue
+                    comp_name = f'{tag}_m_c{res["peel_index"]}'
+                    manifest = component_manifest.build_manifest(
+                        zone=tag, component=comp_name, rsalign_path=rsalign,
+                        images=res['members'] or [],
+                        bbox_utm=component_manifest.bbox_from_flight_log(
+                            log_path, res['members'] or []),
+                        event='cluster_merge_attribution')
+                    manifest['camera_count'] = res['camera_count']
+                    manifest['attribution'] = {'inputs': res['inputs'],
+                                               'confidence': confidence}
+                    component_manifest.write_manifest(manifest)
+                    new_subset.append(manifest)
+                if len(new_subset) == len(adopted):
+                    # Splice the results back IN PLACE of the subset, leaving the
+                    # rest of the cluster untouched. The fused manifest carries a
+                    # freshly computed bbox, so the next round's neighbour
+                    # selection sees the grown extent.
+                    subset_keys = {component_analysis.component_key(m)
+                                   for m in subset}
+                    current = [m for m in current
+                               if component_analysis.component_key(m)
+                               not in subset_keys] + new_subset
+                    entry['accepted'] = True
+                    fused_this_target = True
+                    logger.info('%s: fused %d -> %d; cluster now %d component(s)',
+                                tag, len(subset), len(new_subset), len(current))
+                    break
+                logger.warning('%s: exports incomplete (%d of %d) - treating '
+                               'attempt as failed', tag, len(new_subset),
+                               len(adopted))
+            rung += 1
+
+        if fused_this_target:
+            # Geometry changed, so every previously exhausted target is worth
+            # revisiting - a component that bordered nothing may border the new
+            # fused extent.
+            exhausted.clear()
+            if len(current) < 2:
+                break
+            continue
+        if merge_scope == 'neighbour':
+            exhausted.add(target_key)
+            continue
+        break
 
     record['converged'] = True
     record['final_components'] = [{
@@ -623,6 +713,8 @@ def main() -> int:
                         help='true = run GenerateModel per surviving component >= min_size')
     parser.add_argument('--ladder', default=None,
                         help='merge_first (default) or content_first - see LADDERS')
+    parser.add_argument('--merge_scope', default=None,
+                        help='neighbour (default) = grow one component at a time against only its bbox neighbours; cluster = the old all-at-once behaviour, kept for comparison')
     parser.add_argument('--scale_gate', default=None,
                         help='true (default) = refuse to MODEL a component whose '
                              'metric scale is out of band or unmeasurable')
@@ -661,6 +753,10 @@ def main() -> int:
     auto_model = truthy(ask('auto_model', args.auto_model, 'false'))
     ladder_name = ask('ladder', args.ladder, 'merge_first')
     ladder = LADDERS.get(ladder_name, LADDERS['merge_first'])
+    merge_scope = ask('merge_scope', args.merge_scope, 'neighbour')
+    if merge_scope not in ('neighbour', 'cluster'):
+        logger.error('--merge_scope must be neighbour or cluster, got %r', merge_scope)
+        return 1
     scale_gate = truthy(ask('scale_gate', args.scale_gate, 'true'))
     scale_min = float(ask('scale_min', args.scale_min, scale_oracle.DEFAULT_SCALE_MIN))
     scale_max = float(ask('scale_max', args.scale_max, scale_oracle.DEFAULT_SCALE_MAX))
@@ -721,7 +817,8 @@ def main() -> int:
 
     for i, cluster in enumerate(clusters):
         record = merge_cluster(cli, cluster, i, output_dir, images_root,
-                               ladder, min_size, logs_dir, logger)
+                               ladder, min_size, logs_dir, logger,
+                               merge_scope=merge_scope)
         report['clusters'].append(record)
         flush()
 
