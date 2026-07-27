@@ -1637,3 +1637,131 @@ frozen as the NA167 raw log; all new findings go HERE.
   NOTE zone_4 c2 (1.196) and c4 (1.100) also sit outside a +/-10% band, so
   zone_3 may be the extreme of a spectrum rather than an isolated fault.
   [H2024] (2026-07-26)
+
+## Merge acceptance logic — adversarial review (2026-07-27)
+
+Full report: `F:/_copylogs/merge_logic_review.md` (35 confirmed / 11 refuted,
+9 agents). The owner asked whether the "hull fused on the first rung with fewer
+cameras, then split on later attempts" behaviour is sound. Verdict: the OUTCOME
+was right, the STATED MECHANISM is not what executed.
+
+- **THE NEVER-SHRINK INVARIANT IS DEAD CODE AND NEVER FIRED.** In
+  `merge_zones.py` every adopted entry's `camera_count` equals its matched
+  subset's sum, each input pops exactly once, and `confidence == "exact"`
+  requires the remaining set to be empty — therefore `adopted_cams ==
+  input_cams` identically and `lost == 0` always. `lost > 0` can only arise when
+  attribution is NON-exact, which is already rejected on its own term. The
+  clause is vacuous in both directions: it can never reject, and it cannot see a
+  camera GAIN either — precisely what `sfmForceComponentRematch` and
+  `sfmImagesOverlap:High` exist to produce. On the H2023 hull `adopted` was
+  EMPTY (peel 3,738 or 3,737 matches no subset sum of {3026, 714}), so the
+  attempt died on the `adopted` term and never reached never-shrink. Every
+  earlier statement in this log attributing the hull rejection to never-shrink
+  is WRONG; the real gate was exact subset-sum attribution. [H2023] (2026-07-27)
+
+- **The dominant rejection shape records NO reason.** `entry["rejected"]` is
+  written only when `adopted` is truthy with `lost > 0`, or when `fused` is
+  truthy. The H2023 shape (adopted empty, fused False) sets neither, and
+  `camera_delta` is None — so `merge_report.json` shows `workflow_success: true,
+  attribution: "ambiguous", adopted_count: 0, camera_delta: null` and no
+  rejected key. The 3,740-vs-3,738 deficit appears nowhere in the report. The
+  exports-incomplete downgrade records nothing either, and the "ambiguous" label
+  OVERWRITES "shrink" when both fire. [H2023] (2026-07-27)
+
+- **`fused` is inferred from the same arithmetic that fails on a lossy fusion**,
+  so a fusion is only VISIBLE when its count is an exact input-subset sum. All
+  three H2023 rungs therefore reported "nothing fused" about a merge that
+  demonstrably did fuse. No code path in the driver can currently assert that
+  two components fused. [H2023] (2026-07-27)
+
+- **The 2 (or 3) missing cameras are probably a real solver drop, but are NOT
+  yet distinguishable from a harvest artifact — and the ICP follow-up that
+  seemed to confirm loss is not independent evidence.** For real loss: the
+  deficit VARIES by mechanism (-2 merge, -1/-1 align), and a free re-align is
+  already recorded as dropping 1-2 marginal cameras normally; deterministic
+  bookkeeping would give a constant deficit. Against: the peel harvest is a
+  single PowerShell line doing `Get-ChildItem -Recurse | Move-Item -Force` over
+  the ENTIRE images_root, and Windows PowerShell 5.1 exits 0 on non-terminating
+  pipeline errors — so `if errorlevel 1` cannot see a partial move, and two
+  locked sidecars are a silent -2. Because merged-scene sidecars are ORDINAL
+  (B10), a flat `-Force` move also collapses same-stem sidecars arriving from
+  different folders. The ICP check matched identity by NEAREST POSITION over
+  those same peel poses, so a sidecar lost in the move and a camera dropped by
+  the solver are indistinguishable to it.
+  SETTLES IT WITHOUT RE-RUNNING A MERGE, from artifacts already on disk: read
+  RealityScan's own registered count for the fused component out of the
+  attempt's saved `rslog.txt`, or re-import `cluster_*_m_c0.rsalign` FROM ITS
+  ORIGINAL EXPORT LOCATION (hard rule 7) into a spare instance and census it.
+  3,740 means accounting artifact; 3,738 means real loss. [H2023] (2026-07-27)
+
+- **The peel count is the sole evidence for membership, camera_count AND the
+  invariant, and its instrument is never asserted.** Nothing sanitizes the image
+  tree before an attempt, and `census_leftover` is recorded but never checked
+  (and reads ~0 by construction, since the harvest already moved the sidecars
+  out). An inflation of +N can exactly cancel a real loss of -N, yielding
+  `confidence == "exact"`, `lost == 0`, and a FALSE ACCEPT whose manifest names
+  basenames the component does not contain. [H2023] (2026-07-27)
+
+- **DEFECT IN TONIGHT'S OWN NEIGHBOUR-SCOPING: it re-runs identical subsets and
+  is quadratic. NOT YET APPLIED.** `exhausted.clear()` after a fusion is
+  unconditional, so every previously exhausted target is retried even when its
+  neighbour set did not change; and a symmetric pair costs SIX attempts rather
+  than three, because target A yields subset {A,B} and then target B yields the
+  identical subset. Fix: memoise attempted `frozenset(subset_keys)` and skip
+  repeats; on a fusion drop from `exhausted` only the targets that border the new
+  component. [H2024] (2026-07-27)
+
+- **DEFECT IN TONIGHT'S OWN SCALE GATE: it blocks exactly the components the
+  ladder produced. NOT YET APPLIED.** `final_components` never carries an
+  `inputs` key, so `apply_scale_gate` falls back to the synthetic fused
+  component key, finds no scale record and returns `unmeasured` — which blocks.
+  Any merged component is therefore refused a model regardless of its real
+  scale. Fix: carry the attributed input keys onto `final_components`, or measure
+  the fused component directly. [H2024] (2026-07-27)
+
+- **Two smaller confirmed defects.** (a) A TRUNCATED peel is indistinguishable
+  from a complete one: the reader breaks on the first missing or empty
+  `identity_r<K>` while the workflow creates that directory before knowing a
+  component remains, and both the lap cap and a missing export fall through to
+  `exit /b 0`; `expected_peelend_<inst>.txt` is written and never read. (b) The
+  bbox tie-break the module docstring promises DOES NOT EXIST — the code takes
+  `subsets[0]` and poisons the whole attempt as ambiguous, which with 12
+  components makes subset-sum collisions likely and discards genuine fusions.
+  [H2023] (2026-07-27)
+
+- **`sfmImagesOverlap:High` as its own ladder rung is not defensible** (owner's
+  instinct, corroborated). It only widens candidate-pair search, so it can help
+  only where components share content the matcher skipped. Both observed cases
+  fall outside that: zero-overlap components never fuse under ANY flag
+  [NA167 D1-D3], and the hull DID fuse on every rung, so matching was never the
+  constraint. Replacing rung 3 with ORPHAN INCLUSION is mechanically sound —
+  orphans are the only thing that can CREATE overlap where none exists, and they
+  need FULL image features (component-features and overlaps give an orphan
+  nothing, since it belongs to no component). NOTE `-mergeComponents` never adds
+  images, so orphans require an `-align` rung, and `MergeZoneComponents.bat`
+  currently has NO `-addFolder` at all — the merge scene structurally cannot
+  contain an orphan today. [H2024] (2026-07-27)
+
+- **The border margin is applied to BOTH bboxes**, so
+  `DEFAULT_BORDER_MARGIN_M = 10.0` treats components up to **20 m** apart as
+  bordering. Every description of this as a "10 m-expanded bbox", including
+  several in this log, understates the reach by 2x. Pinned by
+  `testing/test_merge_scope.py`. [H2024] (2026-07-27)
+
+- **H2024 merge, killed at owner request after cluster_0 exhausted all three
+  rungs with no acceptance.** cluster_0 was `zone_2_c0` + `zone_3_c0` +
+  `zone_5_c0` (4,975 cams) — and it contained the 0.236-scale `zone_3_c0` in
+  every attempt, so the run cannot tell us whether the two sound siblings would
+  have fused alone. That is the concrete cost of all-at-once scoping and the
+  reason neighbour scoping was implemented. cluster_1 (12 components, 3,483
+  cams, 7 of them zone_1 fragments) had just begun attempt 1; worst case was
+  3 x 11 = 33 attempts. Partial output preserved at
+  `F:/na156_h2024/merged`; `aligned_components` untouched (16 components).
+  [H2024] (2026-07-27)
+
+- **H2024 zone component counts, for the record** (the merge did NOT create
+  components — all 16 came from the aligns): zone_1 **8** comps / 2,574 cams;
+  zone_2 1 / 1,415; zone_3 1 / 1,192; zone_4 **5** / 1,160; zone_5 1 / 2,368.
+  Twin-drop removed `zone_1_c3` (251 cams, no unique images) leaving 15
+  survivors. The fragmentation was zone_1 and zone_4, NOT zone_5. [H2024]
+  (2026-07-27)

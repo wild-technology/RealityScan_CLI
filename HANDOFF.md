@@ -1,275 +1,206 @@
 # HANDOFF — state of the July 2026 overhaul
 
-## 2026-07-26 OVERNIGHT RUN IN FLIGHT — orientation-prior A/B
+## 2026-07-27 SESSION END — nothing running, read this first
 
-**Running DETACHED, so it survives a Claude session restart** (unlike every
-earlier long run tonight — PD-6 was lost exactly that way). PID recorded in
-`F:/_copylogs/ab_orientation.pid`.
+**Nothing is running.** No RealityScan, no Python drivers, no workflows. All
+RealityScan instances stopped, stale lock files cleared, `rs_settings.json`
+restored to `instance_name: RS1`. Repo clean, 115 tests pass, pushed to origin.
 
-Driver: `testing/ab_orientation_priors.py`. Re-aligns all five H2024 zones with
-a POSITION-ONLY flight log — one variable changed against the production run
-that produced the 0.236 collapse. Non-destructive: writes to
-`F:/na156_h2024/ab_position_only/<zone>/`; `aligned_components/` is untouched.
+### Deliverables as they stand
 
-Check on it:
-
-```bash
-powershell -NoProfile -Command "Get-Process -Id (Get-Content F:/_copylogs/ab_orientation.pid) -EA SilentlyContinue | Select-Object Id,CPU"
-```
-
-```bash
-tail -30 F:/na156_h2024/ab_position_only/ab_driver.log
-```
-
-Results accumulate per zone in `F:/na156_h2024/ab_position_only/ab_results.json`
-(written after each zone, so a partial run is still readable). Resumable: a zone
-already recorded `ok` is skipped on restart.
-
-**Read the answer off `maximal_scale` vs `orientation_on_scale`:**
-
-| zone | orientation-ON (recorded) |
+| Dataset | State |
 |---|---|
-| zone_1 | 1.076 |
-| zone_2 | 1.086 |
-| **zone_3** | **0.236** |
-| zone_4 | 0.983 |
-| zone_5 | 1.023 |
+| **H2023** | **COMPLETE.** 3 components, all modelled and saved |
+| **H2024** | Aligned, held at your inspection gate. Merge attempted and killed |
 
-Decision rule, fixed before the run: zone_3 back in 0.90–1.10 implicates
-orientation priors under the unpinned Euler order — pull them until the GUI diff
-settles the convention. zone_3 still ~0.24 exonerates them and promotes the
-DVL-dominated nav regime (review finding M7) to prime suspect.
+**H2023 project:** `F:/na156_h2023_fresh/merged_pd6/assembly/H2023_PD6_Assembly.rsproj`
+(62.6 GB of project data; also reachable at the `D:` path through the junction).
+Dated copy: `F:/na156_h2023_fresh/RC_projects/NA156_H2023_PD6_merged_20260726.rsproj`.
 
-Abort criteria: E: below 200 GB (the driver aborts itself and records why), a
-zone stalling >45 min, or exit code 3.
+| Component | Cameras | Input scale | Models |
+|---|---|---|---|
+| hull `pd6_zone_1_c0` | 3,738 | 0.982 | `<comp>_HighPoly_Raw`, `_HighPoly_Textured`, `_Simplified_Textured` |
+| bow `pd6_zone_1_c1` | 656 | 1.075 (wide IQR) | same three |
+| torpedo `zone_3_c0` | 102 | 0.990 | same three |
 
-## 2026-07-26 RESTART POINT — read this first
+**H2024:** `F:/na156_h2024/aligned_components/<zone>/` — 16 components from 5
+zones (zone_1 **8**, zone_2 1, zone_3 1, zone_4 **5**, zone_5 1), 8,709 cameras.
+Per-zone projects openable individually. No models, per instruction.
 
-### DO NOT RESTART WHILE THE HULL MODEL IS RUNNING
+### CRITICAL PATH NOTE — `D:/na156_h2023_fresh` IS A JUNCTION
 
-The hull model is driven by a Python process owned by the Claude session.
-**A session restart kills that driver.** The detached RealityScan instance
-may keep solving, but nothing will save, export or harvest it, so the run
-is lost — the same trap PD-6 hit on 2026-07-25. Wait for
-`merged_pd6\hull_retry3.log` to print `HULL RETRY 3 success=...`, then
-restart freely.
-
-**ATTEMPT 4 (retry3), launched 2026-07-26 ~11:20 with the cache on E:.**
-The first three failed on DISK - not memory, not `closeHoles`. RealityScan's
-cache (`rccache`) is placed by DRIVE of the path it is given, is rebuilt
-every run, is auto-cleared on exit, and a single hull model needs >197 GB of
-it. Because the project is addressed through the `D:/na156_h2023_fresh`
-junction, RealityScan kept caching to D: even after the bytes moved to F: -
-the junction defeated the move. Now pinned explicitly:
-
-```bash
-RS_CACHE_DIR=E:\scache    # E: has 7,393 GB free
-```
-
-`startRealityScan.bat` honours `RS_CACHE_DIR` (opt-in; unset = RealityScan
-default) and the resource trace now carries a `cache_free_gb` column,
-because the earlier `disk_free_gb` column watched the PROJECT drive and read
-773.9 GB free while the CACHE drive hit zero. Verified at boot: log says
-`Cache location: E:\scache`, E: is filling, D: steady at 1,089.5 GB.
-
-State when this was written: step **[1/8] Generating high model, 65%**,
-~67 min left on that step alone, then steps [2/8]–[8/8] including texture
-and four simplify passes. Expect several more hours. Live evidence:
-
-- driver log `F:\na156_h2023_fresh\merged_pd6\hull_retry2.log`
-- workflow log `merged_pd6\logs\output_2026-07-26_06-24-47.txt`
-- resource trace `merged_pd6\logs\resources_GenerateModel_2026-07-26_06-24-47.csv`
-  (now carries a `disk_free_gb` column — steady at 773.9 GB)
-
-If the run IS lost, this is the exact relaunch (same call `--auto_model`
-makes; do NOT re-run `merge_zones --auto_model`, which rebuilds the
-assembly and would discard the finished bow and torpedo models):
-
-```bash
-py -3.13 -c "import logging,os,sys,time; logging.basicConfig(level=logging.INFO); sys.path.insert(0,os.getcwd()); import merge_zones as mz; from modules.realityscan_interface.realityscan_cli import RealityScanCLI; mz.set_project_save_env(r'D:/na156_h2023_fresh/batched_images_by_zone','NA156_H2023_PD6'); os.environ['RS_HEADLESS']='0'; cli=RealityScanCLI(logging.getLogger('hull')); r=cli.run_batch_script('GenerateModel.bat',[r'D:/na156_h2023_fresh/merged_pd6/assembly/H2023_PD6_Assembly.rsproj','pd6_zone_1_c0'],r'D:/na156_h2023_fresh/merged_pd6/logs'); print('success',r.success,r.errors)"
-```
-
-### CRITICAL PATH NOTE — `D:\na156_h2023_fresh` IS A JUNCTION
-
-The workspace physically lives at `F:\na156_h2023_fresh` (moved
-2026-07-26, owner-approved). `D:\na156_h2023_fresh` is a directory
-JUNCTION pointing at it, so every absolute path recorded anywhere in this
-repo still resolves. It exists because the saved `.rsproj` stores ABSOLUTE
-image paths that texturing needs, and hard rule 7 says a relocated
-`.rsalign` hangs the instance forever.
-
-**If that junction is ever deleted or the folder recreated as a real
-directory, restore it or every recorded path breaks:**
+The workspace physically lives at `F:/na156_h2023_fresh`. The junction exists
+because the saved `.rsproj` stores ABSOLUTE image paths and hard rule 7 says a
+relocated `.rsalign` hangs the instance forever. If it is ever deleted, restore
+it or every path in this repo breaks:
 
 ```bash
 powershell -NoProfile -Command "New-Item -ItemType Junction -Path 'D:\na156_h2023_fresh' -Target 'F:\na156_h2023_fresh'"
 ```
 
-Free space after the move: **D: 197.3 GB, F: 773.9 GB.**
+Free space: D: ~197 GB, E: ~6.9 TB (RealityScan cache), F: ~774 GB.
 
-### H2023 deliverable status
+### THE ONE UNRESOLVED DELIVERABLE PROBLEM
 
-`D:\na156_h2023_fresh\merged_pd6\assembly\H2023_PD6_Assembly.rsproj`
-— 3 components, 4,496 / 4,600 unique images (97.7%), ~30 GB.
+**H2024 `zone_3_c0`: 1,192 cameras at metric scale 0.236** — a quarter of true
+size, same failure mode as the old H2023 hull (0.175). Measured facts:
 
-| Component | Cameras | Input scale | Model |
-|---|---|---|---|
-| hull `pd6_zone_1_c0` | 3,738 | 0.982 | **IN PROGRESS** |
-| bow `pd6_zone_1_c1` | 656 | 1.075 | DONE (textured, saved) |
-| torpedo `zone_3_c0` | 102 | 0.990 | DONE (textured, saved) |
+- It is a PURE similarity error. Principal axes scale by 0.229 / 0.248 / 0.238
+  and the cloud shape is preserved to a few percent — a faithful 1:4.24 model.
+- Intrinsics are NOT the cause. zone_3 solved cinema 16.408 / port 15.481, within
+  0.2% of the sound zone_5 (16.448 / 15.506).
+- Registration looked healthy (93%), `Success: True`. Only the oracle caught it.
 
-Model names are namespaced per component (`<comp>_HighPoly_Raw`,
-`<comp>_HighPoly_Textured`, `<comp>_Simplified_Textured`) — the fixed
-names used to let one component's texture be reprojected onto another's
-mesh silently.
+**The orientation-prior A/B did NOT explain it.** Position-only re-alignment of
+all five zones: zone_1 0.989 (5 comps vs 8), zone_2 1.014, zone_4 0.904 (3 vs 5),
+but **zone_3 and zone_5 registered NOTHING AT ALL** — zero components, empty
+harvest, "Identity capture finished after 0 component(s)" after 12.7 and 32.4
+minutes. So orientation priors are LOAD-BEARING for registration here, not
+harmful; removing them destroyed two zones including a perfectly sound one. That
+vindicates the owner's "don't throw away validated data" call and leaves zone_3
+unexplained. Results: `F:/na156_h2024/ab_position_only/ab_results.json`.
 
-**Hull failure history — the cause was DISK, not memory.** Attempt 1 died
-at [5/8]; attempt 2 ran 143.5 min and died at [6/8] texture with
-`0x80070070 ERROR_DISK_FULL` on a D: drive at 0 bytes free. Fixed by the
-cleanup + move above. `:fail` quits WITHOUT saving, so neither failure
-touched the project.
+**Next suspect by elimination: the nav.** Review finding M7 — DVL dead-reckoning
+is fused as an ABSOLUTE fix at sigma=3 m, 23x tighter than USBL, giving it 96%
+posterior weight, in a regime never validated because the depth gate previously
+admitted zero DVL fixes. Those positions become the camera priors. **This needs
+an owner decision before anything is changed: fixing it alters filter output, so
+every existing datatable becomes a different regime.**
 
-### H2024 — staged and verified, aligns NOT started
+### THREE CODE REVIEWS LANDED — reports saved outside the repo
 
-Workspace `F:\na156_h2024`, images `F:\H2024\Images\edited` (8,197 jpgs,
-copy verified byte-for-byte; the 146 GB of prior RC projects deliberately
-NOT copied, owner instruction).
+- `F:/_copylogs/review_synthesis.md` — 58 confirmed findings across bugs, QA,
+  security and ergonomics, plus a **9-mechanism configuration inventory** (31 CLI
+  flags, 15 env vars, 3 key conventions in rs_settings.json) and a concrete
+  consolidation design.
+- `F:/_copylogs/review_critique.md` — completeness critique of the above.
+- `F:/_copylogs/defensive_design.md` — 23 defensive-coding defects ranked by how
+  SILENTLY they corrupt a result, plus a validation-layer design.
+- `F:/_copylogs/merge_logic_review.md` — 35 confirmed findings on the merge
+  acceptance path (see FINDINGS 2026-07-27).
 
-- nav re-run from raw: 8.4M OCT + 4.1M VFR records, 1.54M USBL fixes →
-  `D:\NA156\RUMI_processed\H2024\NA156_H2024_final_datatable.csv`
-  (30,953 rows). `kalman_offset` fails on a missing H2024 GeoTIFF —
-  Unreal-only output, irrelevant here.
-- JPEGs: 8,197 fully decoded, **0 corrupt**. One anomaly:
-  `C231C2370_20231104202628_edt.jpg` is 3846x2163 while the other 8,196
-  are 4244x2827, so it forms its own intrinsics group.
-- georeference **8,197/8,197 at 100%**, all exact timestamp matches, zone
-  4Q, orientation priors at **15°**, lever arms corrected.
-- CLAHE 2.0/8x8: 8,197 processed, 0 failed.
-- 5 zones: 2,983 / 2,625 / 1,279 / 1,413 / 1,534 = **9,834 jpgs with 1:1
-  calibration sidecars**, per-zone flight logs, `batch_inputs.json`
-  fingerprint present.
+### APPLIED AND COMMITTED THIS SESSION
 
-**H2024 ALIGNS ARE DONE (2026-07-26).** All five zones aligned on instance
-RS2 while the hull modelled on RS1 — 8,709 cameras, 82–93% per zone.
-Components in `F:/na156_h2024/aligned_components/<zone>/`.
+Tests went 44 -> 115. In dependency order:
 
-**WARNING — the command previously written here was WRONG.** It said
-`RS_MODULES="RealityScan Alignment"`. That makes `rs_input_image_dir`
-PRESENT (it is only suppressed when Batch Directory is in the chain), so
-the per-zone loop over `batched_images_by_zone` is unreachable: the run
-either exits 1 for a missing `-r_i`, or aligns all 9,834 images of five
-zones as ONE scene. What actually worked is ONE INVOCATION PER ZONE:
+1. **`main.py --help` crashed** on a literal `%` in a parameter description
+   (argparse %-expansion). Escaped at the argparse layer.
+2. **Unattended runs died between modules** on `input("Press enter...")`.
+   EOF now means continue.
+3. **`main.py` exited 0 when a module REFUSED to run** — bare `return` where the
+   module-failure branch used `sys.exit(1)`. Verified exit 1 on the real case.
+4. **Unset required params raised `TypeError` from `os.path.isdir`** — guarded
+   once in `RSModule.validate_parameters`, covering all six gated params.
+5. **`GenerateModel.bat` used FIXED model names** across per-component runs, so
+   step [8/8] could reproject one component's texture onto another's mesh
+   silently. All 19 references namespaced by component.
+6. **Batcher reused zone folders built from different inputs** — 12,679 images on
+   disk against 9,834 reported, a blend of two zonings, about to be aligned. Now
+   fingerprinted (`batch_inputs.json`) including the IMAGE SOURCE, and failing
+   closed on a missing/corrupt/in-progress marker.
+7. **`plt.show()` blocked unattended runs** — gated on `stdin.isatty()`.
+8. **Resource trace added** to every RealityScan workflow: CPU, RAM, commit
+   charge, project disk AND cache disk, every 30 s, flushed per sample.
+9. **Scale oracle promoted to a real gate** — moved to `modules/scale_oracle.py`
+   (shim left at the old path), measured per component BEFORE any GPU work,
+   recorded in the report and EVALUATION_READY, and blocking `--auto_model` for
+   anything failing or unmeasurable.
+10. **Rig geometry unified** — one `MOUNTS` table keyed by FILENAME FAMILY via
+    `camera_registry.family()`, imported by both the module and `geoall.py`.
+    Fixed: cruise-digit hardcoding (next cruise got a zero lever arm at 10 deg
+    claimed confidence), `geoall` having no WCA table at all while docs call it
+    canonical, and its 3 deg orientation accuracy vs the module's 15.
+11. **ROVDataConcat failure propagation** — a FAILED module can no longer exit 0.
+    Verified against the real `kalman_offset` failure.
+12. **Neighbour-scoped merge attempts** — `--merge_scope neighbour` (default),
+    with `cluster` retained for comparison.
 
-```bash
-for z in zone_1 zone_2 zone_3 zone_4 zone_5; do
-  RS_MODULES="RealityScan Alignment" RS_NO_INTERACTIVE=1 RS_CACHE_DIR="E:\rscache"   py -3.13 main.py -o F:/na156_h2024 -c true     -r_i "F:/na156_h2024/batched_images_by_zone/$z"     -r_f "F:/na156_h2024/batched_images_by_zone/$z/flight_log_4Q_UTM.txt"     -r_p NA156_H2024 -r_m false
-done
-```
+### LOOSE ENDS, RANKED
 
-Same `__align_zone` code path and same output layout as the batched branch.
-Fixing the branch to decide from the VALUE rather than the parameter's
-presence is review finding M3.
+1. **Two defects in this session's own work, NOT applied** (FINDINGS
+   2026-07-27): the neighbour-scoping re-runs identical subsets and is quadratic
+   (a symmetric pair costs 6 attempts, `exhausted.clear()` is unconditional); and
+   the scale gate blocks EVERY merged component because `final_components` carries
+   no `inputs` key. Fix both before the next merge run.
+2. **The staged `.bat` work** — could not be applied while a merge was executing
+   (cmd reads batch files by byte offset). Two changes, one edit:
+   - **orphan rung**: replace `sfmImagesOverlap:High` with orphan inclusion.
+     `MergeZoneComponents.bat` has NO `-addFolder`, so the merge scene
+     structurally cannot contain an orphan today. Orphans need FULL image
+     features and an `-align` rung (`-mergeComponents` never adds images).
+   - **pin the feature-source mode** (`setFeatureSource 0|1|2`) for components —
+     currently never set, so it inherits an unknown default.
+   Re-verify CRLF and re-run the marker-hygiene check after any `.bat` edit.
+3. **Never-shrink is dead code** — delete it, or move a signed tolerance into
+   `attribute_result`. Note a bounded-loss flag is INERT without that, because a
+   lossy fusion cannot be attributed at all.
+4. **Settle the 2 missing cameras from artifacts already on disk** — read
+   RealityScan's own count from the attempt's `rslog.txt`, or re-import
+   `cluster_*_m_c0.rsalign` from its ORIGINAL location and census it. 3,740 means
+   accounting artifact, 3,738 means real loss.
+5. **Pin the flight-log Euler order and Camera mount.** `ifKGrp=2` and
+   `ifKmode=0x0` are the only plausible carriers and neither string exists in any
+   installed file. **Needs the owner's GUI save-and-diff**: open the
+   trajectory-import dialog on the 13-column format, save params at defaults, then
+   once more after changing ONLY *Euler angles order (YPR)*, then once more after
+   changing ONLY *Camera mount*. Three XMLs plus the chosen option names.
+6. **Orphans are never captured in the merge path.** `orphan_images()` exists and
+   only `grow_zone.py` calls it. For H2023, 104 images are unaccounted and
+   unnamed. Cheap first step: report them in EVALUATION_READY.
+7. **M7 (DVL as absolute fix)** — owner decision, see above.
+8. **Configuration consolidation** — the largest remaining piece and the one the
+   "keep variables in one spot" ask actually points at. Design is in
+   `review_synthesis.md` section 2.
+9. **Finish the Kalman heading review.** Established: no declination is applied
+   anywhere, `kalman_yaw_deg` comes from an Octans gyrocompass, so it is TRUE
+   north and `decl = 0` is correct — the repo's `HEADING_MAG` name is a misnomer.
+   Still to do: confirm the Octans true-vs-magnetic claim from a primary source,
+   and review `filter_heading`'s circular wrap handling.
+10. **The batcher's ~3 h zone computation is real.** I wrongly retracted this
+    mid-session; a third run with plots gated off still spent 2 h 53 min between
+    the two figure saves. The 28.9 min run is an unexplained outlier. Worth
+    hunting before the 19k-image datasets.
+11. **zone_1's Port intrinsics solved wrong** — 11.929 mm with k1 +0.0055,
+    versus 15.48-15.52 and k1 ~ -0.385 everywhere else. Classic focal-vs-radial
+    degeneracy on a long straight run (owner's own observation). Testable: pin
+    Port's focal or supply measured coefficients under Division on that one zone
+    and see whether the 8-way fragmentation collapses.
 
-### SCALE GATE FAILED ON zone_3 — do not build on it
-
-`testing/scale_oracle.py` over all 16 components: zone_1 (8 comps)
-0.937–1.119, zone_2 1.086, **zone_3 c0 = 0.236 (IQR 0.217–0.253, 1,192
-cams)**, zone_4 (5 comps) 0.983–1.196, zone_5 1.023. zone_3 is the same
-collapse as the old H2023 hull (0.175). Narrow IQR ⇒ clean whole-component
-similarity error, not drift. Registration was healthy and every zone
-reported `Success: True`, so only the oracle caught it.
-ATTRIBUTION UNPROVEN — three variables differ from the sound PD-6 run:
-dataset, orientation priors ON at 15°, and the unpinned Euler order.
-DISCRIMINATOR (~20 min): re-align zone_3 alone with a POSITION-ONLY log and
-the 7-column format GUID `{0E9850E2-73E1-4538-B2CF-B18BEF6CECEB}`, exactly
-as PD-6 was configured, then re-measure.
-
-### FULL CODE REVIEW LANDED 2026-07-26 — read before touching the pipeline
-
-Two adversarially-verified reviews (23 agents) are saved at:
-- `F:\_copylogs\review_synthesis.md` — 58 confirmed findings, bugs/QA/
-  security/ergonomics, with a 9-mechanism configuration inventory and a
-  concrete consolidation design
-- `F:\_copylogs\review_critique.md` — completeness critique of the above
-- `F:\_copylogs\defensive_design.md` — 23 defensive-coding defects ranked
-  by how SILENTLY they corrupt a result, plus a validation-layer design
-
-Highest-risk items, all confirmed: a driver silently `-quit`s a live
-instance and `RS_INSTANCE` is not read as an input (M1); the batch
-fingerprint omits the input directory so raw pixels can be reused as
-preprocessed (M2); rig geometry is keyed three different ways and
-`geoall.py` has no WCA table at all while docs call it canonical (M4/M5);
-the metric-scale oracle gates nothing (D3); ROVDataConcat cannot propagate
-a module failure to its exit code (M8/M9); and DVL dead-reckoning is fused
-as an absolute fix at σ=3 m, 23× tighter than USBL, giving it 96% weight —
-which means every output since the DVL gate flip is an unvalidated regime
-(M7).
-
-### Next, in strict order
-
-1. **Wait for the hull model.** Do not restart, and do not add GPU or
-   memory load — H2024's aligns wait their turn.
-2. **Owner GUI save-and-diff for `ifKGrp` / `ifKmode`** (agreed for after
-   the hull). Open the trajectory-import dialog on our 13-column format;
-   save params at defaults → `ypr_A_baseline.xml`; change ONLY *Euler
-   angles order (YPR)* → `ypr_B_order.xml`; restore, change ONLY *Camera
-   mount* → `ypr_C_mount.xml`. Report which options were chosen. Both keys
-   currently sit at `ifKGrp=2`, `ifKmode=0x0`, and neither string appears
-   in any installed file — they are compiled into the binary, so a diff is
-   the only way to identify them by inspection.
-3. **H2024: 5 zone aligns, no models**, then scale-oracle every component.
-4. **Bow ground-plane tilt — UNRESOLVED.** The align is exonerated (its
-   camera cloud matches nav to 0.8°, optical axes match the hull's). The
-   leading suspect is the assembly's `-update` consuming YPR with Euler
-   order and Camera mount unpinned. Discriminator: re-run the assembly
-   `-update` with a POSITION-ONLY union log (~2 min) and re-measure. Needs
-   poses harvested from a COPY of the assembly, because assemble mode
-   exports none — that blindness is what currently gates the conclusion.
-5. **Kalman heading review — STARTED, NOT FINISHED.** Established:
-   ROVDataConcat applies NO declination anywhere, `kalman_yaw_deg` comes
-   from Octans OCT records via `filter_heading`, and an Octans is a
-   gyrocompass (true north, not magnetic), which is consistent with the
-   pipeline's own note that heading was verified against DVL
-   course-over-ground. So declination 0 looks CORRECT and the repo's
-   `HEADING_MAG` variable name is a misnomer. STILL TO DO: confirm the
-   Octans true-vs-magnetic claim from a primary source, and review
-   `filter_heading`'s circular smoothing for wrap handling.
-
-### Contamination flags carried forward — read before trusting old cells
-
-Every earlier conclusion about whether ORIENTATION priors help or hurt was
-measured with Euler order and Camera mount unpinned: PD-0, PD-0b, PD-1b,
-PD-4 and M-DIV-ORI are tagged `[CONTAMINATED]` in
-`testing/PRIORS_DISTORTION_TEST_PLAN.md`, and `orientation@15°` is
-downgraded from *validated* to **PROVISIONAL**. Registration counts stand
-as measurements; their attribution to orientation priors does not.
-The fresh run DID import orientation at 3/5/3 (production params point at
-the 13-column format); PD-6 did NOT (its cell params point at a 7-column
-position-only format). That makes "removed mis-composed orientation
-priors" a live third candidate for PD-6's scale repair, alongside
-Brown3→Division and the newly-imported accuracy columns.
-
-NOT contaminated: all position-only aligns, every scale-oracle figure, and
-the rig-internal geometry the lever-arm correction rests on.
-
-### Owner decisions in force
+### DECISIONS IN FORCE
 
 - **CLAHE stays upstream** of batch/align until Q-05 settles. Consequence:
   imagery is both aligned AND textured from CLAHE'd files. Image Layers
-  (`.geometry`/`.texture`) agreed as the eventual mechanism, not adopted
-  yet. Revisit if an H2024 align shows CLAHE hurting registration.
-- **Orientation priors ON at alignment**, conservative accuracy (15°),
-  rather than waiting for the discriminator — "we should not throw away
-  validated data". Concern recorded and overruled; mitigation is the scale
-  oracle on every component.
-- **Lever arms corrected**: Port and Cinema are level, Port 0.17 m ahead
-  (was 1 m below). Absolute offset from the USBL reference remains
-  unverified — that causes translation, not tilt.
+  (`.geometry`/`.texture`) agreed as the eventual mechanism, not adopted.
+- **Orientation priors ON at alignment**, conservative 15 deg accuracy. The A/B
+  now supports this decision on registration grounds.
+- **Lever arms**: Port 1.0 m forward / 1.0 m DOWN, Cinema 1.0 / 0.0. Validated on
+  two metrically-sound solves (C above P by +1.12 and +1.03 m). **Do not flatten
+  them** on the strength of the 0.22 m / 0.00 m figures in FINDINGS — those came
+  from the 0.175-scale hull and are scale-corrupted; they were retracted once and
+  re-applied by mistake before an audit caught it.
+- **No models for H2024** pending visual inspection.
 
-### Session hygiene
+### METHOD NOTES WORTH CARRYING FORWARD
 
-Repo clean, 44 tests pass, all work committed. Nothing is stashed. The
-only live process is the hull model driver described at the top.
+Several of this session's wrong turns share one shape, and the log records each
+with what refuted it:
+
+- The hull model failed three times. I blamed concurrent load, then intrinsic
+  memory exhaustion. It was **ERROR_DISK_FULL** — and specifically RealityScan's
+  CACHE disk, which is placed by drive of the path given and which my own
+  junction kept on D: after the project moved to F:. Fixed by `RS_CACHE_DIR`.
+- I built the resource trace around the memory hypothesis, so it faithfully
+  recorded RAM falling to 3.1 GB and stayed silent about the disk that killed the
+  run. Then I added a disk column pointed at the PROJECT drive, which read
+  773.9 GB free while the CACHE drive hit zero. **Instrument the resource you
+  suspect AND the ones you do not — and the right instance of it.**
+- Three rounds of escape corruption in HANDOFF.md, from writing Windows paths
+  through Python string literals in shell heredocs (`E:\rscache` -> CR,
+  `F:\na156...` -> a real newline). Use forward slashes in docs; never author
+  Windows paths inside a heredoc string literal.
+- Claims must be checked against the artifact, not inferred from two ends of a
+  call chain (the 90-deg Port pitch claim), and a faster run is not a control
+  unless it did equivalent work (the batcher retraction).
 
 ## 2026-07-25 (evening) RESTART POINT — read this first
 
