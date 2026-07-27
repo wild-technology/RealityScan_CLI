@@ -1703,7 +1703,7 @@ was right, the STATED MECHANISM is not what executed.
   basenames the component does not contain. [H2023] (2026-07-27)
 
 - **DEFECT IN TONIGHT'S OWN NEIGHBOUR-SCOPING: it re-runs identical subsets and
-  is quadratic. NOT YET APPLIED.** `exhausted.clear()` after a fusion is
+  is quadratic. FIXED 2026-07-27 before session end.** `exhausted.clear()` after a fusion is
   unconditional, so every previously exhausted target is retried even when its
   neighbour set did not change; and a symmetric pair costs SIX attempts rather
   than three, because target A yields subset {A,B} and then target B yields the
@@ -1712,7 +1712,7 @@ was right, the STATED MECHANISM is not what executed.
   component. [H2024] (2026-07-27)
 
 - **DEFECT IN TONIGHT'S OWN SCALE GATE: it blocks exactly the components the
-  ladder produced. NOT YET APPLIED.** `final_components` never carries an
+  ladder produced. FIXED 2026-07-27 before session end.** `final_components` never carries an
   `inputs` key, so `apply_scale_gate` falls back to the synthetic fused
   component key, finds no scale record and returns `unmeasured` — which blocks.
   Any merged component is therefore refused a model regardless of its real
@@ -1765,3 +1765,49 @@ was right, the STATED MECHANISM is not what executed.
   Twin-drop removed `zone_1_c3` (251 cams, no unique images) leaving 15
   survivors. The fragmentation was zone_1 and zone_4, NOT zone_5. [H2024]
   (2026-07-27)
+
+## Per-attempt `rslog.txt` snapshots are NOT reliably the attempt's own log (2026-07-27)
+
+NOT A NEW MECHANISM. The overwrite hazard is already known and commented in
+`merge_zones.py` at the auto_model loop ("RealityScan overwrites
+`Temp\RealityScan.log` when the next instance starts"), learned from the
+2026-07-26 hull crash. What is new is that it has demonstrably corrupted a
+MERGE ATTEMPT's snapshot, and which artifact.
+
+- **A saved `rslog.txt` can be a DIFFERENT run's log.** Discovered by reading
+  `F:/na156_h2023_fresh/merge_verify/cluster_0/attempt_1_merge_georef/` at the
+  start of the 2026-07-27 review session: its `cluster.complist` names the two
+  H2023 components `zone_1_c0` + `zone_1_c1`, and its identity harvest is
+  unambiguously H2023 (`identity_r0` 3,737 files, `r1` 3,026, `r2` 714) — but
+  the `rslog.txt` filed beside them records `importComponent` of ELEVEN H2024
+  components (`zone_1_c0/c1/c2/c4/c5/c6/c7` + `zone_4_c0..c3`). The reciprocal
+  case is in the same run: `F:/na156_h2024/merged/cluster_0/attempt_3_align_
+  rematch_high_overlap/rslog.txt` contains NO `importComponent` line at all.
+  MECHANISM (strongly indicated by timestamps, not directly instrumented):
+  `snapshot_rs_log` copies RealityScan's global per-launch log AFTER the
+  workflow returns, and two merge drivers overlapped — H2024 `cluster_0`
+  attempt_3 ran 05:58:54–06:17:46 while the H2023 `merge_verify` complist was
+  written at 06:14:11. RealityScan truncates that log at each launch, so the
+  saved file is a SPLICE: `merge_verify`'s process wrote boot+imports, the
+  H2024 `cluster_1` process launched at 06:17:47 and truncated the file, then
+  `merge_verify` kept appending its saves and peel exports into it. Head and
+  tail of one `rslog.txt` therefore belong to different runs.
+  CONSEQUENCE: the first half of the open
+  "settle the 2 missing cameras from artifacts on disk" plan — read
+  RealityScan's own registered count out of the attempt's `rslog.txt` — is
+  NOT trustworthy on these artifacts. Re-importing `cluster_*_m_c0.rsalign`
+  from its original export location and censusing it remains valid.
+  A snapshot must be validated against a run-unique token (the attempt's own
+  complist paths) before any number is read out of it. [H2023][H2024]
+  (2026-07-27) ESTABLISHED
+
+- **The H2023 hull merge scene KEPT its source components alongside the fused
+  one.** Same artifact: the peel harvest of the 2-input merge (3,026 + 714 =
+  3,740) yielded THREE components — 3,737 / 3,026 / 714 — so
+  `-mergeComponents` added a fused component without consuming its inputs.
+  That is why `attribute_result` found exact subset sums for the two originals
+  and none for 3,737, reported `fused: false`, and rejected. It also means the
+  "-2 vs -3 varies by mechanism" evidence for a real solver drop is weaker than
+  recorded: 3,737 here is the fused component's own size, measured while both
+  parents were still in the scene. Still does not settle real-loss vs
+  harvest-artifact — the re-import census does. [H2023] (2026-07-27) ESTABLISHED

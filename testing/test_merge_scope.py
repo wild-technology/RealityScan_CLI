@@ -150,25 +150,24 @@ def test_target_loop_terminates_by_exhaustion():
     assert target is None, 'loop must exit, not spin'
 
 
-def test_fusion_clears_exhaustion_and_shrinks_the_cluster():
-    """A fusion must reduce the component count AND reopen earlier targets.
+def test_fusion_shrinks_the_cluster_and_grows_the_bbox():
+    """A fusion must strictly reduce the component count - the termination
+    argument depends on it - and the fused extent must reach further than
+    either input did, which is why some exhausted targets become revisitable.
 
-    Reopening matters because a fused component has a larger bbox, so something
-    that bordered nothing before may border it now.
+    Which targets reopen is owned by test_targeted_reopen_only_touches_borderers;
+    an earlier version of this test asserted clear-everything, the quadratic
+    behaviour the 2026-07-27 review flagged.
     """
     current = [A, B, C, D]
-    exhausted = {component_analysis.component_key(D)}
-
     fused = comp('cluster_0', 'm_c0', A['camera_count'] + B['camera_count'],
                  [0.0, 0.0, 35.0, 20.0])
     subset_keys = {component_analysis.component_key(m) for m in (A, B)}
     current = [m for m in current
                if component_analysis.component_key(m) not in subset_keys] + [fused]
-    exhausted.clear()
 
     assert len(current) == 3, 'four components fused down to three'
-    assert exhausted == set(), 'every target is revisitable after geometry changes'
-    # and the fused extent now reaches C
+    # the fused extent now reaches C, which neither A nor B did alone
     subset = merge_zones.neighbour_subset(
         current, component_analysis.component_key(fused), LOG)
     assert component_analysis.component_key(C) in keys(subset)
@@ -178,6 +177,100 @@ def test_cluster_scope_still_takes_everything():
     """The old behaviour must remain available for comparison."""
     subset = list([A, B, C, D])
     assert len(subset) == 4
+
+
+
+
+# ------------------------------------------- regressions from the 2026-07-27
+# adversarial review of this session's own work (F:/_copylogs/merge_logic_review.md)
+
+def test_symmetric_pair_is_attempted_once_not_twice():
+    """A-B is one subset regardless of which one is the growth target.
+
+    Without the attempted-subset memo a symmetric pair costs SIX attempts:
+    target A yields {A, B}, then target B yields the identical set and the
+    ladder runs all three rungs again on unchanged members.
+    """
+    pair = [A, B]
+    sigs = set()
+    for target in merge_zones.growth_order(pair):
+        subset = merge_zones.neighbour_subset(pair, target, LOG)
+        sigs.add(frozenset(component_analysis.component_key(m) for m in subset))
+    assert len(sigs) == 1, 'both targets must resolve to the same subset signature'
+
+
+def test_targeted_reopen_only_touches_borderers():
+    """After a fusion, reopen the neighbours of the NEW component only.
+
+    Clearing the whole exhausted set was quadratic: a target whose neighbour
+    set did not change has already had every rung run against it.
+    """
+    fused = comp('cluster_0', 'm_c0', 180, [0.0, 0.0, 35.0, 20.0])
+    current = [fused, C, D]
+    new_keys = {component_analysis.component_key(fused)}
+    exhausted = {component_analysis.component_key(C),
+                 component_analysis.component_key(D)}
+
+    touching = set()
+    for entry in component_analysis.find_borders(current):
+        a, b = entry['pair']
+        if a in new_keys:
+            touching.add(b)
+        if b in new_keys:
+            touching.add(a)
+    exhausted -= (touching | new_keys)
+
+    assert component_analysis.component_key(C) not in exhausted, \
+        'C borders the fused extent and must be revisited'
+    assert component_analysis.component_key(D) in exhausted, \
+        'D is 340 m away - reopening it is wasted work'
+
+
+def test_origin_map_resolves_transitively():
+    """A second-round fusion must still name ORIGINAL input keys.
+
+    The scale gate is keyed by original inputs. A round-two fusion's
+    attribution names round-one SYNTHETIC keys, so a non-transitive map leaves
+    the gate with no verdict - which it treats as 'unmeasured' and blocks.
+    """
+    origin_map = {'z1/A': ['z1/A'], 'z1/B': ['z1/B'], 'z2/C': ['z2/C']}
+
+    # round one: A + B -> m_c0
+    origins = []
+    for s in ('z1/A', 'z1/B'):
+        origins.extend(origin_map.get(s, [s]))
+    origin_map['cluster_0/m_c0'] = sorted(set(origins))
+
+    # round two: m_c0 + C -> m_c1, whose attribution names the SYNTHETIC key
+    origins = []
+    for s in ('cluster_0/m_c0', 'z2/C'):
+        origins.extend(origin_map.get(s, [s]))
+    origin_map['cluster_0/m_c1'] = sorted(set(origins))
+
+    assert origin_map['cluster_0/m_c1'] == ['z1/A', 'z1/B', 'z2/C'], \
+        'the chain must resolve back to original inputs, not synthetic keys'
+
+
+def test_scale_gate_accepts_a_fused_component_with_sound_inputs():
+    """The defect: every merged component was blocked as 'unmeasured'."""
+    scales = {'z1/A': {'status': 'pass', 'explanation': 'scale 0.99'},
+              'z1/B': {'status': 'pass', 'explanation': 'scale 1.01'}}
+    fused_target = [{'key': 'cluster_0/m_c0', 'camera_count': 180,
+                     'inputs': ['z1/A', 'z1/B']}]
+    kept, blocked = merge_zones.apply_scale_gate(
+        fused_target, scales, 0.90, 1.10, LOG)
+    assert kept and not blocked, 'a fusion of two sound inputs must be modellable'
+
+
+def test_scale_gate_still_blocks_a_fusion_containing_a_bad_input():
+    scales = {'z1/A': {'status': 'pass', 'explanation': 'scale 0.99'},
+              'z3/C': {'status': 'fail', 'explanation': 'scale 0.236'}}
+    fused_target = [{'key': 'cluster_0/m_c0', 'camera_count': 180,
+                     'inputs': ['z1/A', 'z3/C']}]
+    kept, blocked = merge_zones.apply_scale_gate(
+        fused_target, scales, 0.90, 1.10, LOG)
+    assert not kept and blocked[0]['status'] == 'fail', \
+        'the worst input must still decide'
 
 
 if __name__ == '__main__':

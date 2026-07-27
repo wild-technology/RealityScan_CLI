@@ -515,6 +515,7 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
             'camera_count': current[0]['camera_count'],
             'members': len(current[0]['images']),
             'origin': 'single-component cluster - no merge attempted',
+            'inputs': [component_analysis.component_key(current[0])],
         }]
         logger.info('%s: single component, no attempts needed', tag)
         return record
@@ -546,6 +547,19 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
     # 'cluster' scope keeps the old all-at-once behaviour so the two can be
     # COMPARED rather than assumed.
     exhausted: set[str] = set()
+    # Every subset already handed to the ladder. Without this a symmetric
+    # pair costs SIX attempts instead of three: target A yields {A, B}, then
+    # target B yields the identical set. A subset whose members are unchanged
+    # has already had all three rungs run against it.
+    attempted: set[frozenset] = set()
+    # Synthetic component key -> the ORIGINAL input keys behind it, resolved
+    # transitively. Needed because a second-round fusion's attribution names
+    # first-round synthetic keys, and the scale gate is keyed by original
+    # input keys. Without this every merged component is 'unmeasured' and the
+    # gate blocks the very thing the ladder produced.
+    origin_map = {component_analysis.component_key(m):
+                  [component_analysis.component_key(m)] for m in current}
+    new_keys: set[str] = set()
     while True:
         if merge_scope == 'neighbour':
             target_key = next((k for k in growth_order(current)
@@ -558,6 +572,15 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                             tag, target_key)
                 exhausted.add(target_key)
                 continue
+            subset_sig = frozenset(component_analysis.component_key(m)
+                                   for m in subset)
+            if subset_sig in attempted:
+                logger.info('%s: %s resolves to a subset already attempted - '
+                            'skipping (its members have not changed)',
+                            tag, target_key)
+                exhausted.add(target_key)
+                continue
+            attempted.add(subset_sig)
             logger.info('%s: growing %s against %d bordering neighbour(s)',
                         tag, target_key, len(subset) - 1)
         else:
@@ -565,6 +588,11 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
             subset = list(current)
             if len(subset) < 2:
                 break
+            subset_sig = frozenset(component_analysis.component_key(m)
+                                   for m in subset)
+            if subset_sig in attempted:
+                break
+            attempted.add(subset_sig)
 
         rung = 0
         fused_this_target = False
@@ -647,6 +675,17 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                     # selection sees the grown extent.
                     subset_keys = {component_analysis.component_key(m)
                                    for m in subset}
+                    # Resolve each result back to ORIGINAL input keys, through
+                    # any earlier fusion, so the scale gate can find verdicts.
+                    new_keys = set()
+                    for nm in new_subset:
+                        nk = component_analysis.component_key(nm)
+                        new_keys.add(nk)
+                        srcs = (nm.get('attribution') or {}).get('inputs') or []
+                        origins = []
+                        for s in srcs:
+                            origins.extend(origin_map.get(s, [s]))
+                        origin_map[nk] = sorted(set(origins)) or [nk]
                     current = [m for m in current
                                if component_analysis.component_key(m)
                                not in subset_keys] + new_subset
@@ -661,10 +700,18 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
             rung += 1
 
         if fused_this_target:
-            # Geometry changed, so every previously exhausted target is worth
-            # revisiting - a component that bordered nothing may border the new
-            # fused extent.
-            exhausted.clear()
+            # Reopen ONLY the targets that border a newly created component.
+            # Clearing everything was quadratic: a target whose neighbour set
+            # did not change has already had all three rungs run against it,
+            # and the attempted-subset memo would skip it anyway.
+            touching = set()
+            for entry in component_analysis.find_borders(current):
+                a, b = entry['pair']
+                if a in new_keys:
+                    touching.add(b)
+                if b in new_keys:
+                    touching.add(a)
+            exhausted -= (touching | new_keys)
             if len(current) < 2:
                 break
             continue
@@ -680,6 +727,11 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
         'camera_count': m['camera_count'],
         'members': len(m.get('images') or []),
         'origin': ('fused' if m.get('attribution') else 'unfused input'),
+        # ORIGINAL input keys behind this component. The scale gate is keyed
+        # by them; without this a merged component looked 'unmeasured' and was
+        # blocked from modelling regardless of its real scale.
+        'inputs': origin_map.get(component_analysis.component_key(m),
+                                 [component_analysis.component_key(m)]),
     } for m in current]
     logger.info('%s converged: %d final component(s)', tag, len(current))
     return record

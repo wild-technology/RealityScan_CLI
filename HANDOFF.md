@@ -117,11 +117,13 @@ Tests went 44 -> 115. In dependency order:
 
 ### LOOSE ENDS, RANKED
 
-1. **Two defects in this session's own work, NOT applied** (FINDINGS
-   2026-07-27): the neighbour-scoping re-runs identical subsets and is quadratic
-   (a symmetric pair costs 6 attempts, `exhausted.clear()` is unconditional); and
-   the scale gate blocks EVERY merged component because `final_components` carries
-   no `inputs` key. Fix both before the next merge run.
+1. ~~Two defects in this session's own work~~ **FIXED before session end**
+   (commit below). The neighbour-scoping now memoises attempted subsets, so a
+   symmetric pair costs three attempts rather than six, and a fusion reopens only
+   the targets that border the NEW component instead of clearing everything. The
+   scale gate now receives transitive `inputs` on `final_components` - transitive
+   because a second-round fusion's attribution names first-round SYNTHETIC keys,
+   and the gate is keyed by original inputs. 5 regression tests; 120 total.
 2. **The staged `.bat` work** — could not be applied while a merge was executing
    (cmd reads batch files by byte offset). Two changes, one edit:
    - **orphan rung**: replace `sfmImagesOverlap:High` with orphan inclusion.
