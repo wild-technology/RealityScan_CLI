@@ -1,5 +1,48 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-07-26 OVERNIGHT RUN IN FLIGHT — orientation-prior A/B
+
+**Running DETACHED, so it survives a Claude session restart** (unlike every
+earlier long run tonight — PD-6 was lost exactly that way). PID recorded in
+`F:/_copylogs/ab_orientation.pid`.
+
+Driver: `testing/ab_orientation_priors.py`. Re-aligns all five H2024 zones with
+a POSITION-ONLY flight log — one variable changed against the production run
+that produced the 0.236 collapse. Non-destructive: writes to
+`F:/na156_h2024/ab_position_only/<zone>/`; `aligned_components/` is untouched.
+
+Check on it:
+
+```bash
+powershell -NoProfile -Command "Get-Process -Id (Get-Content F:/_copylogs/ab_orientation.pid) -EA SilentlyContinue | Select-Object Id,CPU"
+```
+
+```bash
+tail -30 F:/na156_h2024/ab_position_only/ab_driver.log
+```
+
+Results accumulate per zone in `F:/na156_h2024/ab_position_only/ab_results.json`
+(written after each zone, so a partial run is still readable). Resumable: a zone
+already recorded `ok` is skipped on restart.
+
+**Read the answer off `maximal_scale` vs `orientation_on_scale`:**
+
+| zone | orientation-ON (recorded) |
+|---|---|
+| zone_1 | 1.076 |
+| zone_2 | 1.086 |
+| **zone_3** | **0.236** |
+| zone_4 | 0.983 |
+| zone_5 | 1.023 |
+
+Decision rule, fixed before the run: zone_3 back in 0.90–1.10 implicates
+orientation priors under the unpinned Euler order — pull them until the GUI diff
+settles the convention. zone_3 still ~0.24 exonerates them and promotes the
+DVL-dominated nav regime (review finding M7) to prime suspect.
+
+Abort criteria: E: below 200 GB (the driver aborts itself and records why), a
+zone stalling >45 min, or exit code 3.
+
 ## 2026-07-26 RESTART POINT — read this first
 
 ### DO NOT RESTART WHILE THE HULL MODEL IS RUNNING
