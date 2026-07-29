@@ -29,7 +29,7 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".heif"}
 
 STAGE_ORDER = [
     "extract", "georeference", "preprocess", "batch",
-    "align", "merge", "model", "export",
+    "align", "merge", "model", "export", "publish",
 ]
 
 STAGE_TITLES = {
@@ -41,6 +41,7 @@ STAGE_TITLES = {
     "merge": "Merge Components",
     "model": "Generate Models",
     "export": "Export Deliverables",
+    "publish": "Publish (Cesium / Nira)",
 }
 
 
@@ -282,6 +283,23 @@ class Workspace:
                                else "done",
                                f"{len(details)} component(s) exported", details)
         return StageStatus("export", "pending", "exports/ is empty")
+
+    def _detect_publish(self) -> StageStatus:
+        report = _load_json(self.root / "publish_report.json")
+        assets = report.get("assets", [])
+        if assets:
+            ok = sum(1 for a in assets
+                     if (a.get("cesium") or {}).get("success")
+                     or (a.get("nira") or {}).get("success"))
+            return StageStatus("publish",
+                               "done" if ok == len(assets) else "partial",
+                               f"{ok} of {len(assets)} asset(s) published",
+                               [a.get("asset_name", "?") for a in assets])
+        if self.exports.is_dir() and any(self.exports.iterdir()):
+            return StageStatus("publish", "pending",
+                               "exports ready - needs CESIUM_ION_TOKEN "
+                               "and/or NIRACLIENT_DIR")
+        return StageStatus("publish", "pending", "nothing exported yet")
 
     # ------------------------------------------------------------ inventory
     def components(self) -> list[ComponentInfo]:

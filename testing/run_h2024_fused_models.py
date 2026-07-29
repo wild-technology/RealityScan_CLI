@@ -61,99 +61,31 @@ FUSED = [
                  "cluster_0_a2_c0.rsalign"),
 ]
 
-# RealityScan writes Position as an ELEMENT (<xcr:Position>x y z</...>) in
-# current exports and as an attribute in some older ones - accept both.
-_POS_ELEM = re.compile(r'<xcr:Position>([^<]+)</xcr:Position>')
-_POS_ATTR = re.compile(r'xcr:Position="([^"]+)"')
-
+# The measurement now lives in modules/scale_oracle (promoted 2026-07-29 so
+# the generic run_models.py driver and WildScan use ONE implementation);
+# these thin wrappers keep this driver's numpy-array call shape.
 
 def solved_positions(identity_dir: str) -> np.ndarray:
-    """Solved camera positions from the pose sidecars. The frame is the model
-    frame, not UTM - irrelevant here, because distance RATIOS are invariant
-    under rigid motion and the scale factor is exactly what is measured."""
-    pts = []
-    for path in glob.glob(os.path.join(identity_dir, "*.xmp")):
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            text = fh.read()
-        m = _POS_ELEM.search(text) or _POS_ATTR.search(text)
-        if m:
-            vals = [float(v) for v in m.group(1).split()]
-            if len(vals) == 3:
-                pts.append(vals)
-    return np.asarray(pts, dtype=np.float64)
+    return np.asarray(scale_oracle.solved_position_cloud(identity_dir),
+                      dtype=np.float64)
 
 
 def nav_positions(union_log: str, members: list[str]) -> np.ndarray:
-    """Nav position per MEMBER OCCURRENCE, not per unique basename: the
-    batcher copies overlap images into two zones, so a fused component holds
-    TWO cameras for one basename - both really at that nav point. Collapsing
-    them (the first version of this function) under-represented the nav cloud
-    by 13% on the hull and tripped the cardinality guard."""
-    table: dict[str, list[float]] = {}
-    with open(union_log, encoding="utf-8") as fh:
-        fh.readline()
-        for line in fh:
-            parts = line.split(";")
-            if len(parts) >= 4:
-                table[parts[0].strip().lower()] = [
-                    float(parts[1]), float(parts[2]), float(parts[3])]
-    pts = [table[m.lower()] for m in members if m.lower() in table]
-    return np.asarray(pts, dtype=np.float64)
+    return np.asarray(
+        scale_oracle.nav_position_multiset(union_log, members),
+        dtype=np.float64)
 
 
 COMPONENTS_ROOT = os.path.join(V2_ROOT, "aligned_components")
 
 
 def member_multiset(manifest: dict) -> list[str]:
-    """The camera-level member list of a fused component.
-
-    A fused manifest's `images` is the UNIQUE basename union of its inputs,
-    but the scene holds one camera per input OCCURRENCE - the batcher copies
-    overlap images into two zones, so a basename shared by two inputs is two
-    cameras (cluster_1: 880 cameras over 537 unique basenames). The true nav
-    multiset is the concatenation of the attributed input manifests' members;
-    an unfused component is its own multiset.
-    """
-    inputs = (manifest.get("attribution") or {}).get("inputs") or []
-    if not inputs:
-        return list(manifest.get("images") or [])
-    members: list[str] = []
-    for key in inputs:
-        zone, comp = key.split("/", 1)
-        path = os.path.join(COMPONENTS_ROOT, zone,
-                            comp + ".rsalign.manifest.json")
-        if not os.path.isfile(path):
-            # An input that is itself synthetic (second-round fusion) or
-            # missing - fall back to the union rather than half a multiset.
-            return list(manifest.get("images") or [])
-        members.extend(component_manifest.load_manifest(path).get("images") or [])
-    return members
+    return scale_oracle.member_multiset(manifest, COMPONENTS_ROOT)
 
 
 def quantile_ratio_scale(solved: np.ndarray, nav: np.ndarray) -> dict | None:
-    """Correspondence-free similarity scale via matched quantiles of
-    distance-from-centroid. Returns the stem-oracle's stats shape."""
-    if len(solved) < 30 or len(nav) < 30:
-        return None
-    # Cardinality mismatch (cameras without nav rows, or a lossy fusion)
-    # is tolerated up to 5% - quantiles absorb small set differences.
-    if abs(len(solved) - len(nav)) / max(len(solved), len(nav)) > 0.05:
-        return None
-    ds = np.sort(np.linalg.norm(solved - solved.mean(axis=0), axis=1))
-    dn = np.sort(np.linalg.norm(nav - nav.mean(axis=0), axis=1))
-    q = np.linspace(0.05, 0.95, 91)          # trim tails - outlier cameras
-    rs = np.quantile(ds, q)
-    rn = np.quantile(dn, q)
-    valid = rn > 1e-6
-    if valid.sum() < 30:
-        return None
-    ratios = rs[valid] / rn[valid]
-    return {
-        "median": float(np.median(ratios)),
-        "iqr_low": float(np.quantile(ratios, 0.25)),
-        "iqr_high": float(np.quantile(ratios, 0.75)),
-        "cameras": int(len(solved)),
-    }
+    return scale_oracle.quantile_ratio_scale(
+        [tuple(p) for p in solved], [tuple(p) for p in nav])
 
 
 def main() -> int:

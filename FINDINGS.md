@@ -2239,6 +2239,36 @@ MERGE ATTEMPT's snapshot, and which artifact.
   (g) ExportDeliverables dropped delayed expansion ('!'-path corruption),
   sweeps Model 1-9, and names evidence files per model. (2026-07-29)
 
+## Export probe facts (2026-07-29)
+
+- **`<comp>_HighPoly_Raw` does NOT survive the model recipe - the docstring's
+  "models kept" list has been wrong since 2026-07-23.** Probed on the real
+  assembly: `-selectModel cluster_4_a1_c0_HighPoly_Raw` -> err:5601 'not
+  found'. Mechanism: step [2/8] RENAMES the selected model to `_Cleanup1`
+  when the marginal filter fires, so the raw NAME leaves the project; the
+  same rename chain is why `-selectModel <tag>_HighPoly` missed in every
+  component's cleanup loop (it had become `_HighPoly_Textured` at [6/8]).
+  The models that actually persist per component: `_HighPoly_Textured`,
+  `_Simplified_Textured`, plus one default-named residual. QUEUED recipe fix
+  if raw retention is wanted: duplicate the model after [1/8]
+  (`-duplicateSelectedModel` exists) before the filter chain touches it.
+  Export consequence: the dense PLY falls back to `_HighPoly_Textured`, the
+  densest model guaranteed to exist. [H2024] (2026-07-29) ESTABLISHED
+
+- **A load can fail on a stale `<name>.rsproj.new`** - an interrupted GUI
+  save leaves the temp beside the project and the next headless `-load`
+  reports warning-class 0x82000017 while still completing; the error channel
+  then aborts the workflow. Setting the temp aside (rename, reversible)
+  cleans the load. The owner's 12:44 GUI save was the source; the main
+  .rsproj (08:01, post-models) was intact. [H2024] (2026-07-29) ESTABLISHED
+
+- **By-parts exports verified on the real assembly**: OBJ 4 parts + per-part
+  MTL + u1_v1 textures + .rsInfo (exactly Nira's expected layout), FBX 4
+  parts + textures; ~35-38 s each on the 133-cam component. Exactly ONE
+  default-named residual existed in the whole six-component project
+  ('Model 1' - swept and saved), not one per component as hypothesised.
+  [H2024] (2026-07-29) ESTABLISHED
+
 ## H2024 MODELS COMPLETE (2026-07-29)
 
 - **All six components modelled from one assembly project.** Times and

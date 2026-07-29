@@ -88,6 +88,108 @@ def component_members(components_dir: str) -> list[set]:
             for i in range(len(rounds))]
 
 
+def solved_position_cloud(identity_dir: str) -> list[tuple]:
+    """EVERY pose position in a harvest dir, identity-free.
+
+    For FUSED components the sidecars are ORDINAL (B10) so stems carry no
+    identity and the stem-pairing oracle returns UNMEASURED - which is how
+    the scale gate correctly blocked the H2024 hull's model. The quantile
+    method below measures those components anyway. The frame is the model
+    frame, not UTM; irrelevant, because distance ratios are rigid-invariant
+    and the scale factor is exactly what is measured."""
+    return list(load_solved_positions(identity_dir).values())
+
+
+def member_multiset(manifest: dict, components_root: str) -> list[str]:
+    """Camera-level member list of a component.
+
+    A fused manifest's `images` is the unique-basename UNION of its inputs,
+    but the scene holds one camera per input OCCURRENCE (the batcher copies
+    overlap images into two zones), so the nav multiset must be the
+    CONCATENATION of the attributed input manifests' members. Unfused
+    components are their own multiset. Falls back to the union when an
+    input manifest is unavailable (e.g. a second-round fusion)."""
+    inputs = (manifest.get('attribution') or {}).get('inputs') or []
+    if not inputs:
+        return list(manifest.get('images') or [])
+    members: list[str] = []
+    for key in inputs:
+        try:
+            zone, comp = key.split('/', 1)
+        except ValueError:
+            return list(manifest.get('images') or [])
+        path = os.path.join(components_root, zone,
+                            comp + '.rsalign.manifest.json')
+        if not os.path.isfile(path):
+            return list(manifest.get('images') or [])
+        import json
+        with open(path, encoding='utf-8') as fh:
+            members.extend(json.load(fh).get('images') or [])
+    return members
+
+
+def nav_position_multiset(flight_log: str, members: list[str]) -> list[tuple]:
+    """Nav position per MEMBER OCCURRENCE (duplicated basenames appear as
+    many times as the scene holds cameras for them)."""
+    table = load_nav_positions(flight_log)
+    out = []
+    for m in members:
+        stem = os.path.splitext(m)[0].lower()
+        if stem in table:
+            out.append(table[stem])
+    return out
+
+
+def quantile_ratio_scale(solved: list[tuple], nav: list[tuple]) -> dict | None:
+    """Correspondence-free similarity scale via matched quantiles of
+    distance-from-centroid; returns the same stats shape as scale_ratio.
+
+    Under a similarity transform, SORTED distances-from-centroid of the same
+    camera multiset correspond rank-for-rank, so quantile ratios give median
+    + IQR without any pairing. Validated 2026-07-29: known-good zone_1_c1
+    measured 1.045 vs the stem oracle's 1.023 (same verdict); the hull's
+    clouds shrunk by 0.236 FAIL at 0.235. Gross non-similarity (drift, a
+    fold) widens the IQR and trips the same wide-IQR call-out as the stem
+    oracle."""
+    if len(solved) < 30 or len(nav) < 30:
+        return None
+    if abs(len(solved) - len(nav)) / max(len(solved), len(nav)) > 0.05:
+        return None
+
+    def sorted_radii(points: list[tuple]) -> list[float]:
+        n = len(points)
+        cx = sum(p[0] for p in points) / n
+        cy = sum(p[1] for p in points) / n
+        cz = sum(p[2] for p in points) / n
+        return sorted(math.dist(p, (cx, cy, cz)) for p in points)
+
+    rs = sorted_radii(solved)
+    rn = sorted_radii(nav)
+
+    def quantile(sorted_vals: list[float], q: float) -> float:
+        idx = q * (len(sorted_vals) - 1)
+        lo = int(idx)
+        hi = min(lo + 1, len(sorted_vals) - 1)
+        frac = idx - lo
+        return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
+
+    qs = [0.05 + 0.01 * i for i in range(91)]     # 5th..95th, trimmed tails
+    ratios = []
+    for q in qs:
+        denom = quantile(rn, q)
+        if denom > 1e-6:
+            ratios.append(quantile(rs, q) / denom)
+    if len(ratios) < 30:
+        return None
+    ratios.sort()
+    return {
+        'median': quantile(ratios, 0.5),
+        'iqr_low': quantile(ratios, 0.25),
+        'iqr_high': quantile(ratios, 0.75),
+        'cameras': len(solved),
+    }
+
+
 def scale_ratio(members: set, solved: dict, nav: dict,
                 samples: int = 4000, min_nav_distance: float = 3.0,
                 seed: int = 5) -> dict | None:

@@ -126,17 +126,48 @@ def plan_merge(ws: Workspace) -> LaunchPlan:
         needs_realityscan=True)
 
 
+def _final_component_names(ws: Workspace) -> list[str]:
+    merge = ws.latest_merge()
+    if not merge:
+        return []
+    from .workspace import _load_json  # noqa: PLC0415
+    rep = _load_json(merge / "merge_report.json")
+    return [c.get("key", "").split("/")[-1]
+            for rec in rep.get("clusters", [])
+            for c in rec.get("final_components", [])]
+
+
+def plan_model(ws: Workspace) -> LaunchPlan:
+    finals = _final_component_names(ws)
+    argv = [sys.executable, str(REPO / "run_models.py"),
+            "--workspace", str(ws.root)]
+    return LaunchPlan(
+        argv=argv,
+        env={"PYTHONIOENCODING": "utf-8", "RS_INSTANCE": "RS1",
+             "RS_CACHE_DIR": r"E:\rscache", "RS_HEADLESS": "0"},
+        preview=[f"Components: {', '.join(finals) or 'none detected'}",
+                 "Scale-gated: stem-oracle verdicts, quantile-ratio fallback "
+                 "for fused components (B10 ordinals)",
+                 "Smallest first - the recipe proves itself cheap before the "
+                 "big component spends hours",
+                 "Texture budget: max 4 adaptive 16K textures",
+                 "One dated RC_projects copy at the END (per-component dated "
+                 "saves are deferred - they cost ~81 GB each)"],
+        estimate="measured H2024: 40 min (133 cams) to 5.6 h (4,860 cams) "
+                 "per component",
+        needs_realityscan=True)
+
+
 def plan_export(ws: Workspace) -> LaunchPlan:
     project = ws.assembly_project()
-    merge = ws.latest_merge()
+    finals = _final_component_names(ws)
     names_file = ws.exports / "components.names"
-    finals: list[str] = []
-    if merge:
-        from .workspace import _load_json  # noqa: PLC0415
-        rep = _load_json(merge / "merge_report.json")
-        finals = [c.get("key", "").split("/")[-1]
-                  for rec in rep.get("clusters", [])
-                  for c in rec.get("final_components", [])]
+    if finals:
+        # The names file IS this plan's input contract - write it from the
+        # merge report so the operator never hand-authors one (BOM-free).
+        ws.exports.mkdir(parents=True, exist_ok=True)
+        with open(names_file, "w", encoding="utf-8", newline="\r\n") as fh:
+            fh.write("\n".join(finals) + "\n")
     bat = REPO / "modules/realityscan_interface/RS_CLI/Scripts/ExportDeliverables.bat"
     argv = ["cmd", "/c", str(bat), str(project or ""), str(ws.exports),
             str(names_file)]
@@ -147,11 +178,39 @@ def plan_export(ws: Workspace) -> LaunchPlan:
         preview=[f"Project: {project}",
                  f"Components: {', '.join(finals) or 'none detected'}",
                  "Per component: OBJ by parts (Nira guidance), FBX by parts, "
-                 "ultra-dense colored PLY from the raw high-poly",
+                 "ultra-dense colored PLY (HighPoly_Textured fallback when "
+                 "the raw model did not survive the recipe)",
                  "Sweeps residual 'Model N' entries, saves once, then exports "
                  "(vertex colors stay in memory only)"],
-        estimate="minutes per small component; the hull's dense PLY dominates",
+        estimate="~2 min per small component for OBJ+FBX; the dense PLY "
+                 "dominates on large components",
         needs_realityscan=True)
+
+
+def plan_publish(ws: Workspace) -> LaunchPlan:
+    exported = []
+    if ws.exports.is_dir():
+        exported = sorted(p.name for p in ws.exports.iterdir()
+                          if p.is_dir() and (p / "obj").is_dir())
+    have_cesium = bool(os.environ.get("CESIUM_ION_TOKEN"))
+    have_nira = bool(os.environ.get("NIRACLIENT_DIR"))
+    argv = [sys.executable, str(REPO / "publish_batch.py"),
+            "--workspace", str(ws.root),
+            "--prefix", ws.root.name]
+    if not (have_cesium or have_nira):
+        argv.append("--dry-run")
+    return LaunchPlan(
+        argv=argv,
+        env={"PYTHONIOENCODING": "utf-8"},
+        preview=[f"Exported components: {', '.join(exported) or 'none yet'}",
+                 f"Cesium ion: {'token present' if have_cesium else 'set CESIUM_ION_TOKEN to activate'}",
+                 f"Nira: {'niraclient configured' if have_nira else 'set NIRACLIENT_DIR (Enterprise plan) to activate'}",
+                 "Uploads the OBJ-by-parts exports - the format both "
+                 "platforms recommend; Nira refuses PLY point clouds"
+                 + ("" if have_cesium or have_nira else
+                    "  ·  DRY RUN until credentials are set")],
+        estimate="upload-bound; ion tiling continues server-side",
+        needs_realityscan=False)
 
 
 PLANS = {
@@ -161,14 +220,12 @@ PLANS = {
     "batch": plan_batch,
     "align": plan_align,
     "merge": plan_merge,
+    "model": plan_model,
     "export": plan_export,
+    "publish": plan_publish,
 }
 
 RUNNABLE = set(PLANS)
-# Modelling is deliberately NOT one-click in v1: it is the owner-gated,
-# multi-hour step. The app shows model status and points at the driver.
-MODEL_HINT = ("Models run via testing/run_h2024_final.py phase 4 or "
-              "GenerateModel.bat per component - owner gate applies.")
 
 
 def plan_for(key: str, ws: Workspace) -> LaunchPlan | None:

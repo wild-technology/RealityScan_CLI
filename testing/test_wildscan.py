@@ -155,10 +155,28 @@ def test_components_join_scale_models_exports(tmp_path):
 def test_every_runnable_stage_produces_a_plan(tmp_path):
     ws = make_workspace(tmp_path, stage="align")
     for key in ("extract", "georeference", "preprocess", "batch",
-                "align", "merge", "export"):
+                "align", "merge", "model", "export", "publish"):
         plan = plan_for(key, ws)
         assert plan is not None and plan.argv, key
         assert plan.preview, f"{key} must preview before execution"
+
+
+def test_export_plan_writes_the_names_file(tmp_path):
+    """The names file is the export workflow's input contract - the app must
+    author it from the merge report, never the operator by hand."""
+    ws = make_workspace(tmp_path, stage="merge")
+    plan_for("export", ws)
+    names = (ws.exports / "components.names").read_text(encoding="utf-8")
+    assert names.splitlines() == ["zone_1_c0", "zone_2_c0"]
+
+
+def test_publish_plan_is_dry_run_without_credentials(tmp_path, monkeypatch):
+    monkeypatch.delenv("CESIUM_ION_TOKEN", raising=False)
+    monkeypatch.delenv("NIRACLIENT_DIR", raising=False)
+    ws = make_workspace(tmp_path, stage="export")
+    plan = plan_for("publish", ws)
+    assert "--dry-run" in plan.argv, (
+        "no credentials must never mean silent uploads - it means preview")
 
 
 def test_merge_plan_carries_the_owner_gates(tmp_path):
@@ -182,7 +200,7 @@ def test_app_boots_and_shows_pipeline(tmp_path):
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             table = app.screen.query_one("#pipeline")
-            assert table.row_count == 8
+            assert table.row_count == 9
     asyncio.run(drive())
 
 

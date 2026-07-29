@@ -28,7 +28,7 @@ from . import APP_NAME, ORG, TAGLINE, __version__
 from .branding import (CSS, FOOTER_NOTE, MIST, OK, SAND, STATUS_COLOR,
                        STATUS_GLYPH, TEAL, WARN, WORDMARK)
 from .runner import CommandRunner, LogLine, ProgressUpdate, RunFinished
-from .stages import MODEL_HINT, RUNNABLE, plan_for
+from .stages import RUNNABLE, plan_for
 from .workspace import STAGE_ORDER, Workspace
 
 
@@ -92,9 +92,13 @@ class HomeScreen(Screen):
             name = Text(st.title, style=SAND if runnable else MIST)
             table.add_row(name, status_text(st.status, st.status),
                           st.summary, key=key)
-        if statuses["model"].status != "done":
+        # Guide the operator: the first stage that is not done is "next".
+        next_key = next((k for k in STAGE_ORDER
+                         if statuses[k].status != "done"), None)
+        if next_key:
             self.query_one("#workspace-note", Static).update(
-                Text(MODEL_HINT, style=MIST))
+                Text(f"Next: {statuses[next_key].title} - "
+                     f"{statuses[next_key].summary}", style=TEAL))
 
     def action_refresh(self) -> None:
         self.refresh_pipeline()
@@ -111,9 +115,6 @@ class HomeScreen(Screen):
         key = STAGE_ORDER[table.cursor_row]
         if key in RUNNABLE:
             app.push_screen(StageScreen(key))
-        elif key == "model":
-            self.query_one("#workspace-note", Static).update(
-                Text(MODEL_HINT, style=WARN))
 
     def on_data_table_row_selected(self, _event) -> None:
         self.action_open_stage()
