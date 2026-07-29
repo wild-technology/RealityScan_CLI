@@ -8,9 +8,10 @@ produce ONE assembly project.
 Workspace layout, deliberate:
   F:/na156_h2024            baseline - READ ONLY here, never written
   F:/na156_h2024_v2         this run; batched_images_by_zone holds per-zone
-                            junctions back to the shared image tree, so the
-                            baseline .rsalign exports stay importable at their
-                            original locations (hard rule 7).
+                            REAL directories of hardlinks back to the shared
+                            image tree (sidecars/flight logs are copies).
+                            NEVER junctions - see assert_harvestable below
+                            and the IMAGES_ROOT comment.
 
 GUI-visible by owner instruction (RS_HEADLESS=0). Cache pinned to E: - the
 2026-07-26 hull failures were ERROR_DISK_FULL on the CACHE drive, which
@@ -114,7 +115,8 @@ def align_zone(zone: str, logger: logging.Logger) -> dict:
     ]
     logger.info("%s: launching alignment", zone)
     started = time.time()
-    proc = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True,
+                          text=True, stdin=subprocess.DEVNULL)
     duration = time.time() - started
 
     tail = (proc.stdout or "")[-4000:]
@@ -207,24 +209,31 @@ def compare_to_baseline(report: dict, logger: logging.Logger) -> dict:
 
 def assert_harvestable(images_root: str, logger: logging.Logger) -> None:
     """The peel harvest is a PowerShell `Get-ChildItem -Recurse`, which does
-    NOT descend into junction CHILDREN. Handing merge_zones.py a directory
-    whose children are reparse points yields an empty peel on every attempt,
+    NOT descend into junction CHILDREN at ANY depth. Handing merge_zones.py a
+    directory containing reparse points yields an empty peel on every attempt,
     which the driver cannot distinguish from a legitimately empty scene - it
-    silently discarded a real 3-way fusion on 2026-07-27 (FINDINGS).
+    silently discarded a real 3-way fusion on 2026-07-27 (FINDINGS). The scan
+    is recursive: a junction one level down (zone_1/cinema as a link)
+    reproduces the blindness just as completely as a top-level one
+    (final review).
     """
+    def is_reparse(path: str) -> bool:
+        if os.path.islink(path):
+            return True
+        # islink() is False for Windows junctions on some Python builds;
+        # the reparse attribute is the reliable test.
+        try:
+            return bool(os.stat(path, follow_symlinks=False).st_reparse_tag)
+        except (AttributeError, OSError):
+            return False
+
     reparse = []
-    with os.scandir(images_root) as entries:
-        for entry in entries:
-            if entry.is_dir() and os.path.islink(entry.path):
-                reparse.append(entry.name)
-            elif entry.is_dir():
-                # islink() is False for Windows junctions on some Python
-                # builds; the reparse attribute is the reliable test.
-                try:
-                    if os.stat(entry.path, follow_symlinks=False).st_reparse_tag:
-                        reparse.append(entry.name)
-                except (AttributeError, OSError):
-                    pass
+    for dirpath, dirnames, _files in os.walk(images_root):
+        for name in list(dirnames):
+            full = os.path.join(dirpath, name)
+            if is_reparse(full):
+                reparse.append(os.path.relpath(full, images_root))
+                dirnames.remove(name)   # do not descend into the link
     if reparse:
         raise RuntimeError(
             f"images_root {images_root} has reparse-point children {reparse}; "
@@ -274,10 +283,20 @@ def run_merge(logger: logging.Logger) -> dict:
         # cluster_0 and every accepted loss is recorded per attempt and in
         # EVALUATION_READY.
         "--loss_tolerance", "0.0025",
+        # EVERY ask()-backed option is pinned. An unpinned option makes
+        # merge_zones prompt: on an inherited console the prompt goes into the
+        # captured pipe and input() blocks forever; detached, the value is
+        # silently inherited from whatever session last wrote rs_settings.json
+        # (final review) - either way not this driver's configuration.
+        "--pair_gate", "overlap",
+        "--assemble_only", "false",
+        "--scale_min", "0.9",
+        "--scale_max", "1.1",
     ]
     logger.info("launching cross-zone merge -> %s", output)
     started = time.time()
-    proc = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True,
+                          text=True, stdin=subprocess.DEVNULL)
     duration = time.time() - started
 
     log_path = os.path.join(V2_ROOT, "logs", "merge.log")

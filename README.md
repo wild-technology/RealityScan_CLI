@@ -182,6 +182,32 @@ git history — see `git log`):
 
 ## Typical workflows
 
+**WildScan** — the interactive console over the whole pipeline (Wild
+Technology branding, cross-platform; RealityScan stages run on Windows,
+inspection/exports review works anywhere). It censuses a results folder,
+shows every stage as done/partial/pending, previews exactly what a stage
+will execute (command, settings, estimate) before launching it through the
+canonical drivers, streams progress, and browses the final components with
+their measured scales, models and exports:
+
+```
+py -3.13 -m pip install -r wildscan/requirements.txt
+py -3.13 -m wildscan F:/na156_h2024_v2
+```
+
+Deliverable export (OBJ by parts per Nira guidance, FBX by parts, ultra-dense
+colored PLY) and publishing:
+
+```
+RS_CLI\Scripts\ExportDeliverables.bat "D:\dive\final_assembly\assembly\Assembly.rsproj" "D:\dive\exports" "D:\dive\exports\components.names"
+py -3.13 publish_cesium.py --name "IN-401 hull" --dir D:/dive/exports/<comp>/obj --input-crs EPSG:32604
+py -3.13 publish_nira.py --name "IN-401 hull" --dir D:/dive/exports/<comp>/obj --niraclient C:/tools/niraclient
+```
+
+(Cesium ion and Nira both recommend the OBJ; Nira scripted upload needs an
+Enterprise-plan API key, and Nira does not accept PLY point clouds — LAS/
+LAZ/E57 only.)
+
 Full interactive pipeline (extraction through per-zone alignment):
 
 ```

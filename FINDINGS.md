@@ -2206,6 +2206,39 @@ MERGE ATTEMPT's snapshot, and which artifact.
   unmeasured - for fused components it now is. [H2024] (2026-07-28)
   ESTABLISHED
 
+## Final review + owner notes applied (2026-07-29)
+
+- **SUPERSEDED detail in the audit-#4 entry below/above:** the
+  "save BEFORE the cleanup loop" belt-and-braces WAS applied, then REMOVED
+  the same day at the owner's direction - saving with ~15 models live is the
+  inordinate-save case (measured: zone_1_c0's saves cost ~81 GB with it).
+  The deletion-race protection is the double-wait in `:try_delete_model`
+  alone, which is sufficient. Dated RC_projects copies are DEFERRED to one
+  end-of-project `SaveProjectCopy.bat` call; model workflows run with
+  RS_PROJECTS_DIR unset. (2026-07-29)
+
+- **Final adversarial review (4 dimensions, 24 agents): 20 confirmed, 0
+  refuted; all applied.** Highest-value: (a) the new
+  `batch_overlap_max_distance_m` parameter was MISSING from the reuse-guard
+  fingerprint - a re-run with a new ceiling would have silently reused zones
+  built without one, the exact fail-open the guard closes; (b) two of this
+  session's own regression tests re-implemented driver logic instead of
+  driving it (the audit-#17 shape recurring) - the accept decision, loss
+  budget, export naming and mechanism filter are now pure functions
+  (`acceptance_verdict`, `loss_budget`, `fused_export_name`,
+  `effective_ladder_for`) called by merge_cluster and exercised directly;
+  (c) drivers left ask()-backed merge options unpinned - on a console the
+  child's input() blocked forever on an invisible prompt, detached it
+  silently inherited another session's rs_settings values; every option is
+  now pinned and every driver subprocess gets stdin=DEVNULL; (d) the
+  phase-skip in run_h2024_final treated a PARTIAL merge_report.json as
+  terminal (merge_zones flushes per cluster) - now requires the assembly
+  section; (e) assemble_only routed inputs through twin-drop, contradicting
+  carried-as-is - it now bypasses partitioning entirely; (f) the harvest
+  guard only checked TOP-LEVEL children for reparse points - now recursive;
+  (g) ExportDeliverables dropped delayed expansion ('!'-path corruption),
+  sweeps Model 1-9, and names evidence files per model. (2026-07-29)
+
 ## H2024 MODELS COMPLETE (2026-07-29)
 
 - **All six components modelled from one assembly project.** Times and

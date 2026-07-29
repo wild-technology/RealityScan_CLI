@@ -279,6 +279,50 @@ def pair_related(a: dict, b: dict) -> tuple[bool, str]:
     return False, 'no shared imagery, no spatial overlap'
 
 
+def fused_export_name(tag: str, attempt_no: int) -> str:
+    """The ONE name a fused attempt exports under: file stem, manifest
+    component and in-scene component are all this string plus `_c<K>`.
+    peel_index restarts every attempt, so the attempt number is what makes
+    two fusions in one cluster distinct (the 2026-07-28 duplicate-identity
+    crash and the wrong-component model hazard)."""
+    return f'{tag}_a{attempt_no}'
+
+
+def loss_budget(input_cams: int, loss_tolerance_frac: float) -> int:
+    """Absolute camera budget a fusion may drop, from the operator fraction."""
+    return int(input_cams * loss_tolerance_frac)
+
+
+def acceptance_verdict(workflow_success: bool, adopted_count: int,
+                       fused: bool, confidence: str,
+                       lost: int | None, tol: int) -> tuple[bool, str | None]:
+    """(accept, rejection_reason) for one merge attempt.
+
+    Pure so the suite can drive the REAL decision - the earlier tests
+    re-implemented this arithmetic and would have kept passing had the
+    driver regressed (final review, must-fix #2; the audit-#17 shape).
+    """
+    accept = bool(workflow_success and adopted_count and fused
+                  and confidence == 'exact'
+                  and lost is not None and lost <= tol)
+    rejection = None
+    if workflow_success and adopted_count and lost and lost > tol:
+        rejection = 'shrink'
+    if workflow_success and fused and confidence != 'exact':
+        rejection = 'ambiguous_attribution'
+    return accept, rejection
+
+
+def effective_ladder_for(subset: list[dict], ladder: list[dict]) -> list[dict]:
+    """Rungs admissible for this subset: merge rungs only when the
+    shared-image graph SPANS it (merge fuses through camera identity and
+    otherwise rigid-glues everything in the scene); align rungs always."""
+    if shared_graph_spans(subset):
+        return ladder
+    align_only = [s for s in ladder if s['mode'] == 'align']
+    return align_only or ladder
+
+
 def shared_graph_spans(subset: list[dict]) -> bool:
     """True iff every member is reachable from every other through
     shared-image edges. This is the admission test for -mergeComponents
@@ -752,23 +796,13 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                 break
             attempted.add(subset_sig)
 
-        # Mechanism-aware rung selection. -mergeComponents fuses ONLY through
-        # shared cameras [NA167 D1-D3/D6]; with sfmMergeGeoreferencedComponents
-        # it instead rigid-glues every georeferenced component in the scene
-        # into one container - which is how merged5's cluster_1 packed eight
-        # disjoint objects into a single 3,615-camera "component". -align fuses
-        # via image CONTENT and needs no shared identity (the hull, and
-        # HANDOFF hypothesis 9).
-        #
-        # Merge rungs are admitted only when the SHARED-IMAGE graph spans the
-        # whole subset. Any-pair sharing is not enough: in {c2, z4_c1, z4_c2}
-        # only c2-z4_c1 share imagery while z4_c2 merely bbox-overlaps, and a
-        # merge rung would glue all three - silently absorbing an object whose
-        # relation is purely spatial. Align-only lets content decide its fate.
-        effective_ladder = (ladder if shared_graph_spans(subset) else
-                            [s for s in ladder if s['mode'] == 'align'])
-        if not effective_ladder:
-            effective_ladder = ladder  # never run zero rungs
+        # Mechanism-aware rung selection - see effective_ladder_for. In
+        # {c2, z4_c1, z4_c2} only c2-z4_c1 share imagery while z4_c2 merely
+        # bbox-overlaps; a merge rung would glue all three, silently absorbing
+        # an object whose relation is purely spatial. Align-only lets content
+        # decide its fate (which is exactly what happened: align fused all
+        # three on content, proving z4_c2 belonged).
+        effective_ladder = effective_ladder_for(subset, ladder)
         if len(effective_ladder) != len(ladder):
             logger.info('%s: shared-image graph does not span the subset - '
                         'align-only rungs (%d of %d); a merge rung could only '
@@ -789,15 +823,7 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                         tag, attempt_no, step['label'], len(subset),
                         f' (target {target_key})' if target_key else '')
             t0 = time.time()
-            # Name the exports by ATTEMPT, not just by cluster. `-importComponent
-            # X.rsalign` names the in-scene component `X`, and GenerateModel
-            # selects it by that name - so two accepted fusions in one cluster
-            # both exporting `<tag>_m_c0.rsalign` (from different attempt dirs)
-            # put TWO identically-named components in the assembly, and
-            # `-selectComponent` then targets whichever one RealityScan picks.
-            # A model would be built on the wrong component, silently.
-            # This also keeps file stem == manifest component == in-scene name.
-            export_name = f'{tag}_a{attempt_no}'
+            export_name = fused_export_name(tag, attempt_no)
             result = run_merge_workflow(
                 cli, complist, adir, export_name, step['mode'], step['settings'],
                 log_path, params_path, images_root, logs_dir, harvest=True,
@@ -826,7 +852,7 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                 os.path.join(adir, 'rslog.txt'),
                 [m['rsalign'] for m in subset])
             input_cams = sum(m['camera_count'] for m in subset)
-            tol = int(input_cams * loss_tolerance_frac)
+            tol = loss_budget(input_cams, loss_tolerance_frac)
             attributed, confidence = attribute_result(subset, sizes, logger,
                                                       loss_tolerance=tol)
             adopted = [r for r in attributed if r['inputs']]
@@ -850,28 +876,26 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
             record['attempts'].append(entry)
 
             fused = any(len(r['inputs']) >= 2 for r in adopted)
-            # Bounded loss, not never-shrink. The old `lost <= 0` could never
-            # accept a solver-lossy fusion, and a lossy fusion is exactly what
-            # the rematch/high-overlap rungs exist to produce.
-            accept = (result.success and adopted and fused
-                      and confidence == 'exact'
-                      and lost is not None and lost <= tol)
-            if result.success and adopted and lost and lost > tol:
+            # Bounded loss, not never-shrink - the pure decision lives in
+            # acceptance_verdict so the suite drives the real thing.
+            accept, rejection = acceptance_verdict(
+                result.success, len(adopted), fused, confidence, lost, tol)
+            if rejection:
+                entry['rejected'] = rejection
+            if rejection == 'shrink':
                 logger.warning('%s attempt %d SHRANK by %d cameras, over the '
                                '%d-camera budget (%.2f%%) - rejected',
                                tag, attempt_no, lost, tol,
                                100.0 * loss_tolerance_frac)
-                entry['rejected'] = 'shrink'
+            elif rejection == 'ambiguous_attribution':
+                logger.warning('%s attempt %d fused but attribution is %s - '
+                               'rejected (membership would be untrustworthy)',
+                               tag, attempt_no, confidence)
             elif accept and lost:
                 logger.info('%s attempt %d accepted with a %d-camera loss '
                             '(budget %d, %.2f%% of %d input cameras)',
                             tag, attempt_no, lost, tol,
                             100.0 * loss_tolerance_frac, input_cams)
-            if result.success and fused and confidence != 'exact':
-                logger.warning('%s attempt %d fused but attribution is %s - '
-                               'rejected (membership would be untrustworthy)',
-                               tag, attempt_no, confidence)
-                entry['rejected'] = 'ambiguous_attribution'
             if accept:
                 new_subset = []
                 for res in adopted:
@@ -1110,7 +1134,14 @@ def main() -> int:
                        'treat every component as UNMEASURED', exc)
         input_scales = {}
 
-    clusters, plan = partition_clusters(inputs, logger, pair_gate=pair_gate)
+    if assemble_only:
+        # Carried AS-IS means as-is: no twin-drop, no relatedness gating -
+        # every input the operator listed reaches the assembly. Routing
+        # assemble_only through partition_clusters silently discarded
+        # containment twins from a hand-built complist (final review).
+        clusters, plan = [[m] for m in inputs], {}
+    else:
+        clusters, plan = partition_clusters(inputs, logger, pair_gate=pair_gate)
     total_images = count_unique_images(images_root)
 
     cli = RealityScanCLI(logger)

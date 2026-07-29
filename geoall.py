@@ -95,7 +95,11 @@ def get_camera_pitch_accuracy(filename: str) -> float:
     mount = _mount(filename)
     if mount and 'p_acc' in mount:
         return float(mount['p_acc'])
-    return 15.0
+    # Same fallback as the module, same rationale: 10 deg for an UNKNOWN
+    # mount, deliberately not tighter - a confident claim on an unknown
+    # mount is the worst possible case (final review: this briefly said 15
+    # here vs 10 there, the exact divergence M4 exists to prevent).
+    return 10.0
 
 
 

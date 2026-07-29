@@ -90,7 +90,7 @@ def run_merge_zones(args: list[str], log_name: str,
     cmd = [sys.executable, os.path.join(REPO, "merge_zones.py")] + args
     started = time.time()
     proc = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True,
-                          text=True)
+                          text=True, stdin=subprocess.DEVNULL)
     log_path = os.path.join(V2_ROOT, "logs", log_name)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "w", encoding="utf-8") as fh:
@@ -104,12 +104,31 @@ def run_merge_zones(args: list[str], log_name: str,
     return proc.returncode
 
 
+def _terminal_report(report_path: str) -> dict | None:
+    """The report ONLY counts as a phase's terminal artifact when it carries
+    the assembly section - merge_zones flushes after every cluster, so a
+    mid-run abort (including the instrument invariant, which raises by
+    design) leaves a valid-looking PARTIAL file. Skipping on existence made
+    a rerun assemble and model an assembly silently missing whole clusters
+    (final review)."""
+    if not os.path.isfile(report_path):
+        return None
+    with open(report_path, encoding="utf-8") as fh:
+        report = json.load(fh)
+    if "assembly" not in report:
+        logging.getLogger("h2024_final").warning(
+            "%s exists but is PARTIAL (no assembly section) - rerunning the "
+            "phase", report_path)
+        return None
+    return report
+
+
 def phase1_nonhull(logger: logging.Logger) -> dict | None:
     report_path = os.path.join(NONHULL_OUT, "merge_report.json")
-    if os.path.isfile(report_path):
-        logger.info("phase 1: report already exists - skipping")
-        with open(report_path, encoding="utf-8") as fh:
-            return json.load(fh)
+    report = _terminal_report(report_path)
+    if report is not None:
+        logger.info("phase 1: terminal report already exists - skipping")
+        return report
     complist = os.path.join(NONHULL_OUT, "nonhull.complist")
     write_complist(complist, NONHULL)
     rc = run_merge_zones([
@@ -124,6 +143,7 @@ def phase1_nonhull(logger: logging.Logger) -> dict | None:
         "--ladder", "merge_first", "--merge_scope", "neighbour",
         "--pair_gate", "overlap", "--assemble_only", "false",
         "--loss_tolerance", "0.0025", "--scale_gate", "true",
+        "--scale_min", "0.9", "--scale_max", "1.1",
     ], "phase1_nonhull.log", logger)
     if rc != 0:
         return None
@@ -133,10 +153,10 @@ def phase1_nonhull(logger: logging.Logger) -> dict | None:
 
 def phase2_assembly(nonhull_report: dict, logger: logging.Logger) -> dict | None:
     report_path = os.path.join(FINAL_OUT, "merge_report.json")
-    if os.path.isfile(report_path):
-        logger.info("phase 2: report already exists - skipping")
-        with open(report_path, encoding="utf-8") as fh:
-            return json.load(fh)
+    report = _terminal_report(report_path)
+    if report is not None:
+        logger.info("phase 2: terminal report already exists - skipping")
+        return report
     finals = [c["rsalign"]
               for rec in nonhull_report.get("clusters", [])
               for c in rec.get("final_components", [])]
@@ -162,6 +182,7 @@ def phase2_assembly(nonhull_report: dict, logger: logging.Logger) -> dict | None
         "--ladder", "merge_first", "--merge_scope", "neighbour",
         "--pair_gate", "overlap", "--assemble_only", "true",
         "--loss_tolerance", "0.0025", "--scale_gate", "true",
+        "--scale_min", "0.9", "--scale_max", "1.1",
     ], "phase2_assembly.log", logger)
     if rc != 0:
         return None
@@ -213,7 +234,11 @@ def phase4_models(confirmation: dict, logger: logging.Logger) -> list[dict]:
     os.environ["RS_INSTANCE"] = "RS1"
     os.environ["RS_CACHE_DIR"] = r"E:\rscache"
     os.environ["RS_HEADLESS"] = "0"
-    merge_zones.set_project_save_env(IMAGES_ROOT, PROJECT_LABEL)
+    # Dated RC_projects copies stay DEFERRED (owner 2026-07-28): arming
+    # RS_PROJECTS_DIR here made GenerateModel.bat take two per-component
+    # copies, one mid-recipe with ~15 models live (final review).
+    os.environ.pop("RS_PROJECTS_DIR", None)
+    os.environ.pop("RS_PROJECT_LABEL", None)
     cli = RealityScanCLI(logging.getLogger("models"))
     logs_dir = os.path.join(V2_ROOT, "logs")
 

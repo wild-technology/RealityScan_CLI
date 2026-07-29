@@ -241,6 +241,62 @@ def test_overlap_gate_splits_the_transitive_chain():
     assert ab in kb and ab in ko, 'true overlap must relate under both gates'
 
 
+def test_acceptance_verdict_is_the_wired_decision():
+    """Drives merge_zones.acceptance_verdict - the function merge_cluster
+    actually calls - across the real H2024 outcomes (final review must-fix:
+    the loss-budget tests only reached attribute_result, so the accept
+    wiring itself was unguarded)."""
+    tol = merge_zones.loss_budget(4865, 0.0025)
+    assert tol == 12
+
+    # The hull: fused, exact attribution, 5-camera loss inside the budget.
+    accept, rejection = merge_zones.acceptance_verdict(
+        True, adopted_count=1, fused=True, confidence='exact',
+        lost=5, tol=tol)
+    assert accept and rejection is None
+
+    # Loss over budget: rejected as shrink.
+    accept, rejection = merge_zones.acceptance_verdict(
+        True, adopted_count=1, fused=True, confidence='exact',
+        lost=65, tol=tol)
+    assert not accept and rejection == 'shrink'
+
+    # Fused but ambiguous attribution: rejected on the attribution term.
+    accept, rejection = merge_zones.acceptance_verdict(
+        True, adopted_count=3, fused=True, confidence='ambiguous',
+        lost=0, tol=tol)
+    assert not accept and rejection == 'ambiguous_attribution'
+
+    # Nothing fused (parents self-attributed): a clean no-op, no rejection.
+    accept, rejection = merge_zones.acceptance_verdict(
+        True, adopted_count=3, fused=False, confidence='exact',
+        lost=0, tol=tol)
+    assert not accept and rejection is None
+
+    # Workflow failure never accepts regardless of arithmetic.
+    accept, rejection = merge_zones.acceptance_verdict(
+        False, adopted_count=1, fused=True, confidence='exact',
+        lost=0, tol=tol)
+    assert not accept
+
+
+def test_effective_ladder_is_the_wired_mechanism_filter():
+    """Drives merge_zones.effective_ladder_for - what merge_cluster consumes
+    (final review: shared_graph_spans was only tested as a predicate)."""
+    ladder = merge_zones.LADDERS['merge_first']
+    p = comp('z1', 'P', 4, (0, 0, 10, 10), images=['a.jpg', 's.jpg'])
+    q = comp('z4', 'Q', 4, (5, 0, 15, 10), images=['s.jpg'])
+    r = comp('z4', 'R', 4, (8, 0, 18, 10), images=['c.jpg'])
+
+    assert merge_zones.effective_ladder_for([p, q], ladder) == ladder, (
+        'identity-connected subsets keep the full ladder')
+    align_only = merge_zones.effective_ladder_for([p, q, r], ladder)
+    assert align_only and all(s['mode'] == 'align' for s in align_only), (
+        'a non-spanning subset must not see a merge rung - it can only glue')
+    align_ladder = [s for s in ladder if s['mode'] == 'align']
+    assert merge_zones.effective_ladder_for([r], align_ladder) == align_ladder
+
+
 def test_merge_rungs_need_a_spanning_shared_graph():
     """merge fuses through camera identity, so it is only admitted when the
     shared-image graph reaches EVERY subset member. Any-pair sharing is not
@@ -365,8 +421,10 @@ def test_scale_gate_still_blocks_a_fusion_containing_a_bad_input():
 
 
 def fused_name(tag, attempt_no, peel_index):
-    """Mirror of the name merge_cluster builds for an adopted fusion."""
-    return f'{tag}_a{attempt_no}_c{peel_index}'
+    """The REAL naming helper merge_cluster uses - not a mirror. A mirror
+    here kept passing while the driver could regress (final review,
+    must-fix; the audit-#17 shape)."""
+    return f'{merge_zones.fused_export_name(tag, attempt_no)}_c{peel_index}'
 
 
 def test_two_fusions_in_one_cluster_get_distinct_identities():

@@ -1,0 +1,4 @@
+# WildScan TUI dependencies (the pipeline itself has no new requirements).
+#   py -3.13 -m pip install -r wildscan/requirements.txt
+textual>=8.2
+rich>=15.0

@@ -1,10 +1,24 @@
 # HANDOFF — state of the July 2026 overhaul
 
-## 2026-07-29 — H2024 COMPLETE, nothing running, read this first
+## 2026-07-29 — H2024 COMPLETE + DELIVERABLE TOOLING, read this first
 
-**Nothing is running.** No RealityScan, no drivers, no locks, no error
-markers. 143 tests pass. Work is UNCOMMITTED — deliberately, so you can read
-the diff first.
+**Committed and pushed**: `656915b` (pipeline fixes, tests 115→143) and the
+follow-up commit carrying WildScan, the export/publish tooling and the final
+adversarial review's 20 applied findings (tests →157). Pull `origin/main` to
+test in another instance.
+
+**New since the models finished**: WildScan TUI (`py -3.13 -m wildscan`),
+`ExportDeliverables.bat` (OBJ-by-parts per Nira guidance + FBX-by-parts +
+ultra-dense colored PLY; sweeps the "Model N" residuals), `publish_cesium.py`
+(ion REST, raw-OBJ + 3D_CAPTURE per Cesium staff guidance) and
+`publish_nira.py` (official niraclient wrapper; Enterprise-gated). Texture
+budget is now max 4 adaptive 16K textures in both texture passes. Facts:
+Nira recommends OBJ not FBX and REFUSES PLY point clouds (LAS/LAZ/E57);
+neither platform's in-app share is scriptable.
+
+**Export state**: blocked mid-probe by an owner GUI session holding
+H2024_Final_Assembly open (title carries an unsaved `*`); a watcher re-runs
+the probe (smallest component first) when it closes, then the full set.
 
 ### THE DELIVERABLE
 

@@ -24,7 +24,9 @@ setlocal enabledelayedexpansion
 ::      separate arguments and subprocess does not quote them.
 ::   %2 output directory
 ::   %3 merged component/scene name
-::   %4 merge mode: "merge" (default) or "align"
+::   %4 merge mode: "merge" (default), "align", or "assemble" (no merge
+::      operation - import every component, georeference via union log +
+::      -update, save; a SINGLE component is valid in this mode)
 ::   %5 minimum component size for the all-components export (default 50;
 ::      align mode only - exportLatestComponents covers "components
 ::      created in the last alignment", which a plain -mergeComponents is

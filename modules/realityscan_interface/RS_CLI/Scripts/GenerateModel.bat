@@ -171,8 +171,10 @@ for %%M in (Cleanup1 Cleanup2 Cleanup3 Manifold HighPoly SimplifyPass1Raw Simpli
 :: H2024 run produced one "Model N" per component (owner-observed in the
 :: GUI, 2026-07-29), most likely from the large-triangle cleanup path.
 :: Default names carry no component prefix, so they are swept separately.
+:: Residuals from EARLIER components persist in the shared project, so by
+:: the sixth component the name can be "Model 6" - sweep to 9.
 :: try_delete_model is tolerant: absent names are skipped silently.
-for %%M in ("Model 1" "Model 2" "Model 3") do (
+for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do (
     call :try_delete_model %%M
 )
 

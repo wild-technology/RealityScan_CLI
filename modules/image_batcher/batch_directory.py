@@ -181,9 +181,15 @@ class BatchDirectory(RSModule):
                 for chunk in iter(lambda: fh.read(1 << 20), b''):
                     h.update(chunk)
             digest = h.hexdigest()
+        # EVERY parameter that changes zone membership belongs here. The
+        # overlap distance ceiling was added 2026-07-28 and initially left
+        # out - which would have let a re-run with a new ceiling silently
+        # reuse zones built without one, the exact fail-open the guard was
+        # written to close (final review, must-fix #1).
         keys = ('batch_target_images_per_zone', 'batch_min_zone_size',
                 'batch_max_zone_size', 'batch_initial_overlap_percent',
-                'batch_density_weight', 'batch_kde_bandwidth')
+                'batch_density_weight', 'batch_kde_bandwidth',
+                'batch_overlap_max_distance_m')
         input_dir = self.__get_input_dir()
         return {
             'flight_log': os.path.basename(flight_log_path or ''),

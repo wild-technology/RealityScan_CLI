@@ -70,6 +70,22 @@ def test_a_junction_child_is_refused(tmp_path):
         run_h2024_v2.assert_harvestable(str(root), LOG)
 
 
+def test_a_nested_junction_is_also_refused(tmp_path):
+    """A junction one level down (zone_1/cinema) blinds the harvest exactly
+    like a top-level one - the guard must scan recursively (final review)."""
+    real = tmp_path / 'real' / 'cinema'
+    real.mkdir(parents=True)
+    (real / 'a.jpg').write_bytes(b'x')
+
+    root = tmp_path / 'view'
+    (root / 'zone_1').mkdir(parents=True)
+    if not make_junction(str(root / 'zone_1' / 'cinema'), str(real)):
+        pytest.skip('cannot create an NTFS junction here')
+
+    with pytest.raises(RuntimeError, match='reparse-point children'):
+        run_h2024_v2.assert_harvestable(str(root), LOG)
+
+
 def test_the_refusal_names_the_offending_children(tmp_path):
     """A guard that fires without saying what to fix costs another run."""
     real = tmp_path / 'real'

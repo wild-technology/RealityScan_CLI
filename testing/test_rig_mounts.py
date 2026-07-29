@@ -178,6 +178,15 @@ def test_geoall_matches_the_module(geo, family, filename):
         geo._get_camera_pitch_accuracy(filename)
 
 
+@pytest.mark.parametrize('filename', ['S231C0003_x.jpg', 'mystery_cam.jpg'])
+def test_geoall_fallback_matches_the_module_for_unmapped_families(geo, filename):
+    """Starboard (mount None) and unknown families must fall back to the SAME
+    figure in both implementations - the parity requirement does not stop at
+    the mapped families (final review: geoall briefly used 15 vs 10)."""
+    assert geoall.get_camera_pitch_accuracy(filename) == \
+        geo._get_camera_pitch_accuracy(filename)
+
+
 def test_geoall_covers_wca_at_all(geo):
     """geoall had NO WCA branch, so Cinema lost its 45 deg down-look."""
     assert geoall.get_camera_pitch_offset('C231C0003_x.jpg') == 45.0
