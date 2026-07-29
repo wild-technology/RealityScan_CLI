@@ -520,6 +520,14 @@ class RealityScanAlignment(RSModule):
                 output_data['Scenes'][scene_path] = scene_data
             except Exception as e:
                 self.logger.error(f"Error aligning images: {e}")
+                # A raising zone must land in the tally as a FAILURE, not
+                # vanish from it. Before this, a zone that raised (wedged
+                # instance, sidecar OSError after a successful align) was
+                # counted neither as succeeded nor failed - nine raising
+                # zones out of ten still reported 'Zones Failed: 0' and
+                # exit 0 (audit #7, 2026-07-28).
+                output_data['Components'][zone_output_dir] = {
+                    'Success': False, 'Error': str(e)}
 
             self._update_loading_bar(bar, 1)
 

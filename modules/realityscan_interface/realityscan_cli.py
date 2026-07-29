@@ -227,8 +227,16 @@ class RealityScanCLI:
     def __init__(self, logger, settings: SettingsStore = None, instance_name: str = None):
         self.logger = logger
         self.settings = settings or SettingsStore()
+        # Resolution order: constructor arg -> RS_INSTANCE env var ->
+        # rs_settings.json -> default. The env var was previously only ever
+        # WRITTEN (for the .bat layer), never read - so a driver exporting
+        # RS_INSTANCE=RS2 for isolation silently ran on whatever the settings
+        # file held, and could -quit a live instance it did not own
+        # (2026-07-28: an overlap-probe session running from this checkout
+        # landed on RS1 while it was the production instance; audit #19).
         self.instance_name = (
             instance_name
+            or os.environ.get('RS_INSTANCE')
             or self.settings.get('realityscan', 'instance_name')
             or DEFAULT_INSTANCE_NAME
         )

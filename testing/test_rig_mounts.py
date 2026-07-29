@@ -169,6 +169,13 @@ def test_geoall_matches_the_module(geo, family, filename):
     """geoall is documented canonical; it must not disagree with the module."""
     assert geoall.get_camera_offsets(filename) == geo._get_camera_offsets(filename)
     assert geoall.get_camera_pitch_offset(filename) == geo._get_camera_pitch_offset(filename)
+    # Pitch ACCURACY was the one column the M4/M5 unification missed: geoall
+    # kept a stale prefix chain that gave WCA 10.0 against the module's 15.0
+    # and Zeuss 10.0 against 30.0 - a 3x-overconfident prior on the mount
+    # with the least ground truth, and PD-0 shows over-tight orientation
+    # accuracy FRAGMENTS the solve (audit #6, 2026-07-28).
+    assert geoall.get_camera_pitch_accuracy(filename) == \
+        geo._get_camera_pitch_accuracy(filename)
 
 
 def test_geoall_covers_wca_at_all(geo):

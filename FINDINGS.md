@@ -843,6 +843,15 @@ frozen as the NA167 raw log; all new findings go HERE.
 
 ## Windows & automation traps
 
+- **`Set-Content -Encoding utf8` in Windows PowerShell 5.1 writes a BOM**, and a
+  BOM on line 1 of a `.complist` silently invalidates the first entry: merge_zones
+  read `\ufeffF:\...\zone_1_c6.rsalign`, found no manifest for it, and aborted with
+  "complist entries without manifests". Python writes these files with
+  `encoding='utf-8'` (no BOM), so only hand-authored/PowerShell-authored lists are
+  affected. Use `[System.IO.File]::WriteAllLines($p,$lines,(New-Object
+  System.Text.UTF8Encoding($false)))`. Verified by reading the first three bytes
+  (239,187,191 = BOM). (2026-07-27)
+
 - **cmd: exit /b N inside a MULTI-STATEMENT parenthesized block returns
   0 to the caller**; the single-line `( echo msg & exit /b 1 )` form
   propagates correctly. Never put exit /b inside multi-line parens; use
@@ -1811,3 +1820,450 @@ MERGE ATTEMPT's snapshot, and which artifact.
   recorded: 3,737 here is the fused component's own size, measured while both
   parents were still in the scene. Still does not settle real-loss vs
   harvest-artifact — the re-import census does. [H2023] (2026-07-27) ESTABLISHED
+
+## The peel harvest cannot cross a directory junction (2026-07-27)
+
+- **PowerShell 5.1 `Get-ChildItem -Recurse` does NOT descend into junction
+  CHILDREN, and the peel harvest is built on it.** Measured directly on the
+  H2024 v2 run: `F:/na156_h2024_v2/batched_images_by_zone` (a real directory
+  holding five per-zone junctions to the shared tree) returned **0** `.xmp`
+  files under `-Recurse`; the same tree through its real path returned
+  **9,835**. Consequence: all five `identity_r<K>` directories of every merge
+  attempt were created and left EMPTY, `peel_counts_from` returned `[]`,
+  `attribute_result` got nothing to attribute, and all 15 attempts recorded
+  `attribution: ambiguous, adopted_count: 0, camera_delta: null` — the exact
+  no-reason rejection shape already logged for H2023. 155 minutes of correct
+  GPU work was discarded by a blind instrument. [H2024] (2026-07-27) ESTABLISHED
+
+- **The ALIGN harvest survived the same layout; only the MERGE harvest died.**
+  AlignZone.bat is handed the zone folder itself — the junction IS the
+  enumeration root, and PowerShell resolves a junction it is pointed at
+  directly — so every v2 align manifest is complete (members == camera_count,
+  bbox present, 14/14 components). MergeZoneComponents.bat is handed the
+  PARENT of the zone folders, so the junctions are children and are skipped.
+  Same tree, same tool, opposite outcome depending on where enumeration
+  starts. Python's `os.walk` crosses junctions in both cases, which is why
+  `ensure_calibration_sidecars` reported correct coverage throughout and gave
+  no warning. [H2024] (2026-07-27) ESTABLISHED
+
+- **SUPERSEDED AS A CAUSE (2026-07-27, same day).** The junction fact above is
+  TRUE and reproducible, but it is NOT why the peel was empty. The merge was
+  re-run with the REAL image tree (`assert_harvestable` verified no
+  reparse-point children) and produced the IDENTICAL result: `peel=[]` on all
+  18 attempts (cluster_0 x3, cluster_1 x15), all `identity_r<K>` empty.
+  NOTE the re-run only cleared the READ side: the v2 components were still
+  exported from junction paths, so the merged scene's images still resolved
+  through the junction and the WRITE side was never tested. 157 more minutes
+  spent on a
+  mechanism I confirmed but never linked to the symptom. The junction entry
+  stays as a real Windows trap; it is not the explanation. [H2024]
+  (2026-07-27) SUPERSEDED
+
+- **MEASURED, the actual failure: `exportXMPForSelectedComponent` completes in
+  a merge scene and writes NOTHING.** In `merged2` attempt 1 the log shows
+  `exportXMPForSelectedComponent` -> "Exporting Registration completed in
+  8.758 seconds", yet a sweep of the whole of `F:` found **zero** `.xmp`
+  written after the run began, and the image tree holds 9,835 sidecars of
+  which 0 carry `xcr:Position` - the exact string the harvest filters on. So
+  the harvest is not failing to FIND pose sidecars; none are ever created.
+  Ruled out by measurement: the merge scene DOES contain images
+  (`Added 1407 images` / `1217` / `2241`), so "an imported component carries no
+  images" is not the reason. [H2024] (2026-07-27) ESTABLISHED
+
+- **The ALIGN harvest, by contrast, is exactly correct** - which is what made
+  the merge failure invisible for so long. zone_1's laps are
+  2619/985/593/248/133/64/0, whose successive differences are
+  1634/392/345/115/69/64 - reproducing all six component sizes to the camera.
+  Pose sidecars exist during an align because the align itself wrote them;
+  the peel then moves every one of them out, leaving the tree pose-free.
+  A later merge therefore starts with nothing to harvest. [H2024]
+  (2026-07-27) ESTABLISHED
+
+- **RESOLVED BY PROBE: the cause is the JUNCTION, on the WRITE side.** Four
+  BASELINE components (real image paths) were merged through the unchanged
+  workflow with the same image tree, same harvest root, and the same 9,835
+  restored calibration sidecars in place. Result: `identity_r0` 267 files
+  (= 116+94+57, the exact camera count), ordinal-named `00000.xmp`..., all
+  pose-bearing; `r1` 116, `r2` 94, `r3` 57, `r4` 0; attribution EXACT;
+  `cluster_0: fused 3 -> 1` ACCEPTED; assembly built. So the entire
+  export -> harvest -> attribute -> accept chain is sound. The ONLY difference
+  from the failed v2 runs is that v2's components were exported by aligns
+  rooted at a junction path, baking `F:\na156_h2024_v2\batched_images_by_zone\
+  zone_N\...` into every `.rsalign`; RealityScan writes no XMP sidecars when
+  the scene's images resolve through a reparse point, and reports success.
+  ELIMINATED by the same probe: the calibration-sidecar restoration is NOT the
+  cause. NOTE the junction was never necessary - `--r_input` and `--output_dir`
+  are independent, so aligning FROM the real tree INTO a separate output
+  protects a baseline just as well. [H2024] (2026-07-27) ESTABLISHED
+
+- **FIX VERIFIED: de-junctioning the v2 image tree restores the whole chain.**
+  The five per-zone junctions were replaced with real directories - `.jpg`
+  HARDLINKED (9,835 files, 35.8 GB, same volume, 0.05 GB actual cost), `.xmp`
+  and flight logs COPIED (deliberately not hardlinked: a shared inode would let
+  a v2 write corrupt the baseline tree's sidecar). Recursive enumeration through
+  the v2 path went 0 -> 9,835 sidecars, and `fsutil hardlink list` confirms one
+  inode per image. A confirmation merge over three UNCHANGED v2 components
+  (zone_1 c1+c4+c5, 525 cams) then produced peel [525, 392, 69, 64] - exact
+  camera count, exact subset sums - and `fused 3 -> 1` ACCEPTED. No re-align
+  was needed; the v2 components were never the problem, only the paths baked
+  into them. [H2024] (2026-07-28) ESTABLISHED
+
+- **THE HULL DOES FUSE. It is the ACCEPTANCE ARITHMETIC that rejects it.**
+  With the instrument finally working, cluster_0 (zone_2 1,407 + zone_3 1,217 +
+  zone_5 2,241 = 4,865) produced peel [4860, 2241, 1407, 1217] on rung 1 and
+  [4851, 2241, 1407, 1217, 5] on rungs 2-3. So RealityScan fused **4,860 of
+  4,865 cameras into one component** every time. It was rejected because 4,860
+  is not an exact subset sum of {2241, 1407, 1217} (= 4,865): `attribute_result`
+  returned `ambiguous`, no adopted entry had >= 2 inputs, so `fused` evaluated
+  False and `accept` never fired. The three parents each attributed to
+  themselves exactly, which is why the attempt still recorded `adopted=3,
+  delta=0` - a rejection that looks like a clean no-op in the report.
+  This is precisely the defect the 2026-07-27 merge review recorded and which
+  was never fixed: "`fused` is inferred from the same arithmetic that fails on
+  a lossy fusion, so a fusion is only VISIBLE when its count is an exact
+  input-subset sum." A 5-camera loss out of 4,865 (0.10%) is enough to hide it.
+  CONTRAST cluster_1, where both fusions were exact and both were accepted:
+  attempt 1 peel [1767, 1634, 69, 64] (1634+69+64 = 1767) and attempt 5 peel
+  [1456, 576, 358, 345, 177] (576+358+345+177 = 1456). Exact fuses, lossy does
+  not. FIX REQUIRED: a signed bounded-loss tolerance inside `attribute_result`
+  (HANDOFF loose end #3 - "a bounded-loss flag is INERT without that"). This is
+  an ACCEPTANCE-SEMANTICS change on a deliverable and needs an owner decision,
+  not a silent default. [H2024] (2026-07-28) ESTABLISHED
+
+- **OBSERVATION, not yet explained: attempts that re-import a previously fused
+  component harvest NOTHING.** cluster_1 attempts 2-4, whose scenes contained
+  `cluster_1_m_c0.rsalign` from attempt 1, all recorded `identity_r0: 0`, while
+  attempts 1 and 5 - neither of which contained a previously fused export -
+  harvested normally. Consistent with B10's rule that identity is only
+  harvestable from the original aligning scene, but not established. Do not
+  build on this without a probe. [H2024] (2026-07-28) OPEN
+
+- **`MergeZoneComponents.bat` refuses to ASSEMBLE a single component.** The
+  `component_count LSS 2` guard at lines 80-83 is applied to every mode,
+  including `assemble`, where one component is a perfectly valid deliverable
+  (import, georeference, save). The confirmation merge fused 3 -> 1, so the
+  assembly stage aborted with `ERROR: need at least 2 components, found 1` and
+  merge_zones.py exited 1 AFTER a completely successful ladder. Latent for a
+  multi-cluster run (N clusters yield >= N final components, so 2 clusters can
+  never trip it) but it means a fully-converged single-feature dive cannot
+  produce its assembly project. Fix: exempt assemble mode from the >= 2 check.
+  APPLIED 2026-07-28: assemble mode now requires >= 1, every other mode still
+  requires >= 2. Verified three ways via `cmd /c` with nothing else running -
+  1 component + assemble proceeds past validation and boots; 1 + merge exits 1
+  with "need at least 2 components to merge, found 1"; 0 + assemble exits 1.
+  Both reject paths return 1, not 0, because they use the existing top-level
+  `goto :argfail` rather than an `exit /b` inside a parenthesised block (the
+  cmd trap in section 8). File re-verified pure CRLF (342 CRLF, 0 bare LF), and
+  every .bat/.vbs under RS_CLI re-checked. [H2024] (2026-07-28) ESTABLISHED
+
+## H2024 v2 deliverable + the model-naming collision (2026-07-28)
+
+- **FINAL H2024 DELIVERABLE: `merged5`, 68.3 min, exit 0.**
+  `F:/na156_h2024_v2/merged5/assembly/H2024_V2_Assembly.rsproj` - TWO
+  components, 8,475 cameras, georeferenced, uniquely named and therefore
+  model-ready. Dated copy:
+  `F:/na156_h2024_v2/RC_projects/NA156_H2024_V2_merged_20260728.rsproj`.
+  | component | cameras | origin |
+  |---|---|---|
+  | `cluster_0_a2_c0` | 4,860 | the HULL - all three of zone_2+zone_3+zone_5 |
+  | `cluster_1_a3_c0` | 3,615 | all eight zone_1+zone_4 fragments, zero loss |
+  The ladder behaved exactly as designed. cluster_0 rung 1 (merge_georef)
+  peeled [4854, 2241, 1407, 1217, 5] - an 11-camera loss INSIDE the 12-camera
+  budget, but the stray 5-camera fragment made attribution `ambiguous`, so it
+  was rejected on the attribution term rather than the loss term; rung 2
+  (align_rematch) peeled [4860, 2241, 1407, 1217], `exact`, 5-camera loss,
+  ACCEPTED. cluster_1 consolidated progressively across three accepted
+  fusions - 3->1 (1,767), 5->1 (3,039), 2->1 (3,615) - every one exact with
+  ZERO loss. Half the wall-clock of merged4 (68 vs 122 min) because an
+  accepted rung short-circuits the rest of the ladder. [H2024] (2026-07-28)
+  ESTABLISHED
+
+- **SUPERSEDED by merged5: `merged4`, 121.8 min, exit 0.** Kept only as the
+  record of the naming collision below; do NOT model from it.
+  `F:/na156_h2024_v2/merged4/assembly/H2024_V2_Assembly.rsproj` holds FOUR
+  components totalling 8,474 cameras - cluster_0 fused all three of its inputs
+  into **one 4,859-camera component (the hull)** with a 6-camera loss inside
+  the 12-camera budget; cluster_1 yielded `cluster_1_a1_c0` (1,767, fused),
+  `cluster_1_a5_c0` (1,456, fused) and `zone_1_c1` (392, unfused). All 14 input
+  components PASS the 0.90-1.10 scale band. This is the shape the owner
+  predicted: one very large component plus several smaller surveyed parts.
+  [H2024] (2026-07-28) ESTABLISHED
+
+- **MODEL-HANDLING BUG: two accepted fusions in one cluster export files with
+  the SAME stem, so the assembly holds two identically-named components.**
+  `-importComponent X.rsalign` names the in-scene component `X`, and
+  `GenerateModel.bat` selects its target with `-selectComponent <name>`.
+  merged4's assembly imported
+  `cluster_1/attempt_1_merge_georef/cluster_1_m_c0.rsalign` AND
+  `cluster_1/attempt_5_merge_georef/cluster_1_m_c0.rsalign` - different
+  directories, identical stem - so the saved project contains two components
+  called `cluster_1_m_c0`. Camera counts are correct (4859+392+1767+1456 =
+  8474); the defect is purely identity, and it would send a per-component model
+  run at whichever component RealityScan resolves first, silently. FIX APPLIED
+  AND VERIFIED: the workflow is now handed `<tag>_a<attempt>` as its export
+  name, so the file stem, the manifest `component`, and the in-scene name are
+  one unique string. merged5's assembly imports
+  `cluster_0_a2_c0.rsalign` and `cluster_1_a3_c0.rsalign` - distinct stems, and
+  its rslog confirms both loaded with the expected counts (4,860 and 3,615).
+  merged4 predates the fix and is NOT model-ready. [H2024]
+  (2026-07-28) ESTABLISHED
+
+- **`-selectModel` matches on EXACT name - the prefix hazard is not real.**
+  Checked because `GenerateModel.bat`'s cleanup loop deletes `<tag>_HighPoly`
+  while `<tag>_HighPoly_Textured` must survive. en-US `allcommands.htm`:
+  "selectModel modelName - Select a model with the specified name", and the
+  H2023 PD6 deliverable confirms it empirically: its cleanup ran and all three
+  kept models (`_HighPoly_Raw`, `_HighPoly_Textured`, `_Simplified_Textured`)
+  survived. No change needed. [H2023] (2026-07-28) ESTABLISHED
+
+- **Deprecation sweep (2026-07-28).** `process_h2023.py` is already gone.
+  DEAD, zero callers anywhere in the repo: `scan_pose_sidecars`,
+  `members_from_sidecars`, `_resolve_image_basename` and `_POSE_TAG` in
+  `modules/component_manifest.py` (~80 lines) - the old HANDOFF nit said
+  "verify before deleting"; now verified, left in place for an owner call.
+  Zero code references but documented and intentional: `SequentialAlignGrow.bat`,
+  `AlignImageList.bat`. Deprecated but still used by `run_zone9_tests.py`:
+  `AlignImagesFromFolder.bat`. NOT dead, a documented compatibility shim:
+  `testing/scale_oracle.py`. The two `RealityCapture` hits in code are
+  historical comments, allowed by the naming rule. (2026-07-28)
+
+- **`-mergeComponents` retains its input components alongside the fused one -
+  now confirmed on a controlled case.** The probe's peel was
+  [267, 116, 94, 57]: the fused component PLUS all three unconsumed parents.
+  Attribution handles this correctly when peel data exists (267 is the exact
+  subset sum of the three, so confidence is `exact` and the fusion is
+  adopted). This independently reproduces the H2023 hull observation recorded
+  above. [H2024] (2026-07-27) ESTABLISHED
+
+- **SUPERSEDED HYPOTHESIS (resolved same day by the probe above).**
+  `-exportXMPForSelectedComponent` may only cover images from the LAST
+  IN-SESSION ALIGNMENT (the documented `-exportXMP` limitation), so a
+  `-mergeComponents` scene exports zero and reports success. If true, it also
+  means the H2023 `merge_verify` peel (3,737 / 3,026 / 714) was moving STALE
+  pose sidecars left in the tree by an earlier operation, not that attempt's
+  output - which would make every merge-mode peel count in this log an
+  artifact. DECISIVE CHEAP TEST: import two small v2 components (zone_1_c4 69
+  cams + zone_1_c5 64 cams), `-mergeComponents`, then
+  `-exportXMPForSelectedComponent`, and watch the image tree for any file
+  containing `xcr:Position`. ~10 minutes, no full merge required. [H2024]
+  (2026-07-27) OPEN
+
+- **The merge DID fuse; only the accounting failed.** `cluster_0`
+  attempt 1 imported exactly the three components named in its own
+  `cluster.complist` (zone_2_c0 + zone_3_c0 + zone_5_c0) and its `rslog.txt`
+  records `-mergeComponents` followed by **"Finalizing 1 component"**. The log
+  was validated against the complist first, per the run-unique-token rule
+  above; nothing ran concurrently this time. So a three-way fusion of 4,865
+  cameras was performed and then reported as three "unfused input"
+  components. MITIGATION: pass merge_zones.py the REAL images root, never a
+  path whose children are reparse points. STRUCTURAL FIX WORTH DOING: the
+  harvest should assert it moved a non-zero number of sidecars when the
+  component it just exported is non-empty — an empty peel is currently
+  indistinguishable from a legitimately empty scene. [H2024]
+  (2026-07-27) ESTABLISHED
+
+- **H2024 v2 re-align closed the metric-scale crisis.** `zone_3_c0` went from
+  **0.236 FAIL** to **0.969 PASS** (IQR 0.147); the other two baseline
+  failures also cleared (`zone_1_c2` 1.127 -> 1.081, `zone_4_c2` 1.196 ->
+  0.919). All 14 v2 components now pass the 0.90-1.10 band. CAUSE NOT
+  ESTABLISHED — the re-align changed several things at once (restored
+  calibration sidecars, fresh solve, the 61723e4 code changes), and align
+  fragmentation is already on record as nondeterministic. Do not attribute it
+  to any single change without a controlled cell. [H2024] (2026-07-27)
+  ESTABLISHED
+
+## merged5 cluster_1 was a rigid glue, and the gate that allowed it (2026-07-28)
+
+- **merged5's `cluster_1_a3_c0` (3,615 cams) is NOT a content fusion - it
+  packed eight disjoint objects into one container.** Owner challenge,
+  verified by forensics over the manifests: of cluster_1's 28 component
+  pairs, exactly ONE (`zone_1_c2` <-> `zone_4_c1`, 343 shared basenames)
+  shares any imagery; the other seven components relate only through
+  TRANSITIVE bbox adjacency under the 10 m-margin border gate (effective
+  reach 20 m, both boxes expanded). All three accepted cluster_1 attempts
+  were `merge_georef` (`-mergeComponents` + `sfmMergeGeoreferencedComponents`)
+  and RealityScan's own log reported 'Finalizing 3', then '7', then '8'
+  components while the arithmetic scored each attempt as an exact-sum
+  fusion with zero loss. CONTRAST the hull: its accepted rung was `align`,
+  'Finalizing 1', and it LOST 5 cameras - real joint solving. Zero loss on a
+  zero-shared-imagery "fusion" is the signature of co-location, not
+  registration. GenerateModel's keep-largest-connected-component step would
+  have deleted every smaller object from a model of that container.
+  CAVEAT: the exact semantics of 'Finalizing N' are NOT established -
+  recorded per attempt now (`rs_finalizing`), probe queued. [H2024]
+  (2026-07-28) ESTABLISHED
+
+- **The gate rework (owner uniqueness criterion): components belong in one
+  merge scene ONLY when they share imagery or their bboxes TRULY overlap.**
+  `pair_gate=overlap` is the default; `border` retains the old 10 m-margin
+  adjacency for comparison. Additionally, `-mergeComponents` rungs are only
+  admitted when the SHARED-IMAGE graph spans the whole subset (merge fuses
+  through camera identity; align fuses through content) - any-pair sharing is
+  not enough, since a merge rung glues every component in the scene
+  indiscriminately. Empty-peel invariant added: an empty peel beside a
+  non-empty export now ABORTS the run as an instrument failure instead of
+  being scored as "nothing fused" (the shape that silently discarded 5h12m
+  across two junction-blinded runs). (2026-07-28)
+
+- **Non-hull re-run under the new gate: both fusions were content-driven and
+  exact.** The 8 components partition into 5 clusters (vs ONE under the
+  border gate). `{zone_1_c2, zone_4_c1, zone_4_c2}` does not span on shared
+  imagery, so it ran align-only - and align fused ALL THREE: peel
+  [880, 358, 345, 177], 880 = 345+358+177 exact, zero loss. So `zone_4_c2`
+  genuinely belongs to that object (content proved what the bbox suggested).
+  `{zone_1_c4, zone_1_c5}` (zero shared imagery, true bbox overlap) also
+  fused by align: peel [133, 69, 64], exact. Projected finals: 5 non-hull +
+  hull = 6 total against the owner's nominal 7 - the difference is exactly
+  z4_c2 fusing INTO the c2/z4_c1 object rather than standing alone. [H2024]
+  (2026-07-28) ESTABLISHED
+
+## Cross-session incident + exploration-session integration (2026-07-28)
+
+- **`RS_INSTANCE` was never an input.** `realityscan_cli.py` resolved the
+  instance from constructor arg -> rs_settings.json -> default and only ever
+  WROTE the env var for the .bat layer, so every driver exporting
+  `RS_INSTANCE` was decorative - it worked because rs_settings said RS1. An
+  exploration session running the overlap probe FROM this checkout believed
+  it was on RS2 and ran on RS1 (its own audit #19: it could have -quit a live
+  production instance; no harm only because the machine was verified clear).
+  FIX APPLIED: env var now resolves between constructor arg and settings.
+  The same session overwrote rs_settings.json's `merge` section with probe
+  paths (`G:\zone_probe\...`); restored from this session's known values.
+  (2026-07-28) ESTABLISHED
+
+- **The overlap-donation defect is CONFIRMED against the artifact, and fixed.**
+  Verified directly from the on-disk per-zone flight logs (not the audit's
+  log inversion): H2023 zone_1 holds 4,540 of 4,598 unique images - 98.7% of
+  the dive - spanning ALL THREE co-visibility blocks, with 756 images
+  structurally unable to match its own main block; 918 duplicate copies
+  (20.0%) across the tree. Cause: `np.argsort(score)[:overlap_size]` sized
+  by the RECEIVER with no cap against the donor pool. FIX: symmetric cap
+  (at most overlap% of receiver AND of donor pool) plus an optional absolute
+  distance ceiling (`batch_overlap_max_distance_m`, default 0 = off - the
+  band width is deliberately unsettled pending the overlap probe). 5 tests
+  drive the real zoning code on synthetic strips. [H2023] (2026-07-28)
+  ESTABLISHED
+
+- **The batcher's "~3 h zone computation" was a blocked plt.show() the whole
+  time.** Actual compute measured at 1.35 s for 8,197 points. The isatty()
+  gate added earlier did not close it because isatty() LIES under hidden
+  consoles (this repo's own Windows-traps list) - which is why a "gated" run
+  still spent 2 h 53 min between its two figure saves, and why the 28.9-min
+  run looked like an unexplained outlier. plt.show() is now opt-in only
+  (`RS_SHOW_PLOTS=1`); the figures were always saved as PNGs regardless.
+  SUPERSEDES HANDOFF loose end #10's "worth hunting" framing - hunted, found,
+  fixed. (2026-07-28) ESTABLISHED
+
+- **Audit fixes applied from the exploration session's 27-finding audit**
+  (report: `F:/_copylogs/code_audit_2026-07-28.md`; claims re-verified here
+  before changing anything): #5 `--scale_min/--scale_max` never reached the
+  verdict - every band was baked at 0.90/1.10 while EVALUATION_READY printed
+  the operator's values (fixed; test pins the wiring end to end). #6 geoall
+  pitch ACCURACY was a stale prefix chain contradicting MOUNTS - WCA got 10
+  vs 15, Zeuss 10 vs 30, and PD-0 shows over-tight orientation accuracy
+  fragments the solve (fixed; parity test extended). #7 a zone that RAISED
+  vanished from the align tally - neither Succeeded nor Failed, so nine
+  raising zones out of ten still reported exit 0 (fixed: a raise records a
+  failed zone). #4 GenerateModel `:try_delete_model` used a single short
+  wait, so a no-op select on a missing intermediate left the FINAL TEXTURED
+  MODEL selected for the delete that followed; both its error moves also
+  launder ALL codes and 12 iterations overwrote the evidence file (fixed:
+  double-wait shape, save BEFORE the cleanup loop, per-model evidence names;
+  whitelist redesign queued). (2026-07-28)
+
+- **The scale gate cannot measure FUSED components - by construction - and it
+  correctly blocked them, including the hull.** In the final-assembly run all
+  three fused components came back UNMEASURED while every unfused original
+  passed: a merge-scene `-exportXMPForSelectedComponent` writes ORDINAL
+  sidecars (B10) with no image identity, so the stem-pairing oracle has
+  nothing to join on. The gate did its job - silence is not evidence - but it
+  would have left the hull unmodelled. [H2024] (2026-07-28) ESTABLISHED
+
+- **Correspondence-free scale measurement for fused components (quantile
+  ratio), validated both directions.** Under a similarity transform, sorted
+  distances-from-centroid of the same camera multiset correspond
+  rank-for-rank, so ratios of matching quantiles (5th-95th, trimmed) between
+  the solved cloud (ordinal pose sidecars in the fused component's
+  identity_r0 - LOCAL frame, irrelevant since distance ratios are
+  rigid-invariant) and the nav cloud give median + IQR without any pairing.
+  TWO TRAPS hit on the way: (a) Position is an ELEMENT
+  (`<xcr:Position>x y z</xcr:Position>`) in current exports, attribute form
+  only in older ones; (b) a fused manifest's `images` is the unique-basename
+  UNION, but the scene holds one camera per input OCCURRENCE (880 cameras
+  over 537 unique basenames on cluster_1), so the nav multiset must be the
+  CONCATENATION of the attributed input manifests' members. VALIDATION:
+  known-good zone_1_c1 measures 1.045 vs the stem oracle's 1.023 (same
+  verdict, 2.2%); the hull's real clouds shrunk by 0.236 FAIL at 0.235.
+  ALIGN-scene identity_rK dirs are CUMULATIVE (rK = laps K..end), unlike
+  merge scenes where rK is component K alone - component K's own sidecars
+  are the stem difference rK minus rK+1. [H2024] (2026-07-28) ESTABLISHED
+
+- **THE FUSED DELIVERABLES ARE METRICALLY SOUND - measured directly, not
+  inherited.** `cluster_0_a2_c0` (the hull, 4,860 cams) scale **0.997**,
+  IQR width 0.014; `cluster_1_a1_c0` (880) **1.000**, IQR 0.029;
+  `cluster_4_a1_c0` (133) **0.980**, IQR 0.077. This closes the
+  EVALUATION_READY caveat that the assembled deliverable's scale was
+  unmeasured - for fused components it now is. [H2024] (2026-07-28)
+  ESTABLISHED
+
+## H2024 MODELS COMPLETE (2026-07-29)
+
+- **All six components modelled from one assembly project.** Times and
+  directly-measured scale:
+
+  | component | cams | scale | model time |
+  |---|---:|---:|---:|
+  | `cluster_0_a2_c0` (HULL) | 4,860 | 0.997 | 338.3 min |
+  | `zone_1_c0` | 1,634 | 1.084 | 249.3 min |
+  | `cluster_1_a1_c0` | 880 | 1.000 | 122.8 min |
+  | `zone_4_c0` | 576 | 0.947 | 106.1 min |
+  | `zone_1_c1` | 392 | 1.023 | 97.4 min |
+  | `cluster_4_a1_c0` | 133 | 0.980 | 40.1 min |
+
+  Three kept models each (`_HighPoly_Raw`, `_HighPoly_Textured`,
+  `_Simplified_Textured`). Project:
+  `F:/na156_h2024_v2/final_assembly/assembly/H2024_Final_Assembly.rsproj`;
+  dated copy `RC_projects/NA156_H2024_V2_merged_20260729` (95.2 GB).
+  [H2024] (2026-07-29) ESTABLISHED
+
+- **The ~5,000-camera model envelope, measured: it does NOT plateau.** Peak
+  commit / minimum available RAM by component size: 133 -> 96.2 GB / 25.9 GB;
+  392 -> 107.1 / 3.5; 576 -> 116.8 / 3.0; 880 -> 138.6 / 2.8; 1,634 -> 139.9 /
+  2.0; **4,860 -> 148.7 / 0.9**. The apparent plateau at ~140 GB across 392-1,634
+  cameras was an artifact of that range; the hull pushed ~9 GB past it and ran
+  with under a gigabyte of headroom on a 93.6 GB box. It completed, but a
+  materially larger component on this hardware should be treated as at risk,
+  not as covered by the plateau. Cache on E: absorbed the working set
+  (6.1 TB free throughout). [H2024] (2026-07-29) ESTABLISHED
+
+- **Deferring the dated copy is worth ~10x on save cost.** `GenerateModel.bat`
+  takes TWO `RC_projects` copies per component, one of them MID-RECIPE with
+  every intermediate model still live. With them enabled, `zone_1_c0`'s saves
+  consumed ~81 GB of F:. With `RS_PROJECTS_DIR` left unset (which skips both,
+  no .bat change needed) `cluster_4_a1_c0` cost 6.8 GB end to end, and ONE
+  dated copy of the finished six-component project took 13.1 min / 95.2 GB via
+  the new `SaveProjectCopy.bat`. Owner-directed 2026-07-28; the per-component
+  scene save must stay, since the workflow loads/models/quits per component.
+  [H2024] (2026-07-29) ESTABLISHED
+
+- **Benign, recurring: `-selectModel <tag>_HighPoly` reports result code
+  2147942487 in every component's cleanup loop.** Whitelisted empty-selection
+  code, evidence filed per model as
+  `expected_select_RS1_<component>_HighPoly.txt`, the delete is skipped and the
+  recipe continues. Seen on all six components. Consequence is a leftover
+  `_HighPoly` intermediate, cosmetic. Cause not investigated - it is the one
+  intermediate that is both renamed and immediately re-textured, so the name
+  may be consumed by the texture step. [H2024] (2026-07-29) OPEN
+
+- **Queued RealityScan probes - NOT run; no live probing until modeling
+  completes (owner instruction), and each needs an instance name it controls
+  (possible now that RS_INSTANCE is real):** (a) 'Finalizing N component'
+  semantics - two tiny imports, one merge, count; (b) census of merged5's
+  `cluster_1_a3_c0.rsalign` by re-import from its original location -
+  container of 8 or single component; (c) rigid-glue reproduction - two
+  zero-shared components + merge_georef, expect glue, pins the mechanism;
+  (d) the overlap probe's unfinished arms
+  (`F:/_copylogs/zoning_scripts/run_overlap_probe.py --arms arm_r2,arm_r6`) -
+  the 6 m band is NOT settled, only its control arm ran; (e) GenerateModel
+  error-whitelist redesign, needs the benign select-miss code from (a)-style
+  probing. (2026-07-28)

@@ -11,7 +11,13 @@ docs/MERGE_REWORK_RECOMMENDATIONS.md):
    gets its own merge scene; single-component clusters get ZERO attempts.
 2. Per multi-component cluster: escalation ladder, one change per
    attempt, judged by census + component peel (NEVER exit status).
-   Acceptance = never-shrink (input membership union preserved).
+   Acceptance = BOUNDED LOSS: a fusion is adopted when its cameras are
+   attributable to an input subset and it dropped no more than
+   --loss_tolerance of the input cameras (default 0 = exact only). The
+   former never-shrink rule could not accept ANY solver-lossy fusion,
+   which is exactly what the rematch/high-overlap rungs produce - H2024's
+   hull fused 4,860 of 4,865 cameras on every rung and was rejected all
+   three times (FINDINGS 2026-07-28).
    A rung that fuses restarts the ladder on the new state; convergence
    = a full ladder cycle with no fusion. There is NO fraction target -
    two saturated disjoint features are SUCCESS. --target is
@@ -19,11 +25,11 @@ docs/MERGE_REWORK_RECOMMENDATIONS.md):
 3. Membership bookkeeping: merged-scene XMP exports are ORDINAL (B10),
    so membership is derived by ATTRIBUTION - merge never adds images,
    so a result component's members are the union of the input manifests
-   that fused into it. Inputs are matched to result components by exact
+   that fused into it. Inputs are matched to result components by
    camera-count arithmetic (duplicate-path zone exports share no camera
-   identity, so counts are exactly additive), tie-broken by bbox
-   adjacency; every attribution is recorded with its confidence in the
-   report. Per-component counts come from a count-based peel loop in
+   identity, so counts are additive), preferring exact subset sums and
+   falling back to the smallest within-budget loss; every attribution is
+   recorded with its confidence AND its accepted loss in the report. Per-component counts come from a count-based peel loop in
    the workflow (select maximal -> export -> census -> delete),
    run on the saved scene in memory only (AlignZone pattern).
 4. Terminal state: ONE assembly project holding EVERY surviving
@@ -48,6 +54,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -123,6 +130,23 @@ def load_inputs(components_root: str, complist: str | None,
     if complist:
         with open(complist, encoding='utf-8') as f:
             wanted = [l.strip() for l in f if l.strip()]
+        # A complist names EXPLICIT paths, which legitimately live outside
+        # components_root (fused exports in attempt directories, a hull from
+        # an earlier run kept at its original export location per hard rule
+        # 7). For any entry the root scan did not surface, look for the
+        # manifest BESIDE the file before refusing - discovery scope, not
+        # manifest absence, is what used to fail here (2026-07-28: phase-2
+        # assembly aborted with 'without manifests' for three components
+        # whose manifests all existed).
+        for p in wanted:
+            norm = os.path.normcase(os.path.abspath(p))
+            if norm in by_path:
+                continue
+            sidecar = p + '.manifest.json'
+            if os.path.isfile(sidecar):
+                m = component_manifest.load_manifest(sidecar)
+                if m.get('rsalign'):
+                    by_path[norm] = m
         missing = [p for p in wanted
                    if os.path.normcase(os.path.abspath(p)) not in by_path]
         if missing:
@@ -140,13 +164,21 @@ def load_inputs(components_root: str, complist: str | None,
     return picked
 
 
-def measure_input_scales(inputs: list[dict], union_log: str, logger) -> dict:
+def measure_input_scales(inputs: list[dict], union_log: str, logger,
+                         scale_min: float = scale_oracle.DEFAULT_SCALE_MIN,
+                         scale_max: float = scale_oracle.DEFAULT_SCALE_MAX) -> dict:
     """Metric scale per INPUT component, keyed by component_key.
 
     Uses each manifest's own image list against the harvest sitting beside its
     .rsalign, so a component is never mis-identified by ordinal position. The
     union flight log supplies nav for every image regardless of which zone it
     came from.
+
+    `scale_min`/`scale_max` MUST reach the verdict: the operator's
+    --scale_min/--scale_max were previously accepted, persisted, printed in
+    EVALUATION_READY as the authoritative band - and never applied (audit #5,
+    2026-07-28). Every verdict was baked at the 0.90-1.10 defaults, so
+    TIGHTENING the gate silently did nothing while the report claimed it.
     """
     nav = scale_oracle.load_nav_positions(union_log)
     out = {}
@@ -158,7 +190,7 @@ def measure_input_scales(inputs: list[dict], union_log: str, logger) -> dict:
         except OSError as exc:
             logger.warning('Scale measurement failed for %s: %s', key, exc)
             stats = None
-        status, why = scale_oracle.verdict(stats)
+        status, why = scale_oracle.verdict(stats, scale_min, scale_max)
         out[key] = {'status': status, 'explanation': why,
                     'median': None if stats is None else stats['median'],
                     'iqr_low': None if stats is None else stats['iqr_low'],
@@ -215,19 +247,85 @@ def apply_scale_gate(targets: list[dict], input_scales: dict,
 
 
 
-def neighbour_subset(current: list[dict], target_key: str,
-                     logger) -> list[dict]:
-    """`target_key` plus every component whose bbox borders it.
+def shared_image_count(a: dict, b: dict) -> int:
+    """Shared image basenames between two component manifests (lowercased)."""
+    sa = {i.lower() for i in (a.get('images') or [])}
+    sb = {i.lower() for i in (b.get('images') or [])}
+    return len(sa & sb)
 
-    Uses the same find_borders margin as clustering, so "neighbour" means exactly
-    what it means one level up. Note the margin is applied to BOTH bboxes, so the
-    default 10 m tolerates a 20 m gap. A component with a null bbox borders
-    everything by construction, which is the conservative direction.
+
+def pair_related(a: dict, b: dict) -> tuple[bool, str]:
+    """The owner's uniqueness criterion (2026-07-28): two components belong in
+    one merge scene ONLY when they share imagery or genuinely overlap in space.
+
+    Anything else is a unique feature at its own maximum. The previous gate -
+    find_borders with 10 m margin on BOTH bboxes, then TRANSITIVE closure -
+    chained eight disjoint objects into one scene, and merge_georef rigid-glued
+    them into a single 3,615-camera container (merged5 cluster_1: exactly ONE of
+    its 28 pairs shared any imagery; RealityScan itself reported 'Finalizing 3'
+    then '7' then '8' components while the arithmetic scored each attempt as a
+    fusion). A null bbox still relates to everything - conservative direction.
     """
-    borders = component_analysis.find_borders(current)
+    shared = shared_image_count(a, b)
+    if shared:
+        return True, f'{shared} shared images'
+    ba, bb = a.get('bbox_utm'), b.get('bbox_utm')
+    if not ba or not bb:
+        return True, 'null bbox - conservative'
+    dx = min(ba[2], bb[2]) - max(ba[0], bb[0])
+    dy = min(ba[3], bb[3]) - max(ba[1], bb[1])
+    if dx > 0 and dy > 0:
+        return True, f'true bbox overlap {dx:.1f} x {dy:.1f} m'
+    return False, 'no shared imagery, no spatial overlap'
+
+
+def shared_graph_spans(subset: list[dict]) -> bool:
+    """True iff every member is reachable from every other through
+    shared-image edges. This is the admission test for -mergeComponents
+    rungs: merge fuses through camera identity, so a subset it can act on
+    soundly must be identity-connected end to end."""
+    if len(subset) < 2:
+        return True
+    reached = {0}
+    frontier = [0]
+    while frontier:
+        i = frontier.pop()
+        for j in range(len(subset)):
+            if j not in reached and shared_image_count(subset[i], subset[j]):
+                reached.add(j)
+                frontier.append(j)
+    return len(reached) == len(subset)
+
+
+def related_pairs(manifests: list[dict], pair_gate: str,
+                  logger=None) -> list[tuple[str, str]]:
+    """Every related pair under the chosen gate.
+
+    'overlap' (default) = pair_related above. 'border' = the pre-2026-07-28
+    find_borders behaviour (10 m margin on both boxes), kept so the two can be
+    compared rather than assumed.
+    """
+    if pair_gate == 'border':
+        return [tuple(e['pair'])
+                for e in component_analysis.find_borders(manifests)]
+    pairs = []
+    for i, a in enumerate(manifests):
+        for b in manifests[i + 1:]:
+            ok, why = pair_related(a, b)
+            if ok:
+                ka = component_analysis.component_key(a)
+                kb = component_analysis.component_key(b)
+                pairs.append((ka, kb))
+                if logger:
+                    logger.info('related: %s <-> %s (%s)', ka, kb, why)
+    return pairs
+
+
+def neighbour_subset(current: list[dict], target_key: str, logger,
+                     pair_gate: str = 'overlap') -> list[dict]:
+    """`target_key` plus every component related to it under the pair gate."""
     neighbours = set()
-    for entry in borders:
-        a, b = entry['pair']
+    for a, b in related_pairs(current, pair_gate):
         if a == target_key:
             neighbours.add(b)
         elif b == target_key:
@@ -248,8 +346,9 @@ def growth_order(current: list[dict]) -> list[str]:
             for m in sorted(current, key=lambda m: -(m.get('camera_count') or 0))]
 
 
-def partition_clusters(manifests: list[dict], logger) -> tuple[list[list[dict]], dict]:
-    """Twin-drop, then connected components of the border graph.
+def partition_clusters(manifests: list[dict], logger,
+                       pair_gate: str = 'overlap') -> tuple[list[list[dict]], dict]:
+    """Twin-drop, then connected components of the relatedness graph.
 
     Returns (clusters, plan). Every returned cluster is a list of
     manifests; singletons are legitimate feature candidates and are
@@ -263,9 +362,7 @@ def partition_clusters(manifests: list[dict], logger) -> tuple[list[list[dict]],
 
     by_key = {component_analysis.component_key(m): m for m in survivors}
     adjacency = {k: set() for k in by_key}
-    borders = component_analysis.find_borders(survivors)
-    for entry in borders:
-        a, b = entry['pair']
+    for a, b in related_pairs(survivors, pair_gate, logger=logger):
         adjacency[a].add(b)
         adjacency[b].add(a)
 
@@ -291,7 +388,7 @@ def partition_clusters(manifests: list[dict], logger) -> tuple[list[list[dict]],
 
 
 def attribute_result(input_manifests: list[dict], peel_counts: list[int],
-                     logger) -> tuple[list[dict], str]:
+                     logger, loss_tolerance: int = 0) -> tuple[list[dict], str]:
     """Map peel-loop component counts back to input-manifest subsets.
 
     CLI fact (smoke E2E, 2026-07-24): a merge/align leaves the SOURCE
@@ -308,7 +405,16 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
     keys; empty for residuals), members (attributed basename union; None
     when unattributable), and residual flag. confidence 'exact' iff
     every entry was uniquely attributed or a residual and every input
-    was consumed."""
+    was consumed.
+
+    `loss_tolerance` (absolute cameras, 0 = exact only) admits a subset whose
+    sum EXCEEDS the peel count by up to that many cameras - i.e. a fusion that
+    dropped a few marginal cameras. Without it a solver-lossy fusion is
+    invisible: H2024's hull fused 4,860 of 4,865 cameras on every rung and was
+    rejected all three times because 4,860 is not an exact subset sum
+    (FINDINGS 2026-07-28). Exact matches always win; a lossy match is only
+    considered when no exact one exists, and each adopted result carries the
+    `loss` it was accepted with so the report can state it."""
     by_key = {component_analysis.component_key(m): m for m in input_manifests}
     remaining = {k: m['camera_count'] for k, m in by_key.items()}
     consumed_counts: list[int] = []
@@ -318,15 +424,18 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
     by_index: dict[int, dict] = {}
     for idx in order:
         count = peel_counts[idx]
-        matched = None
+        matched, matched_loss = None, 0
         keys = sorted(remaining)
-        subsets = []
+        exact_subsets, lossy_subsets = [], []
 
         def search(i, acc, chosen):
-            if acc == count:
-                subsets.append(list(chosen))
+            if acc >= count:
+                if acc == count:
+                    exact_subsets.append(list(chosen))
+                elif acc - count <= loss_tolerance and chosen:
+                    lossy_subsets.append((acc - count, list(chosen)))
                 return
-            if acc > count or i >= len(keys):
+            if i >= len(keys):
                 return
             chosen.append(keys[i])
             search(i + 1, acc + remaining[keys[i]], chosen)
@@ -334,13 +443,30 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
             search(i + 1, acc, chosen)
 
         search(0, 0, [])
-        if len(subsets) == 1:
-            matched = subsets[0]
-        elif len(subsets) > 1:
-            matched = subsets[0]
+        if len(exact_subsets) == 1:
+            matched = exact_subsets[0]
+        elif len(exact_subsets) > 1:
+            matched = exact_subsets[0]
             confidence = 'ambiguous'
             logger.warning('attribution ambiguous for count %d: %d candidate '
-                           'subsets, took %s', count, len(subsets), matched)
+                           'subsets, took %s',
+                           count, len(exact_subsets), matched)
+        elif lossy_subsets:
+            # Smallest loss first, then the LARGEST subset, so a genuine fusion
+            # beats a lone input that happens to sit within tolerance.
+            lossy_subsets.sort(key=lambda t: (t[0], -len(t[1])))
+            matched_loss, matched = lossy_subsets[0]
+            tied = [s for loss, s in lossy_subsets
+                    if loss == matched_loss and len(s) == len(matched)]
+            if len(tied) > 1:
+                confidence = 'ambiguous'
+                logger.warning('lossy attribution ambiguous for count %d: %d '
+                               'candidates at loss %d, took %s',
+                               count, len(tied), matched_loss, matched)
+            else:
+                logger.info('attributed peel count %d to %s with a %d-camera '
+                            'loss (tolerance %d)',
+                            count, matched, matched_loss, loss_tolerance)
 
         if matched is not None:
             members = set()
@@ -349,7 +475,7 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
                 consumed_counts.append(remaining.pop(k))
             by_index[idx] = {'peel_index': idx, 'camera_count': count,
                              'inputs': matched, 'members': sorted(members),
-                             'residual': False}
+                             'residual': False, 'loss': matched_loss}
         elif count in consumed_counts:
             consumed_counts.remove(count)
             by_index[idx] = {'peel_index': idx, 'camera_count': count,
@@ -434,8 +560,37 @@ def snapshot_rs_log(dest: str, logger) -> None:
     src = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Temp', 'RealityScan.log')
     try:
         shutil.copyfile(src, dest)
-    except OSError as exc:
+    except (OSError, shutil.Error) as exc:
         logger.warning('Could not snapshot RealityScan.log: %s', exc)
+
+
+def rs_finalizing_counts(rslog_path: str,
+                         expected_rsaligns: list[str]) -> dict:
+    """RealityScan's 'Finalizing N component' line(s) from an attempt's rslog
+    snapshot, validated against a run-unique token first.
+
+    A snapshot is only trusted when EVERY complist path appears as an
+    importComponent parameter - RealityScan truncates its global log per
+    launch, so a concurrent instance turns the snapshot into a splice of two
+    runs (FINDINGS 2026-07-27). The count's exact semantics are NOT
+    established (new components? scene total?), so callers record this as a
+    cross-check and never gate on it.
+    """
+    out = {'valid': False, 'counts': []}
+    try:
+        with open(rslog_path, encoding='utf-8', errors='replace') as f:
+            text = f.read()
+    except OSError:
+        return out
+    imported = set(re.findall(r"importComponent' with parameter '([^']+)'", text))
+    expected = {os.path.normcase(p) for p in expected_rsaligns}
+    seen = {os.path.normcase(p) for p in imported}
+    out['valid'] = expected <= seen
+    out['counts'] = [int(n) for n in
+                     re.findall(r'Finalizing (\d+) component', text)]
+    if not out['valid']:
+        out['missing'] = sorted(expected - seen)
+    return out
 
 
 # ----------------------------------------------------------------------
@@ -493,7 +648,9 @@ def peel_counts_from(out_dir: str) -> list[int]:
 def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                   output_dir: str, images_root: str, ladder: list[dict],
                   min_size: int, logs_dir: str, logger,
-                  merge_scope: str = 'neighbour') -> dict:
+                  merge_scope: str = 'neighbour',
+                  loss_tolerance_frac: float = 0.0,
+                  pair_gate: str = 'overlap') -> dict:
     """Run the escalation ladder on one border-connected cluster until
     convergence. Returns the cluster record for the report, including the
     final component list (paths + manifests) for the assembly stage."""
@@ -566,9 +723,10 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                                if k not in exhausted), None)
             if target_key is None:
                 break
-            subset = neighbour_subset(current, target_key, logger)
+            subset = neighbour_subset(current, target_key, logger,
+                                      pair_gate=pair_gate)
             if len(subset) < 2:
-                logger.info('%s: %s borders nothing else - no merge attempted',
+                logger.info('%s: %s relates to nothing else - no merge attempted',
                             tag, target_key)
                 exhausted.add(target_key)
                 continue
@@ -594,10 +752,32 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                 break
             attempted.add(subset_sig)
 
+        # Mechanism-aware rung selection. -mergeComponents fuses ONLY through
+        # shared cameras [NA167 D1-D3/D6]; with sfmMergeGeoreferencedComponents
+        # it instead rigid-glues every georeferenced component in the scene
+        # into one container - which is how merged5's cluster_1 packed eight
+        # disjoint objects into a single 3,615-camera "component". -align fuses
+        # via image CONTENT and needs no shared identity (the hull, and
+        # HANDOFF hypothesis 9).
+        #
+        # Merge rungs are admitted only when the SHARED-IMAGE graph spans the
+        # whole subset. Any-pair sharing is not enough: in {c2, z4_c1, z4_c2}
+        # only c2-z4_c1 share imagery while z4_c2 merely bbox-overlaps, and a
+        # merge rung would glue all three - silently absorbing an object whose
+        # relation is purely spatial. Align-only lets content decide its fate.
+        effective_ladder = (ladder if shared_graph_spans(subset) else
+                            [s for s in ladder if s['mode'] == 'align'])
+        if not effective_ladder:
+            effective_ladder = ladder  # never run zero rungs
+        if len(effective_ladder) != len(ladder):
+            logger.info('%s: shared-image graph does not span the subset - '
+                        'align-only rungs (%d of %d); a merge rung could only '
+                        'rigid-glue here', tag, len(effective_ladder), len(ladder))
+
         rung = 0
         fused_this_target = False
-        while rung < len(ladder):
-            step = ladder[rung]
+        while rung < len(effective_ladder):
+            step = effective_ladder[rung]
             attempt_no += 1
             adir = os.path.join(cdir, f'attempt_{attempt_no}_{step["label"]}')
             os.makedirs(adir, exist_ok=True)
@@ -609,18 +789,48 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                         tag, attempt_no, step['label'], len(subset),
                         f' (target {target_key})' if target_key else '')
             t0 = time.time()
+            # Name the exports by ATTEMPT, not just by cluster. `-importComponent
+            # X.rsalign` names the in-scene component `X`, and GenerateModel
+            # selects it by that name - so two accepted fusions in one cluster
+            # both exporting `<tag>_m_c0.rsalign` (from different attempt dirs)
+            # put TWO identically-named components in the assembly, and
+            # `-selectComponent` then targets whichever one RealityScan picks.
+            # A model would be built on the wrong component, silently.
+            # This also keeps file stem == manifest component == in-scene name.
+            export_name = f'{tag}_a{attempt_no}'
             result = run_merge_workflow(
-                cli, complist, adir, f'{tag}_m', step['mode'], step['settings'],
+                cli, complist, adir, export_name, step['mode'], step['settings'],
                 log_path, params_path, images_root, logs_dir, harvest=True,
                 logger=logger)
             snapshot_rs_log(os.path.join(adir, 'rslog.txt'), logger)
             registered, _r, _d = camera_registry.sanitize_and_census(images_root)
 
             sizes = peel_counts_from(adir)
-            attributed, confidence = attribute_result(subset, sizes, logger)
+            # INSTRUMENT INVARIANT: an empty peel next to a non-empty export is
+            # a broken instrument, not a result. Exactly this shape silently
+            # discarded 5h12m of correct GPU work across two runs (the junction
+            # blindness, FINDINGS 2026-07-27/28). Stop and report - never score.
+            first_export = os.path.join(adir, f'{export_name}_c0.rsalign')
+            if result.success and not sizes and os.path.isfile(first_export):
+                raise RuntimeError(
+                    f'{tag} attempt {attempt_no}: peel harvest returned EMPTY '
+                    f'but {first_export} exists - the measurement channel is '
+                    'broken (pose sidecars were never written or never moved). '
+                    'Aborting the run instead of mis-scoring it.')
+            # RealityScan's own per-op component line, recorded as a
+            # cross-check. Only trusted when the snapshot provably belongs to
+            # THIS attempt (every complist path present as an importComponent
+            # line - rslog snapshots can be splices, FINDINGS 2026-07-27).
+            # Semantics of the count are NOT established; record, never gate.
+            entry_rs = rs_finalizing_counts(
+                os.path.join(adir, 'rslog.txt'),
+                [m['rsalign'] for m in subset])
+            input_cams = sum(m['camera_count'] for m in subset)
+            tol = int(input_cams * loss_tolerance_frac)
+            attributed, confidence = attribute_result(subset, sizes, logger,
+                                                      loss_tolerance=tol)
             adopted = [r for r in attributed if r['inputs']]
             residuals = [r for r in attributed if r['residual']]
-            input_cams = sum(m['camera_count'] for m in subset)
             adopted_cams = sum(r['camera_count'] for r in adopted)
             lost = input_cams - adopted_cams if adopted else None
 
@@ -632,17 +842,31 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                      'input_count': len(subset), 'adopted_count': len(adopted),
                      'residual_count': len(residuals),
                      'camera_delta': (adopted_cams - input_cams) if adopted else None,
+                     'cameras_lost': lost,
+                     'loss_tolerance': tol,
+                     'loss_tolerance_frac': loss_tolerance_frac,
+                     'rs_finalizing': entry_rs,
                      'duration_s': round(time.time() - t0, 1)}
             record['attempts'].append(entry)
 
             fused = any(len(r['inputs']) >= 2 for r in adopted)
+            # Bounded loss, not never-shrink. The old `lost <= 0` could never
+            # accept a solver-lossy fusion, and a lossy fusion is exactly what
+            # the rematch/high-overlap rungs exist to produce.
             accept = (result.success and adopted and fused
                       and confidence == 'exact'
-                      and lost is not None and lost <= 0)
-            if result.success and adopted and lost and lost > 0:
-                logger.warning('%s attempt %d SHRANK by %d cameras - rejected '
-                               '(never-shrink invariant)', tag, attempt_no, lost)
+                      and lost is not None and lost <= tol)
+            if result.success and adopted and lost and lost > tol:
+                logger.warning('%s attempt %d SHRANK by %d cameras, over the '
+                               '%d-camera budget (%.2f%%) - rejected',
+                               tag, attempt_no, lost, tol,
+                               100.0 * loss_tolerance_frac)
                 entry['rejected'] = 'shrink'
+            elif accept and lost:
+                logger.info('%s attempt %d accepted with a %d-camera loss '
+                            '(budget %d, %.2f%% of %d input cameras)',
+                            tag, attempt_no, lost, tol,
+                            100.0 * loss_tolerance_frac, input_cams)
             if result.success and fused and confidence != 'exact':
                 logger.warning('%s attempt %d fused but attribution is %s - '
                                'rejected (membership would be untrustworthy)',
@@ -652,11 +876,19 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                 new_subset = []
                 for res in adopted:
                     rsalign = os.path.join(
-                        adir, f'{tag}_m_c{res["peel_index"]}.rsalign')
+                        adir, f'{export_name}_c{res["peel_index"]}.rsalign')
                     if not os.path.isfile(rsalign):
                         logger.warning('expected export missing: %s', rsalign)
                         continue
-                    comp_name = f'{tag}_m_c{res["peel_index"]}'
+                    # Matches the exported file stem exactly (see export_name).
+                    # peel_index restarts at 0 every attempt, so without the
+                    # attempt number two accepted fusions in one cluster both
+                    # claimed `<tag>_m_c0`: find_borders' _validate raised
+                    # "duplicate component identity" and killed the run (H2024
+                    # 2026-07-28, cluster_1 attempts 1 and 5), and the second
+                    # silently clobbered the first's origin_map entry, losing
+                    # the scale-gate lineage.
+                    comp_name = f'{export_name}_c{res["peel_index"]}'
                     manifest = component_manifest.build_manifest(
                         zone=tag, component=comp_name, rsalign_path=rsalign,
                         images=res['members'] or [],
@@ -765,8 +997,23 @@ def main() -> int:
                         help='true = run GenerateModel per surviving component >= min_size')
     parser.add_argument('--ladder', default=None,
                         help='merge_first (default) or content_first - see LADDERS')
+    parser.add_argument('--loss_tolerance', default=None,
+                        help='fraction of input cameras a fusion may drop and '
+                             'still be accepted (e.g. 0.0025 = 0.25%%). '
+                             'Default 0 = exact subset sums only. Owner '
+                             'decision: it changes acceptance semantics on the '
+                             'deliverable, so it is never a silent default.')
     parser.add_argument('--merge_scope', default=None,
                         help='neighbour (default) = grow one component at a time against only its bbox neighbours; cluster = the old all-at-once behaviour, kept for comparison')
+    parser.add_argument('--pair_gate', default=None,
+                        help='overlap (default) = components relate only when '
+                             'they share imagery or their bboxes truly overlap '
+                             '(owner uniqueness criterion 2026-07-28); border = '
+                             'the old 10 m-margin adjacency, kept for comparison')
+    parser.add_argument('--assemble_only', default=None,
+                        help='true = skip the merge ladder entirely; collect '
+                             'every input component into ONE georeferenced '
+                             'project and stop (hull-import staging)')
     parser.add_argument('--scale_gate', default=None,
                         help='true (default) = refuse to MODEL a component whose '
                              'metric scale is out of band or unmeasurable')
@@ -809,6 +1056,21 @@ def main() -> int:
     if merge_scope not in ('neighbour', 'cluster'):
         logger.error('--merge_scope must be neighbour or cluster, got %r', merge_scope)
         return 1
+    pair_gate = ask('pair_gate', args.pair_gate, 'overlap')
+    if pair_gate not in ('overlap', 'border'):
+        logger.error('--pair_gate must be overlap or border, got %r', pair_gate)
+        return 1
+    assemble_only = truthy(ask('assemble_only', args.assemble_only, 'false'))
+    loss_tolerance_frac = float(ask('loss_tolerance', args.loss_tolerance, 0.0))
+    if not 0.0 <= loss_tolerance_frac < 1.0:
+        logger.error('--loss_tolerance must be a fraction in [0, 1), got %r',
+                     loss_tolerance_frac)
+        return 1
+    if loss_tolerance_frac:
+        logger.warning('BOUNDED LOSS ENABLED: a fusion may drop up to %.3f%% of '
+                       'its input cameras and still be accepted. Every accepted '
+                       'loss is recorded per attempt and in EVALUATION_READY.',
+                       100.0 * loss_tolerance_frac)
     scale_gate = truthy(ask('scale_gate', args.scale_gate, 'true'))
     scale_min = float(ask('scale_min', args.scale_min, scale_oracle.DEFAULT_SCALE_MIN))
     scale_max = float(ask('scale_max', args.scale_max, scale_oracle.DEFAULT_SCALE_MAX))
@@ -840,13 +1102,15 @@ def main() -> int:
     try:
         gate_log, _gate_params = build_union_flight_log(
             images_root, output_dir, logger, tag='scalegate')
-        input_scales = measure_input_scales(inputs, gate_log, logger)
+        input_scales = measure_input_scales(inputs, gate_log, logger,
+                                            scale_min=scale_min,
+                                            scale_max=scale_max)
     except (OSError, ValueError) as exc:
         logger.warning('Could not measure input scale (%s); the model gate will '
                        'treat every component as UNMEASURED', exc)
         input_scales = {}
 
-    clusters, plan = partition_clusters(inputs, logger)
+    clusters, plan = partition_clusters(inputs, logger, pair_gate=pair_gate)
     total_images = count_unique_images(images_root)
 
     cli = RealityScanCLI(logger)
@@ -868,9 +1132,33 @@ def main() -> int:
             json.dump(report, f, indent=2)
 
     for i, cluster in enumerate(clusters):
-        record = merge_cluster(cli, cluster, i, output_dir, images_root,
-                               ladder, min_size, logs_dir, logger,
-                               merge_scope=merge_scope)
+        if assemble_only:
+            # Owner-directed staging (2026-07-28): the inputs are already at
+            # their maximum - collect, georeference, save. No ladder. Every
+            # input is carried to the assembly untouched.
+            record = {
+                'cluster': f'cluster_{i}',
+                'inputs': [component_analysis.component_key(m) for m in cluster],
+                'input_cameras': sum(m['camera_count'] for m in cluster),
+                'attempts': [], 'converged': True,
+                'final_components': [{
+                    'key': component_analysis.component_key(m),
+                    'rsalign': m['rsalign'],
+                    'camera_count': m['camera_count'],
+                    'members': len(m.get('images') or []),
+                    'origin': 'assemble_only - carried as-is',
+                    'inputs': ((m.get('attribution') or {}).get('inputs')
+                               or [component_analysis.component_key(m)]),
+                } for m in cluster],
+            }
+            logger.info('cluster_%d: assemble_only - %d component(s) carried '
+                        'as-is', i, len(cluster))
+        else:
+            record = merge_cluster(cli, cluster, i, output_dir, images_root,
+                                   ladder, min_size, logs_dir, logger,
+                                   merge_scope=merge_scope,
+                                   loss_tolerance_frac=loss_tolerance_frac,
+                                   pair_gate=pair_gate)
         report['clusters'].append(record)
         flush()
 
@@ -924,6 +1212,24 @@ def main() -> int:
             flag = ' [POCKET <min_size]' if (c['camera_count'] or 0) < min_size else ''
             lines.append(f'  - {c["key"]}: {c["camera_count"]} cams '
                          f'({c["origin"]}){flag}')
+    accepted_losses = [(rec['cluster'], a['attempt'], a.get('cameras_lost'),
+                        a.get('loss_tolerance'))
+                       for rec in report['clusters']
+                       for a in rec.get('attempts', [])
+                       if a.get('accepted') and a.get('cameras_lost')]
+    if loss_tolerance_frac:
+        lines += ['',
+                  f'BOUNDED LOSS was enabled at {100.0 * loss_tolerance_frac:.3f}% '
+                  f'of input cameras.']
+        if accepted_losses:
+            for cluster, attempt, lost, tol in accepted_losses:
+                lines.append(f'  - {cluster} attempt {attempt}: accepted a '
+                             f'{lost}-camera loss (budget {tol})')
+            lines.append(f'  TOTAL cameras dropped by accepted fusions: '
+                         f'{sum(l for _c, _a, l, _t in accepted_losses)}')
+        else:
+            lines.append('  - no accepted fusion lost a camera.')
+
     lines += ['',
               f'total cameras across components: {total_registered} '
               f'({100.0 * total_registered / max(total_images, 1):.1f}% of unique '

@@ -82,19 +82,20 @@ def get_camera_type(filename: str) -> str:
 
 
 def get_camera_pitch_accuracy(filename: str) -> float:
-    """Return pitch accuracy (degrees) for a camera based on its name."""
-    filename_lower = filename.lower()
+    """Pitch accuracy (degrees) from the shared MOUNTS table.
 
-    if filename_lower.startswith('camupper'):
-        return 10.0
-    elif filename_lower.startswith('cammid'):
-        return 10.0
-    elif filename_lower.startswith('camlower'):
-        return 5.0
-    elif '_herc_' in filename_lower:
-        return 30.0
-    else:
-        return 10.0
+    This was a stale parallel table the M4/M5 unification missed (audit #6,
+    2026-07-28): lever arm and pitch offset were routed through MOUNTS while
+    pitch ACCURACY stayed on the old prefix chain, so WCA P/C files fell to a
+    10.0 default against the module's 15.0, and Zeuss got 10.0 against 30.0 -
+    3x overconfidence on the mount with the least ground truth. PD-0
+    established that over-tight orientation accuracy FRAGMENTS the solve.
+    Unknown families keep the conservative fallback.
+    """
+    mount = _mount(filename)
+    if mount and 'p_acc' in mount:
+        return float(mount['p_acc'])
+    return 15.0
 
 
 

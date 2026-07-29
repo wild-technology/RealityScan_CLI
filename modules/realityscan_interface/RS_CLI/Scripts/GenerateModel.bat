@@ -43,10 +43,15 @@ echo Reading default variables
 call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
 set "MetadataDir=%Metadata%"
-set "HighModelTexture=%MetadataDir%\Texturing_HighPolyTexture.xml"
+:: Texture budget (owner 2026-07-29): no more than FOUR large textures,
+:: adaptive. unwrapStyle=MaxTexturesCount IS the adaptive mode - texel size
+:: adapts to fit the count - so 4 x 16K caps the budget while small
+:: components use fewer/smaller. Previously 2 x 16K (high poly) and
+:: 1 x 16K (simplified unwrap).
+set "HighModelTexture=%MetadataDir%\Texturing_MaxTextureCount4_16k.xml"
 set "SimplifyNoise=%MetadataDir%\SimplifyNoise_Params.xml"
 set "SimplifySmooth=%MetadataDir%\SimplifySmooth_80per_Params.xml"
-set "UnwrapSimplified=%MetadataDir%\Unwrapping_Simplified.xml"
+set "UnwrapSimplified=%MetadataDir%\Unwrapping_Simplified_4x16k.xml"
 set "ReprojectionParams=%MetadataDir%\ReprojectionParams.xml"
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
@@ -152,9 +157,23 @@ call :run -reprojectTexture "%model_tag%_HighPoly_Textured" "%model_tag%_Simplif
 call :run -selectModel "%model_tag%_Simplified" || goto :fail
 call :run -renameSelectedModel "%model_tag%_Simplified_Textured" || goto :fail
 
+:: NO save before the cleanup loop. Saving with all ~15 models still present
+:: costs an inordinate amount of time and disk - owner-observed, and measured
+:: here: zone_1_c0's saves consumed ~81 GB with the extra write in place. The
+:: deliverable is protected instead by the double-wait in :try_delete_model,
+:: which reliably detects a no-op select on a missing intermediate before any
+:: delete runs (audit #4). Only the three kept models are ever saved.
 echo Deleting intermediate models
 for %%M in (Cleanup1 Cleanup2 Cleanup3 Manifold HighPoly SimplifyPass1Raw SimplifyPass1 SimplifyPass2Raw SimplifyPass2 SimplifyPass3Raw SimplifyPass3 SimplifyPass4Raw) do (
     call :try_delete_model "%model_tag%_%%M"
+)
+:: A filter/simplify step can leave a DEFAULT-NAMED residual behind - the
+:: H2024 run produced one "Model N" per component (owner-observed in the
+:: GUI, 2026-07-29), most likely from the large-triangle cleanup path.
+:: Default names carry no component prefix, so they are swept separately.
+:: try_delete_model is tolerant: absent names are skipped silently.
+for %%M in ("Model 1" "Model 2" "Model 3") do (
+    call :try_delete_model %%M
 )
 
 echo Saving project
@@ -230,22 +249,36 @@ exit /b 0
 
 :: :try_delete_model <name> - delete an intermediate model if it exists;
 :: missing intermediates (skipped filter steps) are not an error.
+:: Uses the SAME double-wait shape as every other subroutine: the old single
+:: short wait could return before the instance picked the select up, so a
+:: no-op select on a missing name left the PREVIOUS selection live - which at
+:: loop entry is the final textured model - and the delete that followed
+:: targeted the deliverable (audit #4). Evidence moves get per-model names so
+:: twelve iterations stop overwriting each other.
 :try_delete_model
 %RealityScan% -delegateTo %RS_INSTANCE% -selectModel "%~1"
+if errorlevel 1 (
+    echo NOTE: could not delegate -selectModel %~1 - leaving intermediate in place
+    exit /b 0
+)
+ping -n 3 127.0.0.1 >nul
+%RealityScan% -waitCompleted %RS_INSTANCE%
 ping -n 2 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
 if exist "%ErrorsFile%" (
     for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
-        move /y "%ErrorsFile%" "%ErrorPath%\expected_select_%RS_INSTANCE%.txt" >nul
+        move /y "%ErrorsFile%" "%ErrorPath%\expected_select_%RS_INSTANCE%_%~1.txt" >nul
         exit /b 0
     )
 )
 %RealityScan% -delegateTo %RS_INSTANCE% -deleteSelectedModel
+ping -n 3 127.0.0.1 >nul
+%RealityScan% -waitCompleted %RS_INSTANCE%
 ping -n 2 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
 if exist "%ErrorsFile%" (
     for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
-        move /y "%ErrorsFile%" "%ErrorPath%\expected_select_%RS_INSTANCE%.txt" >nul
+        move /y "%ErrorsFile%" "%ErrorPath%\expected_delete_%RS_INSTANCE%_%~1.txt" >nul
     )
 )
 exit /b 0

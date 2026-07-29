@@ -1,5 +1,193 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-07-29 — H2024 COMPLETE, nothing running, read this first
+
+**Nothing is running.** No RealityScan, no drivers, no locks, no error
+markers. 143 tests pass. Work is UNCOMMITTED — deliberately, so you can read
+the diff first.
+
+### THE DELIVERABLE
+
+`F:/na156_h2024_v2/final_assembly/assembly/H2024_Final_Assembly.rsproj`
+Dated copy: `F:/na156_h2024_v2/RC_projects/NA156_H2024_V2_merged_20260729`
+(95.2 GB). **Six components, all modelled, all metrically measured:**
+
+| component | cams | scale | model |
+|---|---:|---:|---:|
+| `cluster_0_a2_c0` — the HULL | 4,860 | 0.997 | 338.3 min |
+| `zone_1_c0` | 1,634 | 1.084 | 249.3 min |
+| `cluster_1_a1_c0` | 880 | 1.000 | 122.8 min |
+| `zone_4_c0` | 576 | 0.947 | 106.1 min |
+| `zone_1_c1` | 392 | 1.023 | 97.4 min |
+| `cluster_4_a1_c0` | 133 | 0.980 | 40.1 min |
+
+Three kept models each: `_HighPoly_Raw`, `_HighPoly_Textured`,
+`_Simplified_Textured`.
+
+**SIX, not the nominal seven** — align content-fused `zone_4_c2` into the
+`zone_1_c2 + zone_4_c1` object (they share 343 images). If your eye says
+otherwise, inspect `cluster_1_a1_c0` (880 cams); its pre-fusion inputs are
+untouched under `aligned_components/` to rebuild from.
+
+### What changed to get here, and why the previous answer was wrong
+
+merged5's `cluster_1_a3_c0` (3,615 cams) was challenged by the owner and is
+CONFIRMED WRONG: a rigid glue of eight disjoint objects. One of its 28 pairs
+shared imagery; all three accepted attempts were `merge_georef`; RealityScan
+logged "Finalizing 3/7/8" while the arithmetic scored exact fusions with zero
+loss. Zero loss on a zero-shared-imagery "fusion" is the co-location
+signature. The hull, by contrast, was an ALIGN fusion that lost 5 cameras —
+real joint solving.
+
+The rework, now default: `pair_gate=overlap` (components relate only when
+they share imagery OR their bboxes truly overlap — transitive 20 m adjacency
+is gone), merge rungs admitted only when the shared-image graph SPANS the
+subset, and an empty-peel invariant that ABORTS rather than scoring a broken
+instrument. Under it the 8 non-hull components partition into 5 clusters and
+both fusions were align-driven and exact.
+
+**Fused components cannot be scale-measured by the stem oracle** (merge-scene
+XMP exports are ordinal, B10) — it correctly returned UNMEASURED and blocked
+all three, including the hull. `testing/run_h2024_fused_models.py` measures
+them correspondence-free by quantile ratio, validated against known-good
+(1.045 vs stem 1.023) and known-bad (0.236-shrunk hull → FAIL). That is where
+0.997 / 1.000 / 0.980 come from — the first time delivered geometry's scale
+has been measured rather than inherited.
+
+### LOOSE ENDS, RANKED
+
+1. **Your GUI evaluation of the six modelled components.** Everything else is
+   done; this is the only gate left.
+2. **The ~5,000-camera model envelope does not plateau.** Peaks: 880 cams ->
+   commit 138.6 GB / min RAM 2.8; 1,634 -> 139.9 / 2.0; **hull 4,860 -> 148.7 /
+   0.9**. It completed with under a gigabyte of headroom on a 93.6 GB box.
+   Treat anything materially larger as at risk, not covered by precedent.
+3. **Benign but unexplained**: `-selectModel <tag>_HighPoly` returns the
+   whitelisted empty-selection code in EVERY component's cleanup loop, leaving
+   one cosmetic intermediate behind. Six for six.
+4. **Five RealityScan probes queued, none run** (owner instruction: none until
+   modelling completed — that condition is now MET). See FINDINGS "Queued
+   RealityScan probes": Finalizing-N semantics, census of merged5's glued
+   component, rigid-glue reproduction, the overlap probe's unfinished
+   `arm_r2/arm_r6`, and the GenerateModel error-whitelist redesign.
+5. **~285 GB reclaimed** from `merged`/`merged2`/`merged3`/`merged4` (bulk
+   deleted, 290 record files kept for the FINDINGS evidence trail). `merged5`
+   and `nonhull` are KEPT — they hold the original export locations of the
+   hull and the two fused components (hard rule 7). F: at 123 GB.
+6. **The 6 m overlap band is NOT settled** — only the probe's control arm ran.
+   The donor-pool cap is applied and tested; the distance ceiling
+   (`batch_overlap_max_distance_m`) defaults to 0 = off pending that answer.
+7. **~80 lines of verified-dead code** in `modules/component_manifest.py`
+   (`scan_pose_sidecars`, `members_from_sidecars`, `_resolve_image_basename`,
+   `_POSE_TAG`) — zero callers, left for your call.
+8. **`ruff` is not installed here**, so the Python style check never ran.
+
+### Cross-session incident (2026-07-28)
+
+An exploration session ran its overlap probe FROM this checkout on RS1 while
+believing it was isolated on RS2: `RS_INSTANCE` was never read as an input
+(fixed — env var now resolves after constructor arg, before settings), and it
+overwrote rs_settings.json's `merge` section (restored). Its handoff, findings
+and 27-finding audit live at `F:/_copylogs/*2026-07-28*` — reviewed; the
+verified items are integrated (see FINDINGS 2026-07-28), the unsettled ones
+(6 m overlap band, block-invariant calibration) are explicitly NOT adopted.
+
+### THE H2024 DELIVERABLE (superseded merged5 form)
+
+8,475 cameras total, georeferenced, component names UNIQUE so per-component
+model generation can target them. **No models generated** — that gate is still
+yours. Every input component passes the 0.90–1.10 metric-scale band.
+
+**The metric-scale crisis is closed.** `zone_3_c0` went 0.236 → 0.965 on the
+fresh re-align; the other two baseline failures cleared too. Cause NOT
+established — the re-align changed several things at once, so do not attribute
+it to any single change without a controlled cell.
+
+**Regression vs the 2026-07-26 baseline** (this was the owner's check): total
+8,709 → 8,781 cameras, zone_1 8→6 components, zone_4 5→4, zone_3 +25. Two
+small losses, zone_2 −8 (0.57%) and zone_5 −3 (0.13%), both inside the ±1–2
+marginal-camera variation a free re-align is already recorded as producing.
+The one structural change worth a look: **zone_5 split 1 → 2 components.**
+
+### DECISION IN FORCE (owner, 2026-07-28)
+
+**Bounded loss at 0.25% of input cameras.** A fusion may drop up to that many
+cameras and still be accepted. Default remains 0 (exact only) — the 0.25% is
+passed explicitly by the driver, warned at startup, and recorded per attempt
+plus in EVALUATION_READY. Without it the hull was invisible: it fused 4,860 of
+4,865 cameras on every rung and was rejected three times because 4,860 is not
+an exact subset sum.
+
+### What was broken, and what fixed it
+
+1. **The peel harvest was blind** — I laid the v2 workspace out with per-zone
+   junctions. RealityScan writes no XMP sidecars when a scene's images resolve
+   through a reparse point, AND `Get-ChildItem -Recurse` skips reparse-point
+   children. Two full merge runs (5h12m) measured nothing. Fixed by replacing
+   the junctions with real directories of HARDLINKS (sidecars/flight logs are
+   COPIES so a v2 write cannot corrupt the baseline's). `assert_harvestable()`
+   now refuses to start if anyone re-junctions that tree — 4 tests, real
+   junctions.
+2. **Bounded loss** — see above. 5 tests, including the real hull numbers as a
+   known-bad/known-good pair.
+3. **Duplicate component identity** — `peel_index` restarts each attempt, so two
+   accepted fusions in one cluster both claimed `<tag>_m_c0`; `find_borders`
+   raised and killed a run after two good fusions. Exports are now
+   `<tag>_a<attempt>_c<K>`. 2 tests.
+4. **Model targeting** — same collision one layer down: two attempt directories
+   exporting the same stem put two identically-named components in the
+   assembly, and `GenerateModel.bat` selects by name, so a model would build on
+   the wrong component silently. Same fix; verified in merged5.
+5. **`MergeZoneComponents.bat` refused to assemble a single component** — the
+   `LSS 2` guard applied to every mode. Assemble now needs ≥1, everything else
+   ≥2. Verified three ways via `cmd /c`; file re-checked pure CRLF.
+
+### Uncommitted
+
+`FINDINGS.md`, `merge_zones.py`, `MergeZoneComponents.bat`,
+`testing/test_merge_scope.py`, plus new `testing/run_h2024_v2.py` and
+`testing/test_harvest_guard.py`. 131 tests pass. Nothing committed or pushed.
+
+### LOOSE ENDS, RANKED
+
+1. **Your GUI evaluation of the two components**, then models per component if
+   they look right. `--auto_model true` is wired and scale-gated.
+2. **~300 GB of superseded merge trees** (`merged/`, `merged2/`, `merged3/`,
+   `merged4/`) on F:, which is down to 162 GB. Bulk deletes need your
+   approval, so they are untouched. merged5 is the only one to keep.
+3. **Dead code, verified zero callers**: `scan_pose_sidecars`,
+   `members_from_sidecars`, `_resolve_image_basename`, `_POSE_TAG` in
+   `modules/component_manifest.py` (~80 lines). Left in place for your call.
+4. **`ruff` is not installed here** — the Python style check in CLAUDE.md could
+   not be run this session.
+5. **OPEN, not explained**: attempts that re-import a previously fused
+   component sometimes harvest nothing (merged3 cluster_1 attempts 2–4). Did
+   not recur in merged5. Do not build on it without a probe.
+6. **The 638-row flight-log gap**: cluster_0's scene had 4,865 cameras but its
+   union flight log only 4,227 rows, because the batcher COPIES overlap images
+   into two zones — same basename, two physical files, one trajectory row.
+   This is the duplicate-path identity problem already on record; the queued
+   batcher change (common image pool via imagelists or hardlinks) is the fix
+   and was never applied to H2024.
+7. **`ifKGrp=2` / `ifKmode=0x0` still unpinned** — see the 2026-07-27 section.
+   Constant across baseline and v2, so it cannot have confounded the
+   comparison, but nobody knows what those values select. The GUI
+   save-and-diff is still the only way to settle it.
+8. **M7 (DVL fused as an absolute fix)** — owner decision, unchanged.
+
+### Exact next commands
+
+```bash
+py -3.13 -m pytest testing -q
+```
+
+```bash
+py -3.13 testing/run_h2024_v2.py --skip_merge
+```
+
+To re-run the merge only (aligns are skipped when components exist), edit the
+`merged5` output name in `run_merge` first so nothing is overwritten.
+
 ## 2026-07-27 SESSION END — nothing running, read this first
 
 **Nothing is running.** No RealityScan, no Python drivers, no workflows. All

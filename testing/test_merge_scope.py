@@ -93,11 +93,21 @@ def test_border_margin_applies_to_both_bboxes():
     assert not pairs, '21 m gap must NOT border'
 
 
-def test_neighbour_subset_picks_up_margin_neighbours():
-    """C is 5 m from B, inside the 10 m border margin."""
+def test_neighbour_subset_picks_up_margin_neighbours_under_border_gate():
+    """C is 5 m from B - inside the 10 m margin, but with no shared imagery
+    and no true overlap. The legacy 'border' gate relates them; the default
+    'overlap' gate (owner uniqueness criterion 2026-07-28) does not."""
     subset = merge_zones.neighbour_subset([A, B, C, D],
-                                          component_analysis.component_key(B), LOG)
+                                          component_analysis.component_key(B),
+                                          LOG, pair_gate='border')
     assert keys(subset) == keys([A, B, C])
+
+    subset = merge_zones.neighbour_subset([A, B, C, D],
+                                          component_analysis.component_key(B),
+                                          LOG)
+    assert keys(subset) == keys([A, B]), (
+        'a 5 m gap with zero shared images is a unique feature, not a '
+        'merge candidate - merged5 cluster_1 is what ignoring this produced')
 
 
 def test_isolated_component_has_no_neighbours():
@@ -167,9 +177,13 @@ def test_fusion_shrinks_the_cluster_and_grows_the_bbox():
                if component_analysis.component_key(m) not in subset_keys] + [fused]
 
     assert len(current) == 3, 'four components fused down to three'
-    # the fused extent now reaches C, which neither A nor B did alone
+    # the fused extent now reaches C, which neither A nor B did alone.
+    # Under the border gate (which this reopen semantic belongs to) C is a
+    # neighbour of the fused extent; under the default overlap gate it is not,
+    # because the fused box still only ABUTS C (5 m gap, no shared imagery).
     subset = merge_zones.neighbour_subset(
-        current, component_analysis.component_key(fused), LOG)
+        current, component_analysis.component_key(fused), LOG,
+        pair_gate='border')
     assert component_analysis.component_key(C) in keys(subset)
 
 
@@ -177,6 +191,73 @@ def test_cluster_scope_still_takes_everything():
     """The old behaviour must remain available for comparison."""
     subset = list([A, B, C, D])
     assert len(subset) == 4
+
+
+# ------------------------------------------------- pair gate (owner criterion
+# 2026-07-28: unique = no shared images AND no true spatial overlap)
+
+def test_pair_related_by_shared_imagery():
+    a = comp('z1', 'P', 4, (0, 0, 10, 10), images=['x1.jpg', 'x2.jpg'])
+    b = comp('z4', 'Q', 4, (500, 500, 510, 510), images=['X2.JPG', 'y.jpg'])
+    ok, why = merge_zones.pair_related(a, b)
+    assert ok and 'shared' in why, 'case-insensitive shared imagery relates'
+
+
+def test_pair_related_by_true_overlap_only():
+    a = comp('z1', 'P', 4, (0.0, 0.0, 12.0, 10.0), images=['a.jpg'])
+    b = comp('z1', 'Q', 4, (11.0, 1.0, 22.0, 9.0), images=['b.jpg'])
+    ok, why = merge_zones.pair_related(a, b)
+    assert ok and 'overlap' in why
+
+
+def test_pair_not_related_when_merely_adjacent():
+    """The merged5 cluster_1 failure shape: disjoint objects 5-20 m apart,
+    zero shared imagery, chained into one scene and rigid-glued."""
+    a = comp('z1', 'P', 4, (0.0, 0.0, 10.0, 10.0), images=['a.jpg'])
+    b = comp('z1', 'Q', 4, (15.0, 0.0, 25.0, 10.0), images=['b.jpg'])
+    ok, why = merge_zones.pair_related(a, b)
+    assert not ok
+
+
+def test_null_bbox_relates_conservatively():
+    a = comp('z1', 'P', 4, None, images=['a.jpg'])
+    b = comp('z1', 'Q', 4, (500, 500, 510, 510), images=['b.jpg'])
+    ok, _why = merge_zones.pair_related(a, b)
+    assert ok
+
+
+def test_overlap_gate_splits_the_transitive_chain():
+    """Border-gate clustering chained A-B-C into one cluster via transitive
+    adjacency; the overlap gate must keep C separate (no sharing, 5 m gap)."""
+    border = merge_zones.related_pairs([A, B, C, D], 'border')
+    overlap = merge_zones.related_pairs([A, B, C, D], 'overlap')
+    kb = {tuple(sorted(p)) for p in border}
+    ko = {tuple(sorted(p)) for p in overlap}
+    bc = tuple(sorted((component_analysis.component_key(B),
+                       component_analysis.component_key(C))))
+    ab = tuple(sorted((component_analysis.component_key(A),
+                       component_analysis.component_key(B))))
+    assert bc in kb and bc not in ko
+    assert ab in kb and ab in ko, 'true overlap must relate under both gates'
+
+
+def test_merge_rungs_need_a_spanning_shared_graph():
+    """merge fuses through camera identity, so it is only admitted when the
+    shared-image graph reaches EVERY subset member. Any-pair sharing is not
+    enough: in the real {z1_c2, z4_c1, z4_c2} cluster only one pair shared
+    imagery while the third merely bbox-overlapped - a merge rung would have
+    rigid-glued all three."""
+    p = comp('z1', 'P', 4, (0, 0, 10, 10), images=['a.jpg', 's.jpg'])
+    q = comp('z4', 'Q', 4, (5, 0, 15, 10), images=['s.jpg', 'b.jpg'])
+    r = comp('z4', 'R', 4, (8, 0, 18, 10), images=['c.jpg'])
+
+    assert merge_zones.shared_graph_spans([p, q]), 'P-Q are identity-connected'
+    assert not merge_zones.shared_graph_spans([p, q, r]), (
+        'R has no identity link - merge could only glue it')
+    r['images'] = ['b.jpg', 'c.jpg']
+    assert merge_zones.shared_graph_spans([p, q, r]), (
+        'P-Q-R chain spans transitively through shared imagery')
+    assert merge_zones.shared_graph_spans([p]), 'singleton trivially spans'
 
 
 
@@ -271,6 +352,147 @@ def test_scale_gate_still_blocks_a_fusion_containing_a_bad_input():
         fused_target, scales, 0.90, 1.10, LOG)
     assert not kept and blocked[0]['status'] == 'fail', \
         'the worst input must still decide'
+
+
+# ---------------------------------------------------------------------------
+# Fused-component identity must be unique across attempts (H2024 2026-07-28)
+# ---------------------------------------------------------------------------
+#
+# peel_index restarts at 0 on every attempt, so naming a fusion
+# `<tag>_m_c<peel_index>` gave BOTH accepted fusions in cluster_1 the identity
+# `cluster_1/cluster_1_m_c0`. The next find_borders call raised
+# "duplicate component identity" and killed a 1h47m run after two good fusions.
+
+
+def fused_name(tag, attempt_no, peel_index):
+    """Mirror of the name merge_cluster builds for an adopted fusion."""
+    return f'{tag}_a{attempt_no}_c{peel_index}'
+
+
+def test_two_fusions_in_one_cluster_get_distinct_identities():
+    tag = 'cluster_1'
+    first = comp(tag, fused_name(tag, 1, 0), 525, (0, 0, 10, 10))
+    second = comp(tag, fused_name(tag, 5, 0), 400, (100, 100, 110, 110))
+    keys = {component_analysis.component_key(first),
+            component_analysis.component_key(second)}
+    assert len(keys) == 2, f'both fusions collapsed to one identity: {keys}'
+    # The real crash site: _validate runs inside find_borders.
+    component_analysis.find_borders([first, second])
+
+
+def test_the_old_scheme_would_still_be_caught():
+    """Pin the guard itself, so a future rename cannot silently reintroduce it."""
+    tag = 'cluster_1'
+    dup_a = comp(tag, f'{tag}_m_c0', 525, (0, 0, 10, 10))
+    dup_b = comp(tag, f'{tag}_m_c0', 400, (100, 100, 110, 110))
+    with pytest.raises(ValueError, match='duplicate component identity'):
+        component_analysis.find_borders([dup_a, dup_b])
+
+
+# ---------------------------------------------------------------------------
+# Bounded-loss attribution (owner decision 2026-07-28: 0.25% of input cameras)
+# ---------------------------------------------------------------------------
+#
+# H2024's hull fused 4,860 of 4,865 cameras on every rung and was rejected all
+# three times, because 4,860 is not an exact subset sum of {2241, 1407, 1217}.
+
+
+HULL = [comp('zone_5', 'zone_5_c0', 2241, (0, 0, 100, 100)),
+        comp('zone_2', 'zone_2_c0', 1407, (50, 0, 150, 100)),
+        comp('zone_3', 'zone_3_c0', 1217, (100, 0, 200, 100))]
+HULL_PEEL = [4860, 2241, 1407, 1217]
+HULL_TOL = int(4865 * 0.0025)          # 12 cameras
+
+
+def test_hull_fusion_is_invisible_without_a_loss_budget():
+    """The regression this whole change exists to fix."""
+    results, confidence = merge_zones.attribute_result(
+        HULL, HULL_PEEL, LOG, loss_tolerance=0)
+    fused = [r for r in results if len(r['inputs']) >= 2]
+    assert not fused, 'exact-only must not see the lossy fusion'
+    assert confidence == 'ambiguous'
+
+
+def test_hull_fusion_is_adopted_within_the_budget():
+    results, confidence = merge_zones.attribute_result(
+        HULL, HULL_PEEL, LOG, loss_tolerance=HULL_TOL)
+    assert confidence == 'exact', 'a single best lossy match is not ambiguous'
+    fused = [r for r in results if len(r['inputs']) >= 2]
+    assert len(fused) == 1, f'expected one fusion, got {fused}'
+    assert fused[0]['camera_count'] == 4860
+    assert sorted(fused[0]['inputs']) == [
+        'zone_2/zone_2_c0', 'zone_3/zone_3_c0', 'zone_5/zone_5_c0']
+    assert fused[0]['loss'] == 5, 'the accepted loss must be recorded'
+    # The three parents survive in the scene and must read as residuals.
+    assert sum(1 for r in results if r['residual']) == 3
+
+
+def test_loss_beyond_the_budget_is_still_rejected():
+    results, confidence = merge_zones.attribute_result(
+        HULL, [4800, 2241, 1407, 1217], LOG, loss_tolerance=HULL_TOL)
+    fused = [r for r in results if len(r['inputs']) >= 2]
+    assert not fused, '65 cameras lost is well outside a 12-camera budget'
+    assert confidence == 'ambiguous'
+
+
+def test_exact_match_wins_over_a_lossy_one():
+    """A tolerance must never change the answer on a case that was already exact."""
+    inputs = [comp('z', 'A', 100, (0, 0, 10, 10)),
+              comp('z', 'B', 60, (5, 0, 15, 10)),
+              comp('z', 'C', 40, (10, 0, 20, 10))]
+    # 160 is exactly A+B; A+B+C (200) is far outside the 10-camera budget, so
+    # the exact candidate is the only one and must be taken with zero loss.
+    results, _ = merge_zones.attribute_result(
+        inputs, [160, 40], LOG, loss_tolerance=10)
+    fused = [r for r in results if len(r['inputs']) >= 2][0]
+    assert fused['camera_count'] == 160
+    assert sorted(fused['inputs']) == ['z/A', 'z/B']
+    assert fused['loss'] == 0, 'an exact match must report zero loss'
+
+
+def test_tolerance_zero_is_the_old_behaviour():
+    inputs = [comp('z', 'A', 78, (0, 0, 10, 10)),
+              comp('z', 'B', 42, (5, 0, 15, 10))]
+    results, confidence = merge_zones.attribute_result(
+        inputs, [120, 78, 42], LOG, loss_tolerance=0)
+    fused = [r for r in results if len(r['inputs']) >= 2]
+    assert confidence == 'exact' and len(fused) == 1
+    assert fused[0]['camera_count'] == 120 and fused[0]['loss'] == 0
+
+
+# ---------------------------------------------------------------- audit #5
+# --scale_min/--scale_max were accepted, persisted, and PRINTED as the band in
+# EVALUATION_READY - and never reached the verdict. Tightening the gate was a
+# silent no-op under a report claiming it was applied.
+
+
+def test_operator_band_reaches_the_verdict(tmp_path, monkeypatch):
+    from modules import scale_oracle
+
+    captured = []
+    real_verdict = scale_oracle.verdict
+
+    def spy(stats, scale_min=scale_oracle.DEFAULT_SCALE_MIN,
+            scale_max=scale_oracle.DEFAULT_SCALE_MAX):
+        captured.append((scale_min, scale_max))
+        return real_verdict(stats, scale_min, scale_max)
+
+    monkeypatch.setattr(merge_zones.scale_oracle, 'verdict', spy)
+    monkeypatch.setattr(merge_zones.scale_oracle, 'load_nav_positions',
+                        lambda _p: {})
+    monkeypatch.setattr(merge_zones.scale_oracle, 'scale_for_images',
+                        lambda _i, _d, _n: {'median': 1.075, 'iqr_low': 1.05,
+                                            'iqr_high': 1.11, 'cameras': 10})
+    manifest = comp('z1', 'A', 10, (0, 0, 5, 5))
+    manifest['rsalign'] = str(tmp_path / 'A.rsalign')
+    (tmp_path / 'A.rsalign').write_bytes(b'x')
+
+    out = merge_zones.measure_input_scales([manifest], 'unused.txt', LOG,
+                                           scale_min=0.98, scale_max=1.02)
+    assert captured == [(0.98, 1.02)], 'the operator band must reach verdict'
+    assert out['z1/A']['status'] == 'fail', (
+        '1.075 is inside the default band but OUTSIDE the tightened one - '
+        'under the old wiring this passed silently')
 
 
 if __name__ == '__main__':

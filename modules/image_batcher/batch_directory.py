@@ -82,6 +82,22 @@ class BatchDirectory(RSModule):
             prompt_user=True
         )
 
+        additional_params['batch_overlap_max_distance_m'] = Parameter(
+            name='Overlap Max Distance (meters, 0=uncapped)',
+            cli_short='b_od',
+            cli_long='b_overlap_max_distance',
+            type=float,
+            default_value=0.0,
+            description='Donated overlap images further than this from the '
+                        'receiving zone are dropped. 0 keeps the legacy '
+                        'uncapped behaviour. The right band width is an OPEN '
+                        'question (overlap probe, 2026-07-28) - what is not '
+                        'open is that uncapped donation nullified H2023\'s '
+                        'zoning entirely (zone_1 ended with 98.7%% of the '
+                        'dive).',
+            prompt_user=False
+        )
+
         additional_params['batch_density_weight'] = Parameter(
             name='Density Weight (0..1)',
             cli_short='b_dw',
@@ -286,17 +302,20 @@ class BatchDirectory(RSModule):
 
     @staticmethod
     def _show_if_interactive() -> None:
-        """Show a figure ONLY when a human is present to close it.
+        """Show a figure only on EXPLICIT opt-in (RS_SHOW_PLOTS=1).
 
         plt.show() BLOCKS on an interactive backend until the window is
         dismissed, and the second plot cannot even appear until the first is
-        closed (owner-observed). Unattended that stalls the whole batch stage
-        indefinitely: the first H2024 batch took 4 h 10 min against 28.9 min
-        for identical work, which was a window waiting to be closed, not
-        computation. Both figures are already written as PNGs beside the
-        zones, so showing them is pure convenience.
+        closed (owner-observed). The previous guard inferred a human from
+        sys.stdin.isatty() - but isatty() lies under hidden consoles (this
+        repo's own Windows-traps list), and the batcher kept stalling for
+        hours after the gate landed: 2 h 53 min between the two figure saves
+        on a run with the gate 'active', against 1.35 s of actual zone
+        computation (measured 2026-07-28). Presence of a human is not
+        inferable here, so it must be declared. Both figures are always
+        written as PNGs beside the zones; showing them is pure convenience.
         """
-        if not sys.stdin.isatty():
+        if os.environ.get('RS_SHOW_PLOTS', '').strip() != '1':
             return
         try:
             plt.show()
@@ -516,7 +535,8 @@ class BatchDirectory(RSModule):
         return final_gdf, len(zones)
 
     def __create_geographic_zones(self, gdf, target_size, min_size, max_size,
-                                  overlap_percent, density_weight, kde_bw):
+                                  overlap_percent, density_weight, kde_bw,
+                                  max_overlap_distance_m=0.0):
         if gdf is None or gdf.empty:
             return [], {}, None
 
@@ -551,7 +571,22 @@ class BatchDirectory(RSModule):
                     final_zones.append(final_zone_files)
                     continue
 
+                # The donor pool is the ENTIRE rest of the dive, so the slice
+                # below must be capped against it: sized only by the RECEIVER,
+                # a large zone swallows most of everything else. Measured on
+                # H2023 (2026-07-28): zone_1's 20% overlap = 756 images = 93%
+                # of the whole remainder, leaving it with 4,540 of 4,598
+                # unique images (98.7% of the dive) spanning all three
+                # co-visibility blocks - the zoning was nullified. The cap is
+                # symmetric: at most overlap_percent of the receiver AND at
+                # most overlap_percent of the donor pool.
                 overlap_size = int(len(zone_i) * (overlap_percent / 100.0))
+                donor_cap = int(len(other) * (overlap_percent / 100.0))
+                if donor_cap < overlap_size:
+                    self.logger.info(
+                        'zone %d: overlap capped by donor pool (%d -> %d of '
+                        '%d donors)', i, overlap_size, donor_cap, len(other))
+                    overlap_size = donor_cap
                 if overlap_size <= 0:
                     final_zones.append(final_zone_files)
                     continue
@@ -561,6 +596,23 @@ class BatchDirectory(RSModule):
                 other_xy = np.column_stack([other.geometry.x.to_numpy(np.float64),
                                             other.geometry.y.to_numpy(np.float64)])
                 dists, _ = tree.query(other_xy, k=1)
+
+                # Optional absolute ceiling: an overlap image the matcher can
+                # never bridge to the zone is pure duplicate weight. The band
+                # width itself is unsettled (overlap probe) - 0 disables.
+                if max_overlap_distance_m > 0:
+                    in_range = dists <= max_overlap_distance_m
+                    if not in_range.all():
+                        self.logger.info(
+                            'zone %d: %d donor(s) beyond %.1f m dropped',
+                            i, int((~in_range).sum()), max_overlap_distance_m)
+                    other = other[in_range]
+                    other_xy = other_xy[in_range]
+                    dists = dists[in_range]
+                    if other.empty:
+                        final_zones.append(final_zone_files)
+                        continue
+                    overlap_size = min(overlap_size, len(other))
 
                 other_density = other['density'].to_numpy()
                 invdens = 1.0 / other_density
@@ -896,6 +948,9 @@ class BatchDirectory(RSModule):
         overlap_percent = float(self.params['batch_initial_overlap_percent'].get_value())
         density_weight = float(self.params['batch_density_weight'].get_value())
         kde_bw = float(self.params['batch_kde_bandwidth'].get_value())
+        max_overlap_distance_m = float(
+            self.params['batch_overlap_max_distance_m'].get_value()
+            if 'batch_overlap_max_distance_m' in self.params else 0.0)
 
         self.logger.info(f"Target zone size: {target_size} images (min: {min_size}, max: {max_size})")
         if self.utm_zone_suffix:
@@ -903,7 +958,8 @@ class BatchDirectory(RSModule):
 
         while True:
             final_zones, base_zones, gdf_processed = self.__create_geographic_zones(
-                gdf, target_size, min_size, max_size, overlap_percent, density_weight, kde_bw
+                gdf, target_size, min_size, max_size, overlap_percent, density_weight, kde_bw,
+                max_overlap_distance_m=max_overlap_distance_m
             )
 
             print("\n--- Batch Summary ---")

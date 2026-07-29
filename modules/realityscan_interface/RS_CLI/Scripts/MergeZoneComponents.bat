@@ -77,9 +77,21 @@ if defined list_mode (
 ) else (
     for %%F in ("%components_dir%\*.rsalign") do set /a component_count+=1
 )
-if %component_count% LSS 2 (
-    echo ERROR: need at least 2 components, found %component_count%
-    goto :argfail
+:: Assemble mode has nothing to merge, so ONE component is a perfectly valid
+:: deliverable: import it, georeference it, save it. Applying the >= 2 guard to
+:: every mode meant a fully-converged single-feature dive could not produce its
+:: assembly project - a completely successful ladder that fused 3 -> 1 then
+:: aborted with "need at least 2 components" (H2024 2026-07-28).
+if /i "%merge_mode%" == "assemble" (
+    if %component_count% LSS 1 (
+        echo ERROR: assemble needs at least 1 component, found %component_count%
+        goto :argfail
+    )
+) else (
+    if %component_count% LSS 2 (
+        echo ERROR: need at least 2 components to %merge_mode%, found %component_count%
+        goto :argfail
+    )
 )
 if not exist "%output_dir%" mkdir "%output_dir%"
 goto :args_ok
