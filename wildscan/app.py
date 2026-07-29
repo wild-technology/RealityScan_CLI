@@ -28,7 +28,7 @@ from . import APP_NAME, ORG, TAGLINE, __version__
 from .branding import (CSS, FOOTER_NOTE, MIST, OK, SAND, STATUS_COLOR,
                        STATUS_GLYPH, TEAL, WARN, WORDMARK)
 from .runner import CommandRunner, LogLine, ProgressUpdate, RunFinished
-from .stages import RUNNABLE, plan_for
+from .stages import RUNNABLE, build_plan, spec_for
 from .workspace import STAGE_ORDER, Workspace
 
 
@@ -121,6 +121,11 @@ class HomeScreen(Screen):
 
 
 class StageScreen(Screen):
+    """Ask first, run second: the stage's own declared inputs become the
+    form, prefilled from the workspace census and the operator's saved
+    answers; the exact command updates live as fields change; Run stays
+    disabled until every field validates."""
+
     BINDINGS = [
         Binding("escape", "back", "Back"),
         Binding("g", "go", "Run stage"),
@@ -131,12 +136,15 @@ class StageScreen(Screen):
         super().__init__()
         self.stage_key = stage_key
         self.runner = CommandRunner(self)
+        self.spec = None
         self.plan = None
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="panel"):
+        with VerticalScroll(classes="panel", id="stage-form-panel"):
             yield Label("", id="stage-title", classes="panel-title")
             yield Static("", id="stage-preview")
+            yield Vertical(id="stage-form")
+            yield Static("", id="stage-problems")
             yield Static("", id="stage-command")
         with Horizontal(classes="panel"):
             yield Button("Run", id="run", variant="primary")
@@ -150,20 +158,56 @@ class StageScreen(Screen):
         app: WildScanApp = self.app  # type: ignore[assignment]
         ws = app.workspace
         assert ws is not None
-        self.plan = plan_for(self.stage_key, ws)
-        title = self.query_one("#stage-title", Label)
-        title.update(f"{self.stage_key.upper()}  ·  {ws.root}")
-        preview = self.query_one("#stage-preview", Static)
-        lines = Text()
-        for bullet in self.plan.preview:
-            lines.append("  · ", style=TEAL)
-            lines.append(bullet + "\n")
-        lines.append("  · ", style=TEAL)
-        lines.append(f"estimate: {self.plan.estimate}\n", style=MIST)
-        preview.update(lines)
-        self.query_one("#stage-command", Static).update(
-            Text(f"$ {self.plan.display_command}", style=MIST))
+        self.spec = spec_for(self.stage_key, ws)
+        self.query_one("#stage-title", Label).update(
+            f"{self.spec.key.upper()}  ·  {ws.root}")
+        intro = Text()
+        for bullet in self.spec.intro:
+            intro.append("  · ", style=TEAL)
+            intro.append(bullet + "\n")
+        intro.append("  · ", style=TEAL)
+        intro.append(f"estimate: {self.spec.estimate}\n", style=MIST)
+        self.query_one("#stage-preview", Static).update(intro)
 
+        form = self.query_one("#stage-form", Vertical)
+        for f in self.spec.fields:
+            label = f.label + ("  *" if f.required else "")
+            form.mount(Label(label))
+            form.mount(Input(value=f.default, placeholder=f.help or f.label,
+                             id=f"field-{f.arg}"))
+        self._revalidate()
+
+    # ------------------------------------------------------------- form
+    def _values(self) -> dict[str, str]:
+        assert self.spec is not None
+        return {f.arg: self.query_one(f"#field-{f.arg}", Input).value
+                for f in self.spec.fields}
+
+    def _revalidate(self) -> None:
+        assert self.spec is not None
+        app: WildScanApp = self.app  # type: ignore[assignment]
+        values = self._values()
+        problems = [p for f in self.spec.fields
+                    if (p := f.validate(values.get(f.arg, ""))) is not None]
+        problems_widget = self.query_one("#stage-problems", Static)
+        if problems:
+            problems_widget.update(
+                Text("\n".join(f"  ! {p}" for p in problems), style=WARN))
+            self.plan = None
+            self.query_one("#stage-command", Static).update("")
+        else:
+            problems_widget.update("")
+            self.plan = build_plan(self.stage_key, app.workspace, values)
+            self.query_one("#stage-command", Static).update(
+                Text(f"$ {self.plan.display_command}", style=MIST))
+        self.query_one("#run", Button).disabled = (
+            bool(problems) or self.runner.running)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id and event.input.id.startswith("field-"):
+            self._revalidate()
+
+    # ------------------------------------------------------------ actions
     def action_back(self) -> None:
         if not self.runner.running:
             self.app.pop_screen()
@@ -179,7 +223,12 @@ class StageScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         log = self.query_one("#stage-log", RichLog)
-        if event.button.id == "run" and self.plan and not self.runner.running:
+        if event.button.id == "run" and not self.runner.running:
+            self._revalidate()
+            if self.plan is None:
+                log.write(Text("fix the highlighted inputs first",
+                               style=WARN))
+                return
             log.write(Text(f"launching: {self.plan.display_command}",
                            style=TEAL))
             try:
@@ -207,10 +256,10 @@ class StageScreen(Screen):
         ok = message.returncode == 0
         log.write(Text(f"finished with exit code {message.returncode}",
                        style=OK if ok else "bold red"))
-        self.query_one("#run", Button).disabled = False
         self.query_one("#stop", Button).disabled = True
         self.query_one("#stage-progress", ProgressBar).update(
             progress=100 if ok else 0)
+        self._revalidate()
 
 
 class ResultsScreen(Screen):

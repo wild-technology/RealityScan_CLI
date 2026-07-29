@@ -58,8 +58,12 @@ class CommandRunner:
             raise RuntimeError("a stage is already running")
         env = dict(os.environ)
         env.update(plan.env)
+        # stdin=DEVNULL: a child that reaches input() must get EOF (and take
+        # its stored-default path) - never block invisibly on an inherited
+        # console (the exact hang the final review found in the drivers).
         self._proc = subprocess.Popen(
             plan.argv, cwd=plan.cwd, env=env,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1)
         self._thread = threading.Thread(target=self._pump, daemon=True)

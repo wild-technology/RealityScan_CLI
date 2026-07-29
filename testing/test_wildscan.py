@@ -22,8 +22,12 @@ sys.path.insert(0, REPO_ROOT)
 
 pytest.importorskip("textual")
 
-from wildscan.stages import plan_for  # noqa: E402
+from wildscan.stages import build_plan, spec_for  # noqa: E402
 from wildscan.workspace import Workspace  # noqa: E402
+
+
+def defaults_of(spec) -> dict:
+    return {f.arg: f.default for f in spec.fields}
 
 
 def make_workspace(tmp_path, *, stage: str):
@@ -150,42 +154,96 @@ def test_components_join_scale_models_exports(tmp_path):
     assert c0.exported == ["fbx", "obj", "ply"]
 
 
-# ------------------------------------------------------------------ plans
+# --------------------------------------------------- forms (ask, THEN run)
 
-def test_every_runnable_stage_produces_a_plan(tmp_path):
+def test_every_runnable_stage_asks_before_running(tmp_path):
+    """The v1 failure: stages launched unattended with no data arguments and
+    the modules silently inherited another project's rs_settings defaults.
+    Every stage must now present a form and build its command from the
+    answers."""
     ws = make_workspace(tmp_path, stage="align")
     for key in ("extract", "georeference", "preprocess", "batch",
                 "align", "merge", "model", "export", "publish"):
-        plan = plan_for(key, ws)
-        assert plan is not None and plan.argv, key
-        assert plan.preview, f"{key} must preview before execution"
+        spec = spec_for(key, ws)
+        assert spec is not None and spec.fields, f"{key} must ask for data"
+        plan = build_plan(key, ws, defaults_of(spec))
+        assert plan.argv, key
 
 
-def test_export_plan_writes_the_names_file(tmp_path):
-    """The names file is the export workflow's input contract - the app must
-    author it from the merge report, never the operator by hand."""
+def test_module_forms_come_from_the_modules_own_declarations(tmp_path):
+    """One source of truth: the fields ARE get_parameters()."""
+    ws = make_workspace(tmp_path, stage="empty")
+    spec = spec_for("extract", ws)
+    args = {f.arg for f in spec.fields}
+    assert "i_input" in args, "the video path must be asked for"
+    video = next(f for f in spec.fields if f.arg == "i_input")
+    assert video.required and video.kind == "file"
+
+    spec = spec_for("georeference", ws)
+    args = {f.arg for f in spec.fields}
+    assert {"g_input", "g_flight_log"} <= args
+
+
+def test_workspace_prefills_beat_settings_and_defaults(tmp_path):
+    ws = make_workspace(tmp_path, stage="georeference")
+    spec = spec_for("georeference", ws)
+    g_input = next(f for f in spec.fields if f.arg == "g_input")
+    assert g_input.default == str(ws.raw_images), (
+        "detected imagery must prefill the form")
+
+
+def test_user_answers_reach_the_command_line(tmp_path):
+    ws = make_workspace(tmp_path, stage="empty")
+    spec = spec_for("extract", ws)
+    values = defaults_of(spec)
+    values["i_input"] = r"D:\dive\video.mov"
+    plan = build_plan("extract", ws, values)
+    argv = plan.argv
+    assert "--i_input" in argv
+    assert argv[argv.index("--i_input") + 1] == r"D:\dive\video.mov"
+    assert plan.env.get("RS_MODULES") == "Extract Images"
+
+
+def test_required_field_validation_blocks_the_run(tmp_path):
+    ws = make_workspace(tmp_path, stage="empty")
+    spec = spec_for("extract", ws)
+    video = next(f for f in spec.fields if f.arg == "i_input")
+    assert video.validate("") is not None, "empty required field must fail"
+    assert video.validate(r"C:\definitely\missing.mov") is not None
+    fpm = next(f for f in spec.fields if f.arg == "i_output_fpm")
+    assert fpm.validate("not-a-number") is not None
+    assert fpm.validate("2.5") is None
+
+
+def test_export_form_writes_the_names_file(tmp_path):
+    """The names file is the export workflow's input contract - authored
+    from the operator's (prefilled) component list, never by hand."""
     ws = make_workspace(tmp_path, stage="merge")
-    plan_for("export", ws)
+    spec = spec_for("export", ws)
+    build_plan("export", ws, defaults_of(spec))
     names = (ws.exports / "components.names").read_text(encoding="utf-8")
     assert names.splitlines() == ["zone_1_c0", "zone_2_c0"]
 
 
-def test_publish_plan_is_dry_run_without_credentials(tmp_path, monkeypatch):
+def test_publish_defaults_to_dry_run_without_credentials(tmp_path, monkeypatch):
     monkeypatch.delenv("CESIUM_ION_TOKEN", raising=False)
     monkeypatch.delenv("NIRACLIENT_DIR", raising=False)
     ws = make_workspace(tmp_path, stage="export")
-    plan = plan_for("publish", ws)
+    spec = spec_for("publish", ws)
+    plan = build_plan("publish", ws, defaults_of(spec))
     assert "--dry-run" in plan.argv, (
         "no credentials must never mean silent uploads - it means preview")
 
 
 def test_merge_plan_carries_the_owner_gates(tmp_path):
     ws = make_workspace(tmp_path, stage="align")
-    plan = plan_for("merge", ws)
+    spec = spec_for("merge", ws)
+    plan = build_plan("merge", ws, defaults_of(spec))
     argv = " ".join(plan.argv)
     assert "--pair_gate overlap" in argv
     assert "--loss_tolerance 0.0025" in argv
     assert "--scale_gate true" in argv
+    assert "--assemble_only false" in argv
 
 
 # ------------------------------------------------------------- app smoke
@@ -201,6 +259,35 @@ def test_app_boots_and_shows_pipeline(tmp_path):
             await pilot.pause()
             table = app.screen.query_one("#pipeline")
             assert table.row_count == 9
+    asyncio.run(drive())
+
+
+def test_stage_screen_renders_the_form_and_blocks_until_valid(tmp_path):
+    """Open the extract stage on an empty workspace: the video field is
+    empty and required, so a problem is shown and Run is disabled; filling
+    it with a real file enables Run and puts the value in the command."""
+    from wildscan.app import StageScreen, WildScanApp
+
+    ws = make_workspace(tmp_path, stage="empty")
+    ws.root.mkdir(parents=True, exist_ok=True)
+    video = ws.root / "dive.mov"
+    video.write_bytes(b"v")
+
+    async def drive():
+        app = WildScanApp(str(ws.root))
+        async with app.run_test(size=(120, 50)) as pilot:
+            await pilot.pause()
+            app.push_screen(StageScreen("extract"))
+            await pilot.pause()
+            screen = app.screen
+            run = screen.query_one("#run")
+            assert run.disabled, "empty required field must block Run"
+            field = screen.query_one("#field-i_input")
+            field.value = str(video)
+            await pilot.pause()
+            assert not run.disabled, "a valid form must enable Run"
+            assert screen.plan is not None
+            assert str(video) in screen.plan.display_command
     asyncio.run(drive())
 
 
