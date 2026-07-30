@@ -69,6 +69,114 @@ RESULTS_LAYOUT = [
 ]
 
 
+# ----------------------------------------------------------------- cameras
+
+# The owner's official camera table (2026-07-29) - suggestions offered when
+# an unrecognised filename prefix matches a letter. The PIPELINE's camera
+# truth stays in modules/camera_registry.py; the portal only identifies,
+# asks, and records.
+OFFICIAL_CAMERAS = {
+    "Z": "Zeuss 24mm rectilinear zoom (Standard Science Camera)",
+    "C": "Cinema (fisheye; 16mm) - Widefield Camera Array",
+    "P": "Port (fisheye; 16mm) - Widefield Camera Array",
+    "S": "Starboard (fisheye; 16mm) - Widefield Camera Array",
+    "U": "Upper (fisheye; 16mm)",
+    "M": "Mid (fisheye; 16mm)",
+    "L": "Lower (24mm zoom rectilinear lens)",
+}
+
+
+@dataclass
+class CameraScan:
+    """Camera identities parsed from the imagery filenames."""
+    known: dict = field(default_factory=dict)     # family -> (count, example)
+    unknown: dict = field(default_factory=dict)   # prefix -> (count, example)
+
+    def summary_lines(self) -> list[str]:
+        from modules import camera_registry
+        lines = []
+        for fam, (count, example) in sorted(self.known.items()):
+            cam = camera_registry.CAMERAS.get(
+                camera_registry.FAMILY_CAMERA.get(fam, ""), None)
+            desc = cam.key if cam else fam
+            lines.append(f"camera {desc}: {count:,} images "
+                         f"({fam}, e.g. {example}) - priors on file")
+        for prefix, (count, example) in sorted(self.unknown.items()):
+            suggestion = OFFICIAL_CAMERAS.get(prefix.upper()[:1])
+            hint = f" - looks like {suggestion}" if suggestion else ""
+            lines.append(f"UNRECOGNISED camera '{prefix}': {count:,} images "
+                         f"(e.g. {example}) - will ask{hint}")
+        return lines
+
+
+_PREFIX_RE = None
+
+
+def scan_cameras(image_dir: str | Path, sample_per_dir: int = 200) -> CameraScan:
+    """Parse camera identities from filenames: the registry decides KNOWN
+    (priors on file); anything else groups by its leading alpha prefix and
+    becomes a question."""
+    import re as _re
+
+    from modules import camera_registry
+    scan = CameraScan()
+    root = Path(image_dir)
+    if not root.is_dir():
+        return scan
+    prefix_re = _re.compile(r"^([A-Za-z]+)")
+    for dirpath, _dirs, files in os.walk(root):
+        taken = 0
+        for name in files:
+            if Path(name).suffix.lower() not in IMAGE_EXTS:
+                continue
+            taken += 1
+            if taken > sample_per_dir:
+                break
+            fam = camera_registry.family(name)
+            if fam:
+                count, example = scan.known.get(fam, (0, name))
+                scan.known[fam] = (count + 1, example)
+            else:
+                m = prefix_re.match(name)
+                prefix = (m.group(1) if m else "?").lower()
+                count, example = scan.unknown.get(prefix, (0, name))
+                scan.unknown[prefix] = (count + 1, example)
+    return scan
+
+
+def camera_questions(scan: CameraScan, saved: dict[str, str]) -> list["Question"]:
+    """One block of questions per UNRECOGNISED camera prefix: the official
+    name (suggested from the owner's letter table), lens, and - always -
+    lever arm and tilt. Answers are recorded for the pipeline maintainers
+    (camera_registry/MOUNTS stay the runtime truth) and become the next
+    session's defaults."""
+    questions: list[Question] = []
+    for prefix in sorted(scan.unknown):
+        count, example = scan.unknown[prefix]
+        letter = prefix.upper()[:1]
+        suggested = OFFICIAL_CAMERAS.get(letter, "")
+        base = f"cam_{prefix}"
+        questions += [
+            Question("cameras", f"{base}_name",
+                     f"Unrecognised camera '{prefix}' ({count} images, e.g. "
+                     f"{example}). Official camera name",
+                     "text", saved.get(f"{base}_name", suggested),
+                     required=True),
+            Question("cameras", f"{base}_lens",
+                     f"'{prefix}' lens (e.g. fisheye 16mm / rectilinear 24mm)",
+                     "text", saved.get(f"{base}_lens", "")),
+            Question("cameras", f"{base}_lever",
+                     f"'{prefix}' lever arm from vehicle centre, metres "
+                     "forward/lateral/down (e.g. 1.0/0.0/1.0)",
+                     "text", saved.get(f"{base}_lever", ""), required=True),
+            Question("cameras", f"{base}_tilt",
+                     f"'{prefix}' tilt (camera pitch down from horizontal, "
+                     "degrees)",
+                     "number", saved.get(f"{base}_tilt", ""), required=True),
+        ]
+    return questions
+
+
 # ---------------------------------------------------------------- detection
 
 @dataclass
@@ -143,12 +251,16 @@ def _settings():
     return SettingsStore()
 
 
+_PERSISTED_FIELDS = ("expedition", "dive", "cruise_folder", "raw_images_dir",
+                     "video_path", "processed_data", "results_base",
+                     "continue_automatically")
+
+
 def load_last_run() -> dict:
     """The previous session's answers - the new defaults (owner directive)."""
     store = _settings()
     out = {}
-    for key in ("expedition", "dive", "data_location", "results_base",
-                "continue_automatically"):
+    for key in _PERSISTED_FIELDS:
         value = store.get("wildscan", key, None)
         if value not in (None, ""):
             out[key] = str(value)
@@ -162,7 +274,10 @@ def save_last_run(session: "Session") -> None:
     store = _settings()
     store.set("wildscan", "expedition", session.expedition)
     store.set("wildscan", "dive", session.dive)
-    store.set("wildscan", "data_location", session.data_location)
+    store.set("wildscan", "cruise_folder", session.cruise_folder)
+    store.set("wildscan", "raw_images_dir", session.raw_images_dir)
+    store.set("wildscan", "video_path", session.video_path)
+    store.set("wildscan", "processed_data", session.processed_data)
     store.set("wildscan", "results_base", str(Path(session.results_root).parent))
     store.set("wildscan", "continue_automatically",
               session.continue_automatically)
@@ -175,7 +290,15 @@ def save_last_run(session: "Session") -> None:
 class Session:
     expedition: str = ""
     dive: str = ""
-    data_location: str = ""
+    # Raw data - three separate lines (owner 2026-07-29): the cruise dive
+    # folder (video + nav as delivered), a folder of raw stills, and/or a
+    # specific video. Any subset may be filled.
+    cruise_folder: str = ""
+    raw_images_dir: str = ""
+    video_path: str = ""
+    # Processed data - a results-SHAPED location where ROVDataConcat has
+    # already run (datatables exist) but the pipeline stages have not.
+    processed_data: str = ""
     results_root: str = ""
     continue_automatically: bool = False
     enabled: list[str] = field(default_factory=list)
@@ -201,7 +324,10 @@ def default_session() -> Session:
     s = Session(
         expedition=last.get("expedition", ""),
         dive=last.get("dive", ""),
-        data_location=last.get("data_location", ""),
+        cruise_folder=last.get("cruise_folder", ""),
+        raw_images_dir=last.get("raw_images_dir", ""),
+        video_path=last.get("video_path", ""),
+        processed_data=last.get("processed_data", ""),
         continue_automatically=(last.get("continue_automatically", "false")
                                 .lower() == "true"),
         answers=dict(last.get("answers", {})),
@@ -289,26 +415,63 @@ def _module_registry() -> dict:
     return _MODULES
 
 
+def scan_processed_data(location: str | Path) -> dict[str, list[Path]]:
+    """A results-shaped location where ROVDataConcat already ran: find its
+    datatables and any georeferenced flight logs (read-only)."""
+    out: dict[str, list[Path]] = {"datatables": [], "utm_logs": []}
+    root = Path(location)
+    if not root.is_dir():
+        return out
+    for dirpath, dirnames, files in os.walk(root):
+        depth = len(Path(dirpath).relative_to(root).parts)
+        if depth >= 3:
+            dirnames[:] = []
+        for name in files:
+            low = name.lower()
+            if low.endswith(".csv") and "datatable" in low:
+                out["datatables"].append(Path(dirpath) / name)
+            elif low.startswith("flight_log") and low.endswith("_utm.txt"):
+                out["utm_logs"].append(Path(dirpath) / name)
+    # geoall's own preference: *final_datatable* first.
+    out["datatables"].sort(key=lambda p: ("final_datatable" not in p.name.lower(),
+                                          p.name.lower()))
+    return out
+
+
 def _detection_prefills(session: Session, scan: RawDataScan) -> dict[str, str]:
     """Auto-detected answers, keyed by cli_long. Only offered as defaults -
-    every one still passes through its question."""
+    every one still passes through its question. Source priority: the
+    operator's explicit lines (video / raw images / processed data) beat the
+    cruise-folder scan."""
     ws = session.workspace()
     out: dict[str, str] = {}
-    if scan.videos:
+    if session.video_path and Path(session.video_path).is_file():
+        out["i_input"] = session.video_path
+    elif scan.videos:
         out["i_input"] = str(scan.videos[0])
-    raw = ws.raw_images if ws.raw_images.is_dir() else None
+    raw = (Path(session.raw_images_dir)
+           if session.raw_images_dir and Path(session.raw_images_dir).is_dir()
+           else None)
+    if raw is None and ws.raw_images.is_dir():
+        raw = ws.raw_images
     if raw is None and scan.image_dirs:
         raw = scan.image_dirs[0]
     if raw:
         out["g_input"] = str(raw)
         out["p_input"] = str(raw)
-    if scan.nav_files:
+    processed = scan_processed_data(session.processed_data) \
+        if session.processed_data else {"datatables": [], "utm_logs": []}
+    if processed["datatables"]:
+        out["g_flight_log"] = str(processed["datatables"][0])
+    elif scan.nav_files:
         out["g_flight_log"] = str(scan.nav_files[0])
     batch_src = ws.preprocessed if ws.preprocessed.is_dir() else raw
     if batch_src:
         out["b_input"] = str(batch_src)
     logs = _find_flight_logs(ws.raw_images) or _find_flight_logs(ws.root)
     logs = [p for p in logs if ws.batched not in p.parents]
+    if not logs and processed["utm_logs"]:
+        logs = processed["utm_logs"]
     if not logs and scan.utm_logs:
         logs = scan.utm_logs
     if logs:
@@ -326,6 +489,15 @@ def build_questions(session: Session, scan: RawDataScan) -> list[Question]:
                         if k in MODULE_DISPLAY}
     detected = _detection_prefills(session, scan)
     questions: list[Question] = []
+
+    # Camera identification comes FIRST: parse the imagery's camera names;
+    # recognised families carry priors on file; every unrecognised prefix
+    # asks for the official name plus lever/tilt (owner directive).
+    image_source = detected.get("g_input") or session.raw_images_dir
+    if image_source:
+        cam_scan = scan_cameras(image_source)
+        questions += camera_questions(cam_scan, session.answers)
+
     for key in CHAIN_STAGES:
         if key not in session.enabled:
             continue
@@ -383,6 +555,10 @@ def build_commands(session: Session) -> list[StageCommand]:
                 "--output_dir", session.results_root,
                 "--continue_automatically", "true"]
         for arg, value in session.answers.items():
+            # cam_* answers are the portal's camera record (persisted for
+            # the maintainers + next session), never main.py arguments.
+            if arg.startswith("cam_"):
+                continue
             if value.strip():
                 argv += [f"--{arg}", value.strip()]
         for arg, value in _FORCED_ANSWERS.items():

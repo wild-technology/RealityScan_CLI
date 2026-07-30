@@ -63,8 +63,16 @@ class SessionScreen(Screen):
             yield Input(id="s-expedition")
             yield Label("Dive (e.g. H2024)")
             yield Input(id="s-dive")
-            yield Label("Raw data location (cruise folder: video, nav, imagery)")
-            yield Input(id="s-data")
+            yield Label("Raw data — Cruise Dive Folder (video + nav as "
+                        "delivered)")
+            yield Input(id="s-cruise")
+            yield Label("Raw data — Raw Images (folder of stills)")
+            yield Input(id="s-rawimages")
+            yield Label("Raw data — Video (specific survey video)")
+            yield Input(id="s-video")
+            yield Label("Processed Data (ROVDataConcat already run — "
+                        "datatables — but no zones yet)")
+            yield Input(id="s-processed")
             yield Label("Results root (created if missing; the pipeline "
                         "builds its structure inside)")
             yield Input(id="s-results")
@@ -77,7 +85,10 @@ class SessionScreen(Screen):
         s = app.session
         self.query_one("#s-expedition", Input).value = s.expedition
         self.query_one("#s-dive", Input).value = s.dive
-        self.query_one("#s-data", Input).value = s.data_location
+        self.query_one("#s-cruise", Input).value = s.cruise_folder
+        self.query_one("#s-rawimages", Input).value = s.raw_images_dir
+        self.query_one("#s-video", Input).value = s.video_path
+        self.query_one("#s-processed", Input).value = s.processed_data
         self.query_one("#s-results", Input).value = s.results_root
         self._refresh_detection()
 
@@ -86,20 +97,45 @@ class SessionScreen(Screen):
         s = app.session
         s.expedition = self.query_one("#s-expedition", Input).value.strip()
         s.dive = self.query_one("#s-dive", Input).value.strip()
-        s.data_location = self.query_one("#s-data", Input).value.strip()
+        s.cruise_folder = self.query_one("#s-cruise", Input).value.strip()
+        s.raw_images_dir = self.query_one("#s-rawimages", Input).value.strip()
+        s.video_path = self.query_one("#s-video", Input).value.strip()
+        s.processed_data = self.query_one("#s-processed", Input).value.strip()
         s.results_root = self.query_one("#s-results", Input).value.strip()
 
     def _refresh_detection(self) -> None:
+        from .session import scan_cameras, scan_processed_data
         app: WildScanApp = self.app  # type: ignore[assignment]
         self._pull()
         s = app.session
         text = Text()
-        if s.data_location:
-            app.scan = scan_raw_data(s.data_location)
-            text.append("Detected in the data location:\n", style=SAND)
+        if s.cruise_folder:
+            app.scan = scan_raw_data(s.cruise_folder)
+            text.append("Cruise folder:\n", style=SAND)
             for line in app.scan.summary_lines():
                 text.append("  · ", style=TEAL)
                 text.append(line + "\n")
+        if s.raw_images_dir:
+            cams = scan_cameras(s.raw_images_dir)
+            text.append("Raw images — camera identification:\n", style=SAND)
+            for line in cams.summary_lines() or ["no imagery found there"]:
+                style = WARN if line.startswith("UNRECOGNISED") else TEAL
+                text.append("  · ", style=style)
+                text.append(line + "\n")
+        if s.processed_data:
+            processed = scan_processed_data(s.processed_data)
+            text.append("Processed data:\n", style=SAND)
+            if processed["datatables"]:
+                text.append("  · ", style=TEAL)
+                text.append(f"ROVDataConcat output: "
+                            f"{processed['datatables'][0].name}\n")
+            if processed["utm_logs"]:
+                text.append("  · ", style=TEAL)
+                text.append(f"georeferenced log: "
+                            f"{processed['utm_logs'][0].name}\n")
+            if not (processed["datatables"] or processed["utm_logs"]):
+                text.append("  · ", style=WARN)
+                text.append("no datatables found there\n")
         if s.results_root:
             text.append("\nResults structure (pipeline-created):\n",
                         style=SAND)
@@ -113,7 +149,8 @@ class SessionScreen(Screen):
         self.query_one("#s-detect", Static).update(text)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id == "s-data":
+        if event.input.id in ("s-cruise", "s-rawimages", "s-processed",
+                              "s-video"):
             self._refresh_detection()
         elif event.input.id in ("s-expedition", "s-dive"):
             app: WildScanApp = self.app  # type: ignore[assignment]
@@ -227,7 +264,10 @@ class WizardScreen(Screen):
         self.query_one("#w-progress", Label).update(
             f"Question {self.index + 1} of {total}")
         self.query_one("#w-stage", Static).update(
-            Text(STAGE_TITLES.get(q.stage, q.stage), style=TEAL))
+            Text(STAGE_TITLES.get(q.stage,
+                                  "Camera identification"
+                                  if q.stage == "cameras" else q.stage),
+                 style=TEAL))
         self.query_one("#w-prompt", Label).update(
             q.prompt + ("  *" if q.required else ""))
         answer = self.query_one("#w-answer", Input)
@@ -288,7 +328,10 @@ class SummaryScreen(Screen):
         s = app.session
         text = Text()
         text.append(f"  expedition_dive: {s.label or '(unset)'}\n")
-        text.append(f"  data location:   {s.data_location or '(unset)'}\n")
+        text.append(f"  cruise folder:   {s.cruise_folder or '(unset)'}\n")
+        text.append(f"  raw images:      {s.raw_images_dir or '(unset)'}\n")
+        text.append(f"  video:           {s.video_path or '(unset)'}\n")
+        text.append(f"  processed data:  {s.processed_data or '(unset)'}\n")
         text.append(f"  results root:    {s.results_root}\n")
         text.append(f"  stages:          "
                     f"{', '.join(STAGE_TITLES.get(k, k) for k in s.enabled)}\n\n")
@@ -474,8 +517,8 @@ class WildScanApp(App):
         self.session: Session = default_session()
         if workspace:
             self.session.results_root = workspace
-        self.scan = scan_raw_data(self.session.data_location) \
-            if self.session.data_location else scan_raw_data("")
+        self.scan = scan_raw_data(self.session.cruise_folder) \
+            if self.session.cruise_folder else scan_raw_data("")
         self.questions = []
 
     @property

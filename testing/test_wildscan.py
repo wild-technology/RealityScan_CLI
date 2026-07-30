@@ -151,7 +151,7 @@ def test_resume_aware_stage_preselection(tmp_path):
 
 def _session(tmp_path, enabled, data=None) -> Session:
     s = Session(expedition="NA156", dive="H2024",
-                data_location=str(data) if data else "",
+                cruise_folder=str(data) if data else "",
                 results_root=str(tmp_path / "results"))
     s.enabled = enabled
     return s
@@ -160,7 +160,8 @@ def _session(tmp_path, enabled, data=None) -> Session:
 def test_questions_follow_module_order_and_use_descriptions(tmp_path):
     s = _session(tmp_path, ["extract", "georeference"],
                  make_raw_data(tmp_path))
-    qs = build_questions(s, scan_raw_data(s.data_location))
+    qs = [q for q in build_questions(s, scan_raw_data(s.cruise_folder))
+          if q.stage != "cameras"]
     stages = [q.stage for q in qs]
     assert stages == sorted(stages, key=["extract", "georeference"].index), (
         "questions must arrive in module order (RC_Main)")
@@ -178,6 +179,88 @@ def test_detection_prefills_the_answers(tmp_path):
     assert video.default == str(raw / "video" / "dive_A.mov")
     nav = next(q for q in qs if q.arg == "g_flight_log")
     assert nav.default == str(raw / "nav" / "H2024_final_datatable.csv")
+
+
+def test_explicit_lines_beat_the_cruise_scan(tmp_path):
+    """The separate Raw Images / Video / Processed Data lines take priority
+    over anything found by scanning the cruise folder."""
+    raw = make_raw_data(tmp_path)
+    stills = tmp_path / "stills"
+    stills.mkdir()
+    (stills / "Z231_0001.jpg").write_bytes(b"j")
+    other_video = tmp_path / "special.mov"
+    other_video.write_bytes(b"v")
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    (processed / "H2024_final_datatable.csv").write_text("t,x,y\n",
+                                                         encoding="utf-8")
+    s = _session(tmp_path, ["extract"], raw)
+    s.video_path = str(other_video)
+    qs = build_questions(s, scan_raw_data(raw))
+    assert next(q for q in qs if q.arg == "i_input").default == str(other_video)
+
+    # georeference WITHOUT extract enabled: its input question is asked (an
+    # enabled extract would answer it in-process - RC_Main semantics) and the
+    # explicit lines win the prefills.
+    s2 = _session(tmp_path, ["georeference"], raw)
+    s2.raw_images_dir = str(stills)
+    s2.processed_data = str(processed)
+    qs2 = build_questions(s2, scan_raw_data(raw))
+    assert next(q for q in qs2 if q.arg == "g_input").default == str(stills)
+    assert next(q for q in qs2 if q.arg == "g_flight_log").default == \
+        str(processed / "H2024_final_datatable.csv"), (
+        "Processed Data's ROVDataConcat output must win the nav prefill")
+
+
+def test_camera_parsing_recognises_registry_families(tmp_path):
+    from wildscan.session import scan_cameras
+    stills = tmp_path / "stills"
+    stills.mkdir()
+    (stills / "P231C0001_x.jpg").write_bytes(b"j")   # WCA Port - known
+    (stills / "C231C0002_x.jpg").write_bytes(b"j")   # WCA Cinema - known
+    (stills / "U9990001_x.jpg").write_bytes(b"j")    # Upper - NOT in registry
+    scan = scan_cameras(stills)
+    assert "wca_port" in scan.known and "wca_cinema" in scan.known
+    assert "u" in scan.unknown, "unrecognised prefixes must surface"
+
+
+def test_unknown_camera_asks_name_lever_and_tilt(tmp_path):
+    """Owner directive: unknown camera string -> ask official name; lever
+    and tilt MUST be asked; the letter table suggests the official name."""
+    stills = tmp_path / "stills"
+    stills.mkdir()
+    (stills / "U9990001_x.jpg").write_bytes(b"j")
+    s = _session(tmp_path, ["georeference"])
+    s.raw_images_dir = str(stills)
+    qs = build_questions(s, scan_raw_data(""))
+    cam_qs = {q.arg: q for q in qs if q.stage == "cameras"}
+    assert "cam_u_name" in cam_qs and cam_qs["cam_u_name"].required
+    assert cam_qs["cam_u_name"].default == "Upper (fisheye; 16mm)", (
+        "the owner's letter table must suggest the official name")
+    assert "cam_u_lever" in cam_qs and cam_qs["cam_u_lever"].required
+    assert "cam_u_tilt" in cam_qs and cam_qs["cam_u_tilt"].required
+
+
+def test_known_cameras_ask_nothing(tmp_path):
+    stills = tmp_path / "stills"
+    stills.mkdir()
+    (stills / "P231C0001_x.jpg").write_bytes(b"j")
+    s = _session(tmp_path, ["georeference"])
+    s.raw_images_dir = str(stills)
+    qs = build_questions(s, scan_raw_data(""))
+    assert not [q for q in qs if q.stage == "cameras"], (
+        "recognised families have priors on file - no questions")
+
+
+def test_camera_answers_never_reach_main_py(tmp_path):
+    s = _session(tmp_path, ["georeference"])
+    s.answers = {"g_input": "D:/x", "cam_u_name": "Upper (fisheye; 16mm)",
+                 "cam_u_lever": "1.0/0.0/1.0", "cam_u_tilt": "45"}
+    chain = build_commands(s)[0]
+    argv = " ".join(chain.argv)
+    assert "--g_input" in argv
+    assert "cam_u" not in argv, (
+        "camera records are portal data, not pipeline arguments")
 
 
 def test_disable_when_module_active_suppresses_redundant_questions(tmp_path):
