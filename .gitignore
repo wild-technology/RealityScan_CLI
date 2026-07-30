@@ -29,3 +29,7 @@ main.py.lprof
 /testing/__pycache__
 /modules/realityscan_interface/RS_CLI/Errors/*.dmp.metadata
 /modules/realityscan_interface/RS_CLI/Errors/expected_*.txt
+
+# Python bytecode
+__pycache__/
+*.pyc

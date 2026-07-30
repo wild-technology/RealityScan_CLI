@@ -11,10 +11,11 @@ import os
 import re
 import subprocess
 import threading
+from pathlib import Path
 
 from textual.message import Message
 
-from .stages import LaunchPlan
+REPO = Path(__file__).resolve().parent.parent
 
 # "20533 0.67 33.41 17.11 #progress"  ->  op, fraction, elapsed, eta
 _PROGRESS = re.compile(
@@ -53,16 +54,18 @@ class CommandRunner:
     def running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
-    def start(self, plan: LaunchPlan) -> None:
+    def start(self, plan) -> None:
+        """`plan` is anything with argv + env (session.StageCommand)."""
         if self.running:
             raise RuntimeError("a stage is already running")
         env = dict(os.environ)
         env.update(plan.env)
+        cwd = getattr(plan, "cwd", str(REPO))
         # stdin=DEVNULL: a child that reaches input() must get EOF (and take
         # its stored-default path) - never block invisibly on an inherited
         # console (the exact hang the final review found in the drivers).
         self._proc = subprocess.Popen(
-            plan.argv, cwd=plan.cwd, env=env,
+            plan.argv, cwd=cwd, env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1)
