@@ -524,6 +524,21 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
             consumed_counts.remove(count)
             by_index[idx] = {'peel_index': idx, 'camera_count': count,
                              'inputs': [], 'members': None, 'residual': True}
+        elif not remaining and count <= loss_tolerance:
+            # Bounded shed (2026-08-01, ON2026): the joint solve can split
+            # weak boundary cameras into a fragment that is not a
+            # subset-sum of whole inputs. With EVERY input already
+            # attributed and the fragment inside the loss budget, treat it
+            # as shed cameras - they are already counted in `lost`
+            # (adopted excludes them) and acceptance still enforces
+            # lost <= budget on the TOTAL. Without this, any rung that
+            # sheds even one fragment can never be accepted (observed:
+            # 885 of 36.9k = 2.4% shed on every rung).
+            logger.warning('unattributable residual peel of %d cameras is '
+                           'within the %d-camera loss budget - treated as '
+                           'SHED, not ambiguous', count, loss_tolerance)
+            by_index[idx] = {'peel_index': idx, 'camera_count': count,
+                             'inputs': [], 'members': None, 'residual': True}
         else:
             confidence = 'ambiguous'
             logger.warning('attribution failed for peel count %d '
@@ -567,10 +582,21 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
     if not zone_logs:
         raise FileNotFoundError(f'No flight_log*_UTM.txt found under {images_root}')
 
+    # No UTM tag in the filename = a LOCAL-frame campaign (e.g. COLMAP
+    # local:1 priors, ON2026): mirror the alignment module's behavior and
+    # use the Metadata FlightLogParams template AS-IS instead of failing -
+    # the template is cruise-specific by design and already declares the
+    # campaign CRS (C-20260730-05).
     zone_band = utm_zone_from_flight_log_name(zone_logs[0])
-    if zone_band is None:
-        raise ValueError(f'Flight log "{zone_logs[0]}" carries no UTM zone tag')
-    zone, band = zone_band
+    local_frame = zone_band is None
+    if local_frame:
+        logger.warning(
+            'Flight log "%s" carries no UTM zone tag - LOCAL-frame campaign; '
+            'using the FlightLogParams template as-is. Verify it matches '
+            'this cruise!', os.path.basename(zone_logs[0]))
+        zone, band = None, None
+    else:
+        zone, band = zone_band
 
     header, rows = None, {}
     for log_path in sorted(zone_logs):
@@ -588,14 +614,19 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
             rows.setdefault(name, line)
 
     suffix = f'_{tag}' if tag else ''
-    union_path = os.path.join(output_dir, f'flight_log{suffix}_{zone}{band}_UTM.txt')
+    crs_tag = 'local' if local_frame else f'{zone}{band}'
+    union_path = os.path.join(output_dir, f'flight_log{suffix}_{crs_tag}_UTM.txt')
     with open(union_path, 'w', encoding='utf-8', newline='\r\n') as f:
         f.write(header + '\n' + '\n'.join(rows.values()) + '\n')
 
     template = os.path.join(METADATA_DIR, 'FlightLogParams.xml')
-    params_path = write_flight_log_params(
-        template, os.path.join(output_dir, f'FlightLogParams_{zone}{band}.xml'),
-        zone, band)
+    if local_frame:
+        params_path = os.path.join(output_dir, 'FlightLogParams_local.xml')
+        shutil.copyfile(template, params_path)
+    else:
+        params_path = write_flight_log_params(
+            template, os.path.join(output_dir, f'FlightLogParams_{zone}{band}.xml'),
+            zone, band)
     logger.info('flight log%s: %d rows -> %s', suffix, len(rows), union_path)
     return union_path, params_path
 

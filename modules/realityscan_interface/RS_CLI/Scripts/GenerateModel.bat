@@ -48,10 +48,11 @@ set "MetadataDir=%Metadata%"
 :: adapts to fit the count - so 4 x 16K caps the budget while small
 :: components use fewer/smaller. Previously 2 x 16K (high poly) and
 :: 1 x 16K (simplified unwrap).
-set "HighModelTexture=%MetadataDir%\Texturing_MaxTextureCount4_16k.xml"
+:: 8K cap (owner 2026-07-31): both texture passes limited to 4 x 8K.
+set "HighModelTexture=%MetadataDir%\Texturing_MaxTextureCount4_8k.xml"
 set "SimplifyNoise=%MetadataDir%\SimplifyNoise_Params.xml"
 set "SimplifySmooth=%MetadataDir%\SimplifySmooth_80per_Params.xml"
-set "UnwrapSimplified=%MetadataDir%\Unwrapping_Simplified_4x16k.xml"
+set "UnwrapSimplified=%MetadataDir%\Unwrapping_Simplified_4x8k.xml"
 set "ReprojectionParams=%MetadataDir%\ReprojectionParams.xml"
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"

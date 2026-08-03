@@ -2,8 +2,8 @@
   <entry key="ifuuInhEn" value="true"/>
   <entry key="ifCSopt" value="1"/>
   <entry key="gpsLogFileFormat" value="{B438A617-2434-5A24-C1B7-58980F28345A}"/>
-  <entry key="CoordinateSystemFlightLog" value="+proj=utm +zone=57 +south +datum=WGS84 +units=m +no_defs"/>
-  <entry key="CoordinateSystemFlightLogType" value="epsg:32757 - WGS 84 / UTM zone 57S"/>
+  <entry key="CoordinateSystemFlightLog" value="+proj=geocent +ellps=WGS84 +no_defs"/>
+  <entry key="CoordinateSystemFlightLogType" value="local:1 - Euclidean"/>
   <entry key="ifKGrp" value="2"/>
   <entry key="csvFLIgn" value="true"/>
   <entry key="ifuuInh" value="0"/>

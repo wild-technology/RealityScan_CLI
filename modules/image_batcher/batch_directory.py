@@ -140,6 +140,23 @@ class BatchDirectory(RSModule):
             disable_when_module_active='Georeference Images'
         )
 
+        additional_params['batch_use_z'] = Parameter(
+            name='Cluster With Depth (Z)',
+            cli_short='b_z',
+            cli_long='b_use_z',
+            type=bool,
+            default_value=False,
+            description=('Include altitude/depth in zone clustering and 3D '
+                         'overlap donation. For sites with tall vertical '
+                         'structure (shipwreck masts/hull): XY-only zones are '
+                         'vertical columns mixing depth strata whose imagery '
+                         'shares no visual field, fragmenting every zone into '
+                         'per-stratum components (ON2026 diagnosis '
+                         '2026-07-30: zone_2 = 7 components in disjoint Z '
+                         'bands over one 6x4 m footprint).'),
+            prompt_user=False
+        )
+
         additional_params['batch_xmp_priors'] = Parameter(
             name='Write XMP Calibration Priors',
             cli_short='b_x',
@@ -189,7 +206,7 @@ class BatchDirectory(RSModule):
         keys = ('batch_target_images_per_zone', 'batch_min_zone_size',
                 'batch_max_zone_size', 'batch_initial_overlap_percent',
                 'batch_density_weight', 'batch_kde_bandwidth',
-                'batch_overlap_max_distance_m')
+                'batch_overlap_max_distance_m', 'batch_use_z')
         input_dir = self.__get_input_dir()
         return {
             'flight_log': os.path.basename(flight_log_path or ''),
@@ -375,6 +392,13 @@ class BatchDirectory(RSModule):
                 return None
 
             df = df.dropna(subset=['x', 'y'])
+            # Altitude column for Z-aware clustering (batch_use_z). Kept as a
+            # plain 'z' column - geometry stays 2D so every existing plot and
+            # geometry.x/y consumer is untouched. Missing/blank alt -> 0.
+            alt_col = next((c for c in ('alt', 'Altitude', 'Alt')
+                            if c in df.columns), None)
+            df['z'] = (pd.to_numeric(df[alt_col], errors='coerce').fillna(0.0)
+                       if alt_col else 0.0)
             geometry = [Point(float(x), float(y)) for x, y in zip(df.x, df.y)]
             gdf = gpd.GeoDataFrame(df, geometry=geometry)
 
@@ -404,22 +428,33 @@ class BatchDirectory(RSModule):
 
     def __density_aware_kmeans(self, coords: np.ndarray, density: np.ndarray, k: int,
                                density_weight: float) -> np.ndarray:
+        """coords may be (n,2) XY or (n,3) XYZ (batch_use_z): every spatial
+        column becomes a standardized feature; log-density is always the
+        last feature and the only one down-weighted."""
         logd = np.log(density)
-        features = np.column_stack([coords[:, 0], coords[:, 1], logd])
+        features = np.column_stack([coords, logd])
         scaler = StandardScaler()
         X = scaler.fit_transform(features)
-        X[:, 2] *= float(density_weight)
+        X[:, -1] *= float(density_weight)
         km = KMeans(n_clusters=k, random_state=42, n_init=10)
         labels = km.fit_predict(X)
         return labels
+
+    def _spatial_coords(self, gdf_like) -> np.ndarray:
+        """(n,2) XY, or (n,3) XYZ when batch_use_z is on."""
+        cols = [gdf_like.geometry.x.to_numpy(np.float64),
+                gdf_like.geometry.y.to_numpy(np.float64)]
+        use_z = (self.params or {}).get('batch_use_z')
+        if use_z is not None and use_z.get_value():
+            cols.append(gdf_like['z'].to_numpy(np.float64))
+        return np.column_stack(cols)
 
     def __split_zone(self, zone_gdf, density_weight):
         """Split a zone into 2 sub-zones using density-aware k-means."""
         if len(zone_gdf) < 2:
             return [zone_gdf]
 
-        coords = np.column_stack([zone_gdf.geometry.x.to_numpy(np.float64),
-                                  zone_gdf.geometry.y.to_numpy(np.float64)])
+        coords = self._spatial_coords(zone_gdf)
         density = zone_gdf['density'].to_numpy()
 
         labels = self.__density_aware_kmeans(coords, density, 2, density_weight)
@@ -427,8 +462,10 @@ class BatchDirectory(RSModule):
         return [zone_gdf[labels == 0].copy(), zone_gdf[labels == 1].copy()]
 
     def __find_nearest_zone(self, zone_gdf, other_zones):
-        """Find the nearest zone based on centroid distance."""
-        zone_centroid = np.array([zone_gdf.geometry.x.mean(), zone_gdf.geometry.y.mean()])
+        """Find the nearest zone based on centroid distance (3D when
+        batch_use_z, so undersized strata merge with their own depth band
+        rather than the column above/below them)."""
+        zone_centroid = self._spatial_coords(zone_gdf).mean(axis=0)
 
         min_dist = float('inf')
         nearest_zone = None
@@ -437,7 +474,7 @@ class BatchDirectory(RSModule):
         for idx, other_zone in enumerate(other_zones):
             if other_zone is zone_gdf:
                 continue
-            other_centroid = np.array([other_zone.geometry.x.mean(), other_zone.geometry.y.mean()])
+            other_centroid = self._spatial_coords(other_zone).mean(axis=0)
             dist = np.linalg.norm(zone_centroid - other_centroid)
 
             if dist < min_dist:
@@ -455,8 +492,7 @@ class BatchDirectory(RSModule):
         self.logger.info(f"Starting with {initial_k} initial zones for {len(gdf)} images")
 
         # Initial clustering
-        coords = np.column_stack([gdf.geometry.x.to_numpy(np.float64),
-                                  gdf.geometry.y.to_numpy(np.float64)])
+        coords = self._spatial_coords(gdf)
         density = gdf['density'].to_numpy()
 
         labels = self.__density_aware_kmeans(coords, density, initial_k, density_weight)
@@ -546,8 +582,10 @@ class BatchDirectory(RSModule):
         if gdf is None or gdf.empty:
             return [], {}, None
 
-        coords = np.column_stack([gdf.geometry.x.to_numpy(np.float64),
-                                  gdf.geometry.y.to_numpy(np.float64)])
+        coords = self._spatial_coords(gdf)
+        if coords.shape[1] == 3:
+            self.logger.info("Z-aware batching: clustering and overlap "
+                             "donation run in 3D (batch_use_z)")
 
         bw = float(kde_bw)
         if bw <= 0.0:
@@ -597,10 +635,8 @@ class BatchDirectory(RSModule):
                     final_zones.append(final_zone_files)
                     continue
 
-                tree = cKDTree(np.column_stack([zone_i.geometry.x.to_numpy(np.float64),
-                                                zone_i.geometry.y.to_numpy(np.float64)]))
-                other_xy = np.column_stack([other.geometry.x.to_numpy(np.float64),
-                                            other.geometry.y.to_numpy(np.float64)])
+                tree = cKDTree(self._spatial_coords(zone_i))
+                other_xy = self._spatial_coords(other)
                 dists, _ = tree.query(other_xy, k=1)
 
                 # Optional absolute ceiling: an overlap image the matcher can
