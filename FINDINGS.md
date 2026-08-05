@@ -2330,3 +2330,62 @@ MERGE ATTEMPT's snapshot, and which artifact.
   the 6 m band is NOT settled, only its control arm ran; (e) GenerateModel
   error-whitelist redesign, needs the benign select-miss code from (a)-style
   probing. (2026-07-28)
+
+## RealityScan documentation sources (2026-08-04)
+
+- **The COMPLETE official RealityScan 2.2 documentation ships offline in the
+  install tree** — `C:\Program Files\Epic Games\RealityScan_2.2\Help\en-US\`
+  (408 files, 153 substantive topics, 2.3 MB HTML), including
+  `appbasics/allcommands.htm` (the full command table) and
+  `tutorials/setkeyvaluetable.htm` (the full `-set` key table). Discovered
+  while building `docs/rs-reference/`: the public Epic docs site is
+  JS-rendered and returns an EMPTY table of contents to any fetcher, so the
+  local Help is not merely a convenience — it is the only reliably readable
+  form of the official documentation. Converted to plain text (tables
+  preserved as `ROW: | cell | cell`) with `help2txt.py`. Caveat: HTML
+  `rowspan` cells flatten, so enum value lists in the key table lose their
+  key association — reattach by reading the raw `.htm`. (2026-08-04)
+  ESTABLISHED
+
+- **`-undercut` is a real CLI command that Epic COMMENTED OUT of its own
+  published command table.** Found by reading the raw
+  `appbasics/allcommands.htm` rather than the rendered page: the `<tr>` sits
+  inside an HTML comment, description "Undercut the selected model so that
+  each part contains geometry just in its cluster box", and it carries
+  process ID `27 UNDERCUT_MODEL_PARTS`. Zero occurrences outside the
+  comment. Implication beyond the one command: **the rendered Help is a
+  subset of the shipped Help — grep the HTML source, not the text.**
+  (2026-08-04) ESTABLISHED
+
+- **The install tree carries ~29 XML schema/format dictionaries** at
+  `C:\Program Files\Epic Games\RealityScan_2.2\*.xml` (`flightlogs.xml`,
+  `sensorsdb.xml`, `epsg.xml`, `calibration.xml`, `groundcontrol.xml`,
+  `mesh.xml`, `ortho.xml`, `oneexport.xml`, `transformdb.xml`,
+  `measurementsimport/export.xml`, ...) plus
+  `Settings\SimplifiedExport\*.xml`. These are the authoritative field
+  dictionaries for the `params.xml` profile system and are essentially
+  undocumented in prose — reading one is the fastest way to discover a
+  profile's legal values. (2026-08-04) ESTABLISHED
+
+- **Consolidated reference manual now at `docs/rs-reference/`** — 14 files,
+  ~27,700 lines, fusing the offline Help + install schemas + this repo's
+  empirical record, every claim provenance-tagged
+  ([OFFICIAL]/[VERIFIED]/[CONTRADICTED]/[UNDOCUMENTED]/[INFERRED]/[OPEN]).
+  Coverage: 218 command names, 740 settings keys across four evidence
+  tiers. Built by a 30-agent workflow (3 survey, 13 write, 13 independent
+  verify, 1 integrate); the verify pass corrected fabricated citations and
+  restored contradictions that drafts had smoothed over. Read
+  `docs/rs-reference/README.md` first — it routes a question to one file in
+  one hop. (2026-08-04) ESTABLISHED
+
+- **HAZARD — `testing/NA167_SESSION_NOTES.md` states a merge rule that D7
+  SUPERSEDED, and CLAUDE.md directs every new-workflow session to consult
+  those notes first.** The notes say `-mergeComponents` "fuses ONLY through
+  cameras shared by identity"; FINDINGS "D7 RESOLVED" (2026-07-24, above)
+  established that fusion is driven by image CONTENT overlap and path
+  identity is sufficient but NOT necessary. Surfaced by the reference build,
+  which carries the corrected rule with the old one retained as
+  [SUPERSEDED]. The notes are a frozen historical log, but the CLAUDE.md
+  pointer makes the stale rule load-bearing for future sessions.
+  (2026-08-04) OPEN — needs an owner decision: annotate the notes in place,
+  or repoint CLAUDE.md hard rule 9 at `docs/rs-reference/`.
