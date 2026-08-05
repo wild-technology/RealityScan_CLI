@@ -1,5 +1,21 @@
 # RealityScan 2.2 CLI — revised documentation & bug findings
 
+> **FROZEN — 2026-08-04. Superseded as the CLI reference by
+> `docs/rs-reference/`.** This file is retained as the *citation target*
+> for the ~351 `NA167 B*` / `NA167 #*` provenance references in that
+> manual. Read it for provenance and history, **not** for current
+> behavior. Do not append to it; new facts go to `FINDINGS.md`.
+>
+> **Known superseded claim in this file:** Section 1 states that
+> `-mergeComponents` "fuses ONLY through cameras shared by identity."
+> Probe D7 (2026-07-24, `testing/probe_d7.py`) refuted the "only": fusion
+> is driven by image **CONTENT** overlap, and shared paths are
+> *sufficient but not necessary* — two components with zero shared
+> basenames and zero shared paths fused exactly. See `FINDINGS.md`
+> "D7 RESOLVED" and `docs/rs-reference/08-components-and-merge.md` §5.2.
+> The surviving half of the original claim still holds: with **no content
+> overlap** nothing fuses, silently, under any flag combination.
+
 Compiled from empirical testing on NA167_H2075 (2026-07-22/23). Two
 sections: (1) the official documentation for every command/setting we
 used, **revised** to say what actually happens; (2) bug findings for CLI
