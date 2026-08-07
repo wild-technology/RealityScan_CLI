@@ -15,26 +15,48 @@ runs verified, including everything the Help leaves out.
 
 ### Instance & session control
 
-**`-setInstanceName <name>` / `-delegateTo <name> <cmd>`**
+**`-setInstanceName <name>` / `-delegateTo <name>|* <cmd>`**
 - Official: named instances; delegate commands to a running instance.
 - Revised: delegated commands are **queued FIFO** and the delegating
   process returns at hand-over, not completion. Instant commands
   (`-set`) can be fired without completion waits because FIFO guarantees
   ordering before the next queued operation.
+- Revised (2026-08-04): the instance argument accepts **`*`**, meaning
+  "the first available instance". This holds for `-delegateTo`,
+  `-waitCompleted`, `-getStatus`, `-pauseInstance`, `-unpauseInstance`
+  and `-abortInstance`. **Consequence: a RealityScan started from the
+  GUI / Epic Games Launcher — which carries no `-setInstanceName` — is
+  still fully drivable from the CLI via `*`.** Verified against a live
+  GUI session: `-getStatus RS1` → exit 5, `-getStatus *` → exit 0.
+  Caveat: `*` means *first available*, so it is ambiguous the moment two
+  instances run. Use explicit names for multi-GPU work and reserve `*`
+  for attaching to a single interactive session.
 
-**`-waitCompleted <name>`**
+**`-waitCompleted <name>|*`**
 - Official: block until the current process finishes.
 - Revised: returns **prematurely** when issued before the instance picks
   up a queued command. Always: grace delay → wait → grace → wait
   (the `:run` pattern). Never infer completion any other way.
 
-**`-getStatus <name>`**
+**`-getStatus <name>|*`**
 - Official: errorlevel 0 iff the instance exists.
 - Revised: correct for existence, but "gone" precedes process teardown
   by several seconds — **file handles (progress marker) are released
   after** getStatus already reports the instance dead. Retry
   marker-file deletion for up to ~60 s before concluding an instance is
   still alive.
+- Revised (2026-08-04): it also **prints a live progress line to
+  stdout**, which the Help does not mention:
+  `id:0x5051 progress:11.1% runtime:575.04sec endEstimation:4579.16sec rev:93 lastError:0`
+  (operation id, percent, elapsed, estimated remaining, revision, last
+  error code). Capture it by redirecting stdout — RealityScan is a
+  GUI-subsystem binary and does not reliably attach to a parent console.
+  This is the **only error channel available for a GUI-launched
+  instance**, which has no `ErrorWriter.bat` hook and therefore no
+  `errors_<instance>.txt`. `ModelToFinal.bat` gates on `lastError:`
+  for exactly this reason. Unverified: whether `lastError` is sticky
+  across operations — do not read a non-zero code on the first gated
+  command as proof that *that* command failed.
 
 **`-headless -stdConsole -silent <dir> -writeProgress <file> <secs>`**
 - Official: headless operation, crash-dump path, progress reporting.

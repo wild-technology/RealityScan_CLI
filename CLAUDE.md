@@ -83,6 +83,22 @@ Exceptions that must NOT be renamed:
     `SequentialAlignGrow` (incremental add→log→align),
     `AlignImagesFromFolder` (DEPRECATED; kept for run_zone9_tests.py).
     Boot honors `RS_HEADLESS=0` for a GUI-visible instance.
+
+    **`ModelToFinal` is the one exception to the paragraph above.** It
+    finishes a mesh that ALREADY exists (texture → simplify → unwrap →
+    reproject → export → save) and **attaches** to a running instance
+    rather than booting one: it deliberately does NOT call
+    `startRealityScan.bat`, because that script issues
+    `-newScene -deleteAutosave` when `-getStatus` finds an instance
+    already running, which would destroy the very scene it was asked to
+    finish. It therefore delegates to `%RS_TARGET%` (not `%RS_INSTANCE%`),
+    accepts `*` as the instance (see below), and gates on the
+    `lastError:` + `rev:` fields of `-getStatus` rather than
+    `errors_<instance>.txt` — that marker file only exists for an
+    instance booted by `startRealityScan.bat`, so an instance from the
+    Epic Launcher or any foreign GUI session never writes one. Use
+    `GenerateModel` for the normal path where the pipeline owns the
+    instance and computes the mesh itself.
   - `RS_CLI/Errors/ErrorWriter.bat` — invoked by RealityScan itself
     (`appProcessAction=ExecuteProgram`); appends every completion to
     `results.log`, failures to `errors.txt`.
@@ -104,7 +120,17 @@ Exceptions that must NOT be renamed:
   but can return prematurely if issued before the instance picks up the
   queued command — hence the double-wait in `:run`.
 - `-getStatus <instance>` → errorlevel 0 iff the instance exists (used
-  for readiness and shutdown verification).
+  for readiness and shutdown verification). It ALSO prints a live
+  progress line on stdout (capture by redirecting; RealityScan is a
+  GUI-subsystem binary): `id:<op> progress:<pct> runtime:<s>
+  endEstimation:<s> rev:<n> lastError:<code>`.
+- **`*` is a valid instance argument** meaning "first available
+  instance", accepted by `-delegateTo`, `-waitCompleted`, `-getStatus`,
+  `-pauseInstance`, `-unpauseInstance` and `-abortInstance`. A
+  GUI/Epic-Launcher RealityScan has no `-setInstanceName` and so answers
+  no named lookup, but IS reachable via `*`. Ambiguous once two
+  instances run — use explicit names for multi-GPU, `*` only to attach
+  to a single interactive session.
 - App settings use `app*` key names (`appQuitOnError`, `appAutoSaveMode`,
   `appProcessAction`, `appProcessActionTime`, `appProcessExecCmd`). The
   legacy `RealityCapture*` key names are dead.
