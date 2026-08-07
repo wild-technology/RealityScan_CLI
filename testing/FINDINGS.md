@@ -291,3 +291,61 @@ Companion docs: `NA167_SESSION_NOTES.md` (revised CLI docs + bug list),
     Added `Unwrapping_Simplified_4x8k.xml` and made `ModelToFinal.bat`
     pick the unwrap preset to match the texture preset. Verified in the
     artifact: four `*_diffuse.jpg`, each exactly 8192x8192.
+
+38. **MEASURED: orientation priors have never been active in any ON2026
+    flight log - all five variants carry yaw/pitch/roll accuracy of
+    exactly 90.0 degrees on every row.** -> 2026-08-07, direct column
+    statistics over all 38,948 rows of five logs
+    (`flight_log_zones.pre_rollfix.txt`, `rs_rollfix/flight_log_local.txt`,
+    `rs_zup/flight_log_local.txt`, `flight_log_zones.roll0_backup.txt`,
+    `flight_log_zones.txt`). Every one: yaw_acc = pitch_acc = roll_acc =
+    90.0, min = median = max. Their *angle values* differ substantially
+    (yaw medians 101.0/101.0/167.5/101.1/160.9, pitch 92.8/92.8/104.7/
+    92.8/75.3, roll 0.0/-49.9/1.8/-49.9/-175.9, and the current log's
+    altitude median is -0.505 against +0.54 for all four earlier ones).
+    **INFERRED, NOT TESTED:** a 90-degree rotation sigma is an
+    uninformative prior, so the roll-fix and Z-up convention experiments
+    were varying angles the solver was effectively not weighting - which
+    would make any A/B between them look inconclusive regardless of which
+    convention is correct. Setting real uncertainties is the change that
+    actually enables orientation. Test before believing: one fixture A/B,
+    same angles, accuracy 90 vs a few degrees.
+
+39. **MEASURED + DOCUMENTED: a downlooking ROV sits on the YPR
+    gimbal-lock singularity.** -> Local Help `tools/flightlogimport.htm`
+    states YPR defines "rotation order around the X (Roll), Y (Pitch),
+    and Z (Yaw) axes in the **North-East-Down (NED)** coordinate system,
+    evaluated from right to left". Measured over the current ON2026 log:
+    pitch min 7.68, p05 55.18, median 75.34, p95 107.59, max 173.76, with
+    **24.9% of rows (9,697/38,948) within 5 degrees of |pitch| = 90**;
+    earlier variants sit even closer (pitch median 92.8). Roll also wraps
+    the branch cut, holding values at both -180.000 and +180.000.
+    **INFERRED, NOT TESTED:** for the standard aerospace Z-Y-X sequence
+    that NED framing implies, pitch = +/-90 is the singularity where yaw
+    and roll degenerate to a single observable (yaw -/+ roll), so tight
+    yaw/roll priors are ill-conditioned exactly in survey geometry.
+    Consequence if true: loosen yaw/roll sigma relative to pitch, or
+    derive angles from quaternions. RealityScan's exact sequence has NOT
+    been confirmed - the Help names the axes but not the intrinsic/
+    extrinsic convention.
+
+40. **MEASURED: the position accuracies in the ON2026 logs are a
+    constant fill, not measured uncertainty.** -> x_acc, y_acc and
+    alt_acc are 0.020 for every one of 38,948 rows (min = p05 = median =
+    p95 = max = 0.020). Real per-sample position sigma from the nav
+    solution would be an improvement independent of anything to do with
+    orientation.
+
+41. **`write_flight_log_params` cannot express a local-Euclidean frame;
+    ON2026's params XML was hand-made outside the pipeline.** -> Code
+    read of `modules/flight_logs.py`: the function rewrites only
+    `CoordinateSystemFlightLog` / `CoordinateSystemFlightLogType`, and
+    only ever with `+proj=utm +zone=N[ +south] ...` / `epsg:326xx|327xx`.
+    ON2026 instead used a hand-authored `FlightLogParamsLocal.xml`
+    (`+proj=geocent +ellps=WGS84 +no_defs`, `local:1 - Euclidean`) that
+    no code generates or validates - precisely the hand-edited-template
+    hazard CLAUDE.md hard rule 6 and finding 6 exist to prevent, just
+    displaced from the UTM zone onto the frame type. Also untouched by
+    that function: `ifUsePosAcc`, `ifUseOriAcc`, `ifCSopt`, `ifKGrp`,
+    `ifKmode`, `ifuuInh`, `ifuuInhEn` - every key that governs whether
+    accuracies are read from the file at all.

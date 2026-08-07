@@ -1,5 +1,101 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## START HERE (refreshed 2026-08-07)
+
+**Last completed work:** ON2026 taken from a finished Normal Detail mesh
+through to final deliverables (next section). Committed to `main`.
+
+**Next work, not yet started:** a new ON2026 alignment run using updated
+nav — pitch/roll/yaw *with real uncertainties*, in local Euclidean space.
+Investigation is done; the run is blocked on three answers (below).
+
+### Machine state at handoff
+
+- No pipeline job running. A RealityScan instance is up but **idle**
+  (fresh process, started 2026-08-07 12:58, `id:0xffffffff`, `rev:160`,
+  `lastError:0`) — note this is a *different* process from the one that
+  produced the deliverables, so the app log has been truncated (finding
+  16); nothing about the old session survives in it.
+- `M:` has 762 GB free. Repo tree clean.
+- Reach the instance with `-getStatus *` / `-delegateTo *`, **not** a
+  named instance — it is GUI-launched (finding 32).
+
+### What the nav investigation established (findings 38–41)
+
+1. **Orientation has never actually been on.** All five ON2026 flight-log
+   variants carry yaw/pitch/roll accuracy = 90.0° on every one of 38,948
+   rows, while their angle *values* differ a lot. The earlier roll-fix and
+   Z-up experiments were therefore varying angles that were effectively
+   unweighted — treat their conclusions as void, not as evidence about
+   which convention is right.
+2. **Survey geometry sits on the gimbal-lock singularity.** Pitch median
+   75.3°, and 24.9% of rows within 5° of |pitch| = 90°. RealityScan
+   documents YPR as NED-framed; for the Z–Y–X sequence that implies,
+   ±90° is where yaw and roll degenerate. Roll also wraps ±180°.
+3. **Position accuracy is a constant 0.020 fill**, not measured sigma.
+4. **The pipeline cannot generate local-Euclidean flight-log params.**
+   `write_flight_log_params` only ever emits UTM; ON2026's
+   `FlightLogParamsLocal.xml` is hand-authored and unvalidated, and the
+   function also ignores every accuracy-governing key (`ifUsePosAcc`,
+   `ifUseOriAcc`, `ifCSopt`, `ifKGrp`, `ifKmode`, `ifuuInh`, `ifuuInhEn`).
+
+### Blocking questions (asked 2026-08-07, not yet answered)
+
+1. **Where does the updated nav come from?** Nothing newer than the
+   08-04 logs exists on `M:`. Candidates: generate from raw
+   Subsonus/DVL/INS under `M:\ON2026\RH00xx`; an existing file elsewhere;
+   or Voyis vSLAM output.
+2. **Is the local Euclidean frame ENU or NED?** Decides whether YPR needs
+   converting before import. Can be settled empirically against the
+   bundle-adjusted poses already in `ON2026_final.rsproj`.
+3. **Validation scope** — smoke fixture A/B, full-zone A/B, or straight
+   to the full 38,948 run. Precedent argues for A/B: on NA167, camera
+   priors *cost* 6.7 points of registration (96.3% → 89.6%).
+
+### Ranked loose ends
+
+1. Answer the three questions above; nothing else on this track can start.
+2. Teach `write_flight_log_params` local-Euclidean output + explicit
+   accuracy keys, so no params XML is hand-maintained (finding 41).
+3. Confirm RealityScan's actual Euler sequence — the Help names the axes
+   and NED framing but not intrinsic vs extrinsic (finding 39).
+4. ON2026's texture is built on **uncorrected** imagery: colour
+   correction aborted all four attempts and never completed. Re-texturing
+   from the checkpoint is the fix if quality matters.
+5. Pre-existing: `geoall.py` vs `modules/georeference/` duplication;
+   `input()` prompts in `realityscan_interface.py` can stall unattended
+   runs.
+
+### Key paths
+
+| What | Where |
+|---|---|
+| Working dir | `M:\ON2026 COLMAP processing\rs\` |
+| Images (38,948) | `…\rs\rs_images\` |
+| Current flight log | `…\rs\flight_log_zones.txt` |
+| Hand-made local params | `…\rs\FlightLogParamsLocal.xml` |
+| Deliverables | `…\rs\final\` (Unreal scale) and `…\rs\final\metric\` |
+| Rollback checkpoint | `…\rs\final\ON2026_premodel_checkpoint.rsproj` |
+| Model workflow | `modules/realityscan_interface/RS_CLI/Scripts/ModelToFinal.bat` |
+| CLI reference | `testing/NA167_SESSION_NOTES.md` §3 (ids, error codes, exit codes) |
+
+### Exact next commands
+
+Re-inspect the flight-log variants that motivated findings 38–40:
+
+```
+cd "M:\ON2026 COLMAP processing"
+py -3 -c "import csv,statistics as st; rows=[r for r in csv.reader(open('rs/flight_log_zones.txt',newline=''),delimiter=';') if len(r)>=13][1:]; print('n',len(rows)); [print(n, st.median(float(x[i]) for x in rows)) for n,i in [('pitch',8),('roll',9),('yaw_acc',10)]]"
+```
+
+Re-run the model workflow against a live instance (attaches, never
+creates a scene; see CLAUDE.md for the argument list):
+
+```
+set "RS_SAVE_PATH=<out>\<name>.rsproj"
+modules\realityscan_interface\RS_CLI\Scripts\ModelToFinal.bat "*" "<outdir>" <name> 4x8k true obj false false
+```
+
 ## 2026-08-04/05 ON2026 model workflow to final (DONE)
 
 Took the live ON2026 (RH0042/RH0043 Voyis stereo, 38,948 images in
