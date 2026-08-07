@@ -6,6 +6,22 @@ Different dataset and different lineage from the H2024 line below: ON2026
 RH0042/RH0043 Voyis stereo, 38,948 images, `M:\ON2026 COLMAP processing\rs\`.
 Nothing running. Rebased onto `902fcf7`; **not pushed**.
 
+**⚠ STRANDED COMMITS ON THE OTHER MACHINE (blocking doc work here).** A
+Honeybadger-side session committed `085b89c` (a `docs/rs-reference/`
+manual: 14 files, 27,703 lines, +5 FINDINGS entries) and `e4a4d10`
+(full CLAUDE.md rewrite + FROZEN header on the NA167 session notes) —
+**never pushed**. Verified absent from origin and from both local
+checkouts (2026-08-07). Until that push lands: make NO further edits to
+`CLAUDE.md` or the NA167 notes header; route any "canonical CLI
+reference" content toward the incoming `docs/rs-reference/`; expect a
+conflict-bearing rebase of this branch's 7 commits when it arrives.
+That session also holds an un-integrated **D7 refutation** of the
+merge-mechanism identity-fusing claim — local merge docs are
+pre-D7 and the claim must be treated as CONTESTED until the evidence
+arrives. Claim-by-claim status: `testing/VERIFICATION_BACKLOG.md` §A.
+**First action for any session reading this: ask the owner to push from
+the Honeybadger box.**
+
 ### THE DELIVERABLE
 
 `M:\ON2026 COLMAP processing\rs\final\` — 96.5 GB, two exports of one model:
