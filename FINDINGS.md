@@ -2518,3 +2518,41 @@ a re-run with updated nav. Source tag **[ON2026]**.
   Caught by adversarial review of the rebase, not by the run. Wired as
   `objmetric` in the follow-up commit. Lesson: a fix demonstrated by hand
   is not a fix until a code path reaches it. [ON2026] (2026-08-07) ESTABLISHED
+
+### Live battery on the smoke scene (2026-08-07, clean slate)
+
+- **`rev` tracks scene MUTATIONS, not operations - a failed command can
+  complete without advancing it.** Probe on a freshly loaded 8-camera
+  smoke scene: `-selectModel "NoSuchModel"` -> rev 11 -> 11, lastError
+  -2147024809 (0x80070057 E_INVALIDARG, the known benign select-miss
+  code), AND the ErrorWriter trigger logged a process completion for it.
+  Refutes the earlier working assumption "rev increments once per
+  completed operation" and with it the original ModelToFinal gate design:
+  a genuinely failed non-mutating command was indistinguishable from a
+  stale carried-over error and the workflow would have CONTINUED past it.
+  Gate rebuilt same day: lastError baselined BEFORE delegating; a change
+  to non-zero is a fresh failure regardless of rev; the stale-warn path
+  needs the identical pre-existing code AND an unchanged rev.
+  [ON2026] (2026-08-07) ESTABLISHED
+
+- **ModelToFinal.bat verified live end-to-end in attach mode, including
+  both stale-marker gate arms and the owner's new defaults.** Battery on
+  the zone_9 smoke scene, own instance RS1: (4a) stale non-empty
+  errors_RS1.txt + RS_TARGET==RS_INSTANCE -> first :run aborted exit 1
+  (gate fires); (4b) same stale marker + attach via `*` -> gate skipped
+  (foreign-marker fix), full chain ran in 143 s: texture at the 4x8k
+  DEFAULT (empty preset argument), 80% simplify chain, unwrap, reproject,
+  `objmetric` export - artifact .rsInfo reads `settingsScale="1 1 1"` -
+  and save to RS_SAVE_PATH; verified shutdown. The sticky C5 error code
+  did NOT false-abort 4b: lastError cleared when the next operation
+  started, as established. [ON2026] (2026-08-07) ESTABLISHED
+
+- **Windows trap (registry-worthy): a `start`-launched GUI child inherits
+  captured stdout/stderr pipes - subprocess capture on the BOOT SCRIPT
+  deadlocks even after timeout-kill.** startRealityScan.bat launches the
+  instance via `start ""`; with subprocess.run(capture_output=True) the
+  pipe never reaches EOF while the instance lives, and Python's
+  communicate() blocks forever after the timeout kills only the .bat.
+  Observed as a silent 10-minute hang with the instance idling at 0.3 GB.
+  Boot invocations must run with stdout/stderr detached to files or
+  DEVNULL, never pipes. [ON2026] (2026-08-07) ESTABLISHED

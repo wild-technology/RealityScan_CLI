@@ -292,15 +292,19 @@ exit /b 1
 :: still honours the marker file when one IS present (CLI-booted instances).
 :: ------------------------------------------------------------------
 :run
-:: Baseline first. "rev" increments once per completed operation, so
-:: comparing it before/after tells us whether OUR command actually ran.
-:: This matters because lastError is STICKY between operations: a failed
-:: -save was observed leaving lastError:-2113863583 set while the instance
-:: sat idle at id:0xffffffff across four consecutive polls. Gating on
-:: lastError alone would therefore fail the next command for someone
-:: else's error. A non-zero code only means something if rev also moved.
+:: Baseline BOTH fields first. lastError is STICKY between operations
+:: (a failed -save left lastError:-2113863583 across four idle polls), so
+:: gating on lastError alone blames this command for someone else's error.
+:: And "rev" tracks scene MUTATIONS, not operations - live-probed
+:: 2026-08-07: a failed -selectModel left rev unchanged (11 -> 11) while
+:: setting lastError 0x80070057 through the process trigger. So "rev
+:: advanced" cannot be the only failure signal either. The gate below:
+::   lastError changed to non-zero  -> OUR failure (rev irrelevant)
+::   same non-zero code, rev moved  -> failure (conservative)
+::   same non-zero code, same rev   -> stale carry-over, warn + continue
 call :readstat
 set "RS_REV0=%RS_REV%"
+set "RS_LASTERR0=%RS_LASTERR%"
 
 %RealityScan% -delegateTo %RS_TARGET% %*
 if errorlevel 1 goto :runDelegateFailed
@@ -324,8 +328,12 @@ call :readstat
 if not defined RS_STATUS goto :runOk
 if "%RS_LASTERR%" == "" goto :runOk
 if "%RS_LASTERR%" == "0" goto :runOk
-if "%RS_REV%" == "%RS_REV0%" goto :runStaleErr
-echo ERROR: RealityScan reported lastError:%RS_LASTERR% (rev %RS_REV0%-^>%RS_REV%) during: %*
+if not "%RS_LASTERR%" == "%RS_LASTERR0%" goto :runNewErr
+if not "%RS_REV%" == "%RS_REV0%" goto :runNewErr
+goto :runStaleErr
+
+:runNewErr
+echo ERROR: RealityScan reported lastError:%RS_LASTERR% (was %RS_LASTERR0%, rev %RS_REV0%-^>%RS_REV%) during: %*
 exit /b 1
 
 :runStaleErr
