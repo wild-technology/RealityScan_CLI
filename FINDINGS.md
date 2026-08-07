@@ -2556,3 +2556,27 @@ a re-run with updated nav. Source tag **[ON2026]**.
   Observed as a silent 10-minute hang with the instance idling at 0.3 GB.
   Boot invocations must run with stdout/stderr detached to files or
   DEVNULL, never pipes. [ON2026] (2026-08-07) ESTABLISHED
+
+- **Three small CLI facts from the Euler-pin P0 probe (no-align scene,
+  32 images, flight log imported).** (1) `-exportXMP` with no alignment
+  in the scene is a SILENT NO-OP SUCCESS - rc 0, nothing written - the
+  same do-nothing-quietly family as `-mergeComponents` with nothing to
+  merge [NA167 #23]. (2) `-exportXMPForSelectedComponent` with no
+  component sets lastError -2147467259 (0x80004005 E_FAIL) - new error-
+  table entry: "no component to export". (3) `rev` increments on
+  `-addFolder` (0 -> 1) and `-importFlightLog` (1 -> 2) - consistent with
+  rev counting scene mutations. [ON2026] (2026-08-07) ESTABLISHED
+
+- **Under fresh-boot settings, orientation priors do not influence
+  alignment on the smoke fixture - a yaw/roll-scrambled log at 0.5 deg
+  accuracy registered the same as the correct one (8/32 vs 6/32).**
+  Scope limit, stated deliberately: the cells delegated a plain `-align`
+  WITHOUT applying AlignmentParams' `-set` block, so which prior-weight
+  settings were in force is UNKNOWN (the persisted-settings question).
+  What this establishes is narrower but real: importing a 13-column log
+  with tight orientation accuracies does not BY ITSELF make orientation
+  priors act on the solve - the sfm* prior settings decide, and any
+  orientation experiment that does not pin them explicitly is not
+  measuring what it thinks it is. This retroactively weakens any
+  historical cell that imported orientations without pinning the block.
+  [ON2026] (2026-08-07) ESTABLISHED (narrow scope)
