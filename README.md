@@ -24,7 +24,13 @@ generate textured models.
 | Path | Purpose |
 |---|---|
 | `main.py` | Interactive orchestrator: Extract Images → Georeference → Preprocess Images → Batch Directory → RealityScan Alignment (per-zone `AlignZone.bat`; `RS_MODULES`/`RS_NO_INTERACTIVE` env vars for non-interactive runs; a failed module stops the chain) |
+| `wildscan/` | WildScan, the interactive TUI portal over the whole pipeline (`py -3.13 -m wildscan <workspace>`): session setup, resume-aware stage picking, parameter wizard, live run screen, pipeline census + final-components browser — always launching stages through the canonical drivers |
 | `merge_zones.py` | Iterative component-merge driver: imports every per-zone component into a fresh scene and escalates mechanism/flags (georef merge → align+rematch → +High overlap) until the registration target is met; writes `merge_report.json` |
+| `grow_zone.py` | Within-zone component growth driver: on a zone's ORIGINAL aligned scene, checkpointed global re-align → rigid `-mergeComponents` → per-component grow passes, each accepted or rolled back on the never-shrink invariant; writes `grow_report.json` |
+| `run_models.py` | Models every final component of a workspace's assembly via `GenerateModel.bat`, scale-gated (metric-scale oracle per component) and smallest-first; resumable via `models_report.json` |
+| `publish_batch.py` | Publishes every exported component (`exports/<comp>/obj`) to Cesium ion and/or Nira — whichever credentials are present — by driving the two publishers below; writes `publish_report.json` |
+| `publish_cesium.py` | Uploads one mesh export (OBJ) to Cesium ion as a tiled 3D asset via ion's REST flow — the scripted equivalent of the GUI-only "Share to Cesium ion" button |
+| `publish_nira.py` | Uploads one export to Nira through the official `niraclient` (Enterprise plan required), building the explicit typed file list Nira's docs recommend |
 | `modules/camera_registry.py` | Single source of truth for the four physical rig cameras (lens, calibration groups, XMP content, filename families) |
 | `geoall.py` | Standalone georeferencing (ROV nav CSV → RealityScan flight logs). The most up-to-date georeferencing implementation. |
 | `poses2flightlog.py` | Post-alignment: rewrite camera locations back to UTM from the computed poses (XMP sidecars), producing a refined flight log + per-image nav-error QC |
@@ -162,10 +168,14 @@ Collected from prior iterations of this repo (some of which only survive in
 git history — see `git log`):
 
 - **Delegation pickup race**: `-waitCompleted` returns prematurely when
-  called before the instance has picked up the queued command. Mitigation:
-  wait until RealityScan's own process trigger (`ErrorWriter.bat` →
-  `results_<instance>.log`) confirms the operation finished; the trigger
-  is also the authoritative per-operation result.
+  called before the instance has picked up the queued command. Mitigation
+  (the `:run` pattern): `-delegateTo` → grace delay → `-waitCompleted`
+  twice with a second grace between them. Never infer completion from
+  `results_<instance>.log` growth — RealityScan 2.2 emits heartbeat
+  processes through the same trigger, so a log-growth gate races ahead of
+  a running `-align` (that check existed and was removed). The results
+  log is history/diagnostics; `errors_<instance>.txt` is the abort
+  trigger.
 - **No operation timeouts**: 10+ hour alignments are normal on these
   datasets. Only *startup* (120 s) and *shutdown* (300 s) are bounded.
 - **Never detect completion by process name** — see the
@@ -199,7 +209,7 @@ Deliverable export (OBJ by parts per Nira guidance, FBX by parts, ultra-dense
 colored PLY) and publishing:
 
 ```
-RS_CLI\Scripts\ExportDeliverables.bat "D:\dive\final_assembly\assembly\Assembly.rsproj" "D:\dive\exports" "D:\dive\exports\components.names"
+modules\realityscan_interface\RS_CLI\Scripts\ExportDeliverables.bat "D:\dive\final_assembly\assembly\Assembly.rsproj" "D:\dive\exports" "D:\dive\exports\components.names"
 py -3.13 publish_cesium.py --name "IN-401 hull" --dir D:/dive/exports/<comp>/obj --input-crs EPSG:32604
 py -3.13 publish_nira.py --name "IN-401 hull" --dir D:/dive/exports/<comp>/obj --niraclient C:/tools/niraclient
 ```
@@ -218,10 +228,38 @@ Merge the per-zone components, then build the model on the merged result:
 
 ```
 python merge_zones.py --components_root D:\dive\aligned_components --images_root D:\dive\batched_images_by_zone --output D:\dive\merged
-RS_CLI\Scripts\GenerateModel.bat "D:\dive\merged\attempt_merge_georef\Merged.rsproj" "Merged"
+modules\realityscan_interface\RS_CLI\Scripts\GenerateModel.bat "D:\dive\merged\attempt_merge_georef\Merged.rsproj" "Merged"
 ```
 
-Standalone zone alignment (from `RS_CLI/Scripts`):
+### Finishing a model in a running instance
+
+`ModelToFinal.bat` takes an **already-computed** mesh through the model
+back half on its own — texture → (optional simplify) → unwrap →
+reproject → export → save — against a scene open in a **running**
+instance (e.g. a reconstruction computed interactively in the GUI). It
+never calculates a mesh and never creates a scene. Canonical example
+(from `modules\realityscan_interface\RS_CLI\Scripts`):
+
+```
+ModelToFinal.bat "*" "<outdir>" <name> 4x8k true objmetric false false
+```
+
+Arguments: target instance (`*` = "first available" — the way to reach a
+GUI-launched instance, which answers no named lookup), export directory,
+model name, texture preset (`4x8k` = the default 8K cap), simplify
+true/false, export format (`objmetric` exports the same OBJ as `obj` but
+at **true scale 1.0** instead of the stock preset's Unreal-oriented
+scale 100), cull polygons, correct colors. Set the `RS_SAVE_PATH`
+environment variable to save the finished project to an explicit path
+(bare `-save` writes back to the project's original location, which a
+scene built interactively and never saved does not have).
+
+Safety property: this workflow **attaches** to the running instance and
+deliberately never calls `startRealityScan.bat` — that script issues
+`-newScene -deleteAutosave` when it finds an instance already running,
+which would destroy the very scene this workflow exists to finish.
+
+Standalone zone alignment (from `modules/realityscan_interface/RS_CLI/Scripts`):
 
 ```
 AlignZone.bat "D:\zones\zone_01" "D:\dive\aligned_components\zone_01" "D:\zones\zone_01\flight_log_4Q_UTM.txt" "..\Metadata\FlightLogParams.xml" zone_01 50
@@ -236,6 +274,7 @@ python geoall.py
 All prompts default to your previous answers (see `rs_settings.json`).
 Set `RS_HEADLESS=0` to boot the RealityScan instance with its GUI
 visible; alignment settings always come from
-`RS_CLI/Metadata/AlignmentParams.xml`, never instance defaults. Design
+`modules/realityscan_interface/RS_CLI/Metadata/AlignmentParams.xml`,
+never instance defaults. Design
 rationale for the settings and the merge strategy:
 `docs/settings-evaluation-2026-07.md`.

@@ -27,9 +27,8 @@ import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, REPO_ROOT)
-sys.path.insert(0, os.path.join(REPO_ROOT, 'testing'))
 
-import run_h2024_v2  # noqa: E402
+from modules import harvest_guard  # noqa: E402
 
 LOG = logging.getLogger('test')
 
@@ -47,13 +46,13 @@ def test_a_plain_directory_tree_is_harvestable(tmp_path):
     root = tmp_path / 'images'
     (root / 'zone_1' / 'cinema').mkdir(parents=True)
     (root / 'zone_2' / 'port').mkdir(parents=True)
-    run_h2024_v2.assert_harvestable(str(root), LOG)   # must not raise
+    harvest_guard.assert_harvestable(str(root), LOG)   # must not raise
 
 
 def test_an_empty_root_is_harvestable(tmp_path):
     root = tmp_path / 'empty'
     root.mkdir()
-    run_h2024_v2.assert_harvestable(str(root), LOG)
+    harvest_guard.assert_harvestable(str(root), LOG)
 
 
 def test_a_junction_child_is_refused(tmp_path):
@@ -67,7 +66,7 @@ def test_a_junction_child_is_refused(tmp_path):
         pytest.skip('cannot create an NTFS junction here')
 
     with pytest.raises(RuntimeError, match='reparse-point children'):
-        run_h2024_v2.assert_harvestable(str(root), LOG)
+        harvest_guard.assert_harvestable(str(root), LOG)
 
 
 def test_a_nested_junction_is_also_refused(tmp_path):
@@ -83,7 +82,7 @@ def test_a_nested_junction_is_also_refused(tmp_path):
         pytest.skip('cannot create an NTFS junction here')
 
     with pytest.raises(RuntimeError, match='reparse-point children'):
-        run_h2024_v2.assert_harvestable(str(root), LOG)
+        harvest_guard.assert_harvestable(str(root), LOG)
 
 
 def test_the_refusal_names_the_offending_children(tmp_path):
@@ -100,7 +99,7 @@ def test_the_refusal_names_the_offending_children(tmp_path):
         pytest.skip('cannot create an NTFS junction here')
 
     with pytest.raises(RuntimeError) as excinfo:
-        run_h2024_v2.assert_harvestable(str(root), LOG)
+        harvest_guard.assert_harvestable(str(root), LOG)
     message = str(excinfo.value)
     assert 'zone_3' in message and 'zone_5' in message
 

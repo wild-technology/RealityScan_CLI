@@ -318,8 +318,11 @@ py -3.13 -m pytest testing -q
 ```
 
 ```bash
-py -3.13 testing/run_h2024_v2.py --skip_merge
+py -3.13 archive/campaign_drivers/run_h2024_v2.py --skip_merge
 ```
+*(path updated 2026-08-07: campaign drivers moved to
+`archive/campaign_drivers/` in the consolidation; historical narrative
+above left as written)*
 
 To re-run the merge only (aligns are skipped when components exist), edit the
 `merged5` output name in `run_merge` first so nothing is overwritten.

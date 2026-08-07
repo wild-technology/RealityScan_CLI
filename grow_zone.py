@@ -38,8 +38,9 @@ Usage:
         [--lock_anchor] [--skip_global] [--project_label NA156_H2023]
 
 All prompts default to the previous run's answers (rs_settings.json).
-RS_HEADLESS is passed through untouched (RS_HEADLESS=0 boots the
-instance with a visible GUI). --lock_anchor (inpPose=3 on the component
+RS_HEADLESS resolves through the settings store's 'realityscan' section
+(default: visible; an RS_HEADLESS already in the environment wins -
+module_base.settings_store.realityscan_env). --lock_anchor (inpPose=3 on the component
 being grown) stays OFF by default until hardening cell U18 verifies the
 locked-pose behavior.
 """
@@ -56,7 +57,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-from module_base.settings_store import SettingsStore
+from module_base.settings_store import SettingsStore, realityscan_env
 from modules import camera_registry
 from modules.realityscan_interface.realityscan_cli import (
     RealityScanCLI, set_project_save_env)
@@ -353,23 +354,9 @@ def main() -> int:
     args = parser.parse_args()
 
     def ask(key, cli_value, fallback):
-        if cli_value is not None:
-            settings.set('grow', key, cli_value)
-            return cli_value
-        stored = settings.get('grow', key, fallback)
-        # Unattended runs must never block on (or crash from) input():
-        # without a TTY, take the stored/fallback value silently.
-        if not sys.stdin.isatty():
-            settings.set('grow', key, stored)
-            return stored
-        try:
-            value = input(f'{key} [{stored}]: ').strip() or stored
-        except EOFError:
-            # Hidden consoles report isatty()=True with an EOF stdin
-            # (observed on backgrounded runs) - fall back silently.
-            value = stored
-        settings.set('grow', key, value)
-        return value
+        # Promoted shared helper: unattended-safe prompt-with-default
+        # (module_base.settings_store.SettingsStore.ask).
+        return settings.ask('grow', key, cli_value, fallback)
 
     scene = ask('scene', args.scene, '')
     images_root = ask('images_root', args.images_root, '')
@@ -400,9 +387,15 @@ def main() -> int:
             os.path.dirname(os.path.normpath(images_root)), project_label)
         logger.info('Daily project saves: %s ({label}_%s_YYYYMMDD)', projects_dir, zone)
 
+    # RealityScan machine constants (RS_INSTANCE / RS_CACHE_DIR /
+    # RS_HEADLESS) from the settings store's 'realityscan' section -
+    # realityscan_env is the single source of truth (headless defaults
+    # False = visible, owner decision 2026-08-07); a variable already set
+    # in the environment wins over the stored default.
+    os.environ.update(realityscan_env(settings))
+
     # Selection-command strategy + experimental lock anchor, consumed by
-    # GrowZone.bat via the environment (RS_HEADLESS passes through the
-    # same way, untouched).
+    # GrowZone.bat via the environment.
     os.environ['RS_GROW_SELECT_CMDS'] = args.selection_cmds or 'editsel'
     if args.lock_anchor:
         os.environ['RS_GROW_LOCK_ANCHOR'] = '1'

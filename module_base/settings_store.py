@@ -22,10 +22,81 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 DEFAULT_SETTINGS_PATH = os.path.join(_REPO_ROOT, "rs_settings.json")
+
+# ---------------------------------------------------------------------------
+# The 'realityscan' section - per-machine constants
+# ---------------------------------------------------------------------------
+# Machine-level RealityScan constants live in ONE settings section so that no
+# driver hardcodes them again. Keys:
+#
+#   executable    - full path to RealityScan.exe. Optional; unset falls back
+#                   to the RS_EXECUTABLE env var and the standard install
+#                   locations (RealityScanCLI.find_executable).
+#   cache_dir     - RealityScan cache directory, exported as RS_CACHE_DIR.
+#                   NO repo default: the cache drive is per-machine, so
+#                   interactive drivers prompt for it once (an empty answer
+#                   leaves RealityScan's own cache default in force).
+#   instance_name - CLI instance name, exported as RS_INSTANCE.
+#                   Default: 'RS1'.
+#   headless      - boot instances without a GUI, exported as RS_HEADLESS
+#                   ('1' = headless, '0' = visible). Default: False
+#                   (VISIBLE) - OWNER DECISION 2026-08-07: visible by
+#                   default is supervision-friendly; headless is the
+#                   per-machine override. The .bat layer's own fallback when
+#                   RS_HEADLESS is absent remains headless
+#                   (SetVariables.bat); the Python layer always exports
+#                   RS_HEADLESS explicitly, so that fallback only governs
+#                   hand-run scripts.
+#
+# Resolve these through realityscan_env() below - the single Python source
+# of truth - rather than reading the keys (or hardcoding values) in drivers.
+
+REALITYSCAN_SECTION = "realityscan"
+DEFAULT_INSTANCE_NAME = "RS1"
+DEFAULT_HEADLESS = False
+
+
+def headless_flag(value) -> str:
+    """Normalise a stored/CLI headless value to the RS_HEADLESS wire form:
+    '0' = GUI-visible, '1' = headless."""
+    if isinstance(value, str):
+        return "0" if value.strip().lower() in ("0", "false", "no", "n", "") \
+            else "1"
+    return "1" if value else "0"
+
+
+def realityscan_env(store) -> dict:
+    """Resolve the 'realityscan' machine constants as RS_* env values.
+
+    ``store`` is any SettingsStore-shaped object (only ``get`` is used, so
+    test doubles work). Precedence: a variable already set in the process
+    environment WINS over the stored setting - stored values are machine
+    defaults, the environment is the per-run override. Env values are
+    returned unchanged in the dict, so callers may overlay the result onto
+    a child environment (or os.environ) without demoting user overrides.
+
+    RS_CACHE_DIR is omitted when neither the environment nor the store
+    knows it - RealityScan then uses its own cache default (opt-in
+    behaviour documented in startRealityScan.bat).
+    """
+    env = {
+        "RS_INSTANCE": os.environ.get("RS_INSTANCE")
+        or str(store.get(REALITYSCAN_SECTION, "instance_name",
+                         DEFAULT_INSTANCE_NAME)),
+        "RS_HEADLESS": os.environ.get("RS_HEADLESS")
+        or headless_flag(store.get(REALITYSCAN_SECTION, "headless",
+                                   DEFAULT_HEADLESS)),
+    }
+    cache_dir = (os.environ.get("RS_CACHE_DIR")
+                 or store.get(REALITYSCAN_SECTION, "cache_dir"))
+    if cache_dir:
+        env["RS_CACHE_DIR"] = str(cache_dir)
+    return env
 
 
 class SettingsStore:
@@ -83,6 +154,31 @@ class SettingsStore:
             while not value:
                 value = input(f"{message} (required): ").strip()
 
+        self.set(section, key, value)
+        return value
+
+    def ask(self, section: str, key: str, cli_value, fallback):
+        """CLI-argument-aware prompt, safe for unattended runs (promoted
+        from the identical grow_zone/merge_zones helpers, 2026-08-07).
+
+        An explicit CLI value wins and is persisted; otherwise the stored
+        value (or ``fallback``) is offered as the prompt default.
+        Unattended runs must never block on (or crash from) input():
+        without a TTY the stored/fallback value is taken silently, and a
+        hidden console that reports isatty()=True with an EOF stdin
+        (observed on backgrounded runs) falls back the same way.
+        """
+        if cli_value is not None:
+            self.set(section, key, cli_value)
+            return cli_value
+        stored = self.get(section, key, fallback)
+        if not sys.stdin.isatty():
+            self.set(section, key, stored)
+            return stored
+        try:
+            value = input(f"{key} [{stored}]: ").strip() or stored
+        except EOFError:
+            value = stored
         self.set(section, key, value)
         return value
 

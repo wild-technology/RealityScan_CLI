@@ -62,12 +62,13 @@ import logging
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-from module_base.settings_store import SettingsStore
+from module_base.settings_store import SettingsStore, realityscan_env
 from modules import camera_registry
 from modules import component_analysis
 from modules import component_manifest
 from modules import scale_oracle
 from modules.flight_logs import utm_zone_from_flight_log_name, write_flight_log_params
+from modules.harvest_guard import assert_harvestable
 from modules.realityscan_interface.realityscan_cli import (
     RealityScanCLI, METADATA_DIR, set_project_save_env)
 
@@ -724,6 +725,28 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                   output_dir: str, images_root: str, ladder: list[dict],
                   min_size: int, logs_dir: str, logger,
                   merge_scope: str = 'neighbour',
+                  # POLICY PROVENANCE (owner-directed analysis, 2026-08-07).
+                  # The 0.0 default and the drivers' explicit 0.0025 are the
+                  # TWO HALVES of one owner decision (DECISION IN FORCE,
+                  # 2026-07-28, HANDOFF): "Bounded loss at 0.25% of input
+                  # cameras... Default remains 0 (exact only) - the 0.25% is
+                  # passed explicitly by the driver, warned at startup."
+                  # Forced by the hull incident: RealityScan fused 4,860 of
+                  # 4,865 cameras on every rung and exact-subset arithmetic
+                  # rejected it three times - the ACCEPTANCE MATH, not the
+                  # fusion, was the failure. Small loss is EVIDENCE FOR a
+                  # real joint solve (weak seam cameras shed; zero loss on a
+                  # zero-shared-imagery "fusion" is the co-location
+                  # signature - the rigid-glue lesson). The budget stays
+                  # small because large or scale-mismatched loss flags a
+                  # defective fuse (the 0.175-vs-0.220 rigid fuse) and
+                  # measured loss is not fully separable from harvest
+                  # instrument noise (locked sidecars read as a silent -2).
+                  # Library stays exact-only; every driver opts in
+                  # EXPLICITLY and the choice is logged per attempt. Do not
+                  # move this into rs_settings defaults - drivers inheriting
+                  # another session's stored merge options is a recorded
+                  # incident (final review 2026-07-29, item c).
                   loss_tolerance_frac: float = 0.0,
                   pair_gate: str = 'overlap') -> dict:
     """Run the escalation ladder on one border-connected cluster until
@@ -1079,19 +1102,9 @@ def main() -> int:
     args = parser.parse_args()
 
     def ask(key, cli_value, fallback):
-        if cli_value is not None:
-            settings.set('merge', key, cli_value)
-            return cli_value
-        stored = settings.get('merge', key, fallback)
-        if not sys.stdin.isatty():
-            settings.set('merge', key, stored)
-            return stored
-        try:
-            value = input(f'{key} [{stored}]: ').strip() or stored
-        except EOFError:
-            value = stored
-        settings.set('merge', key, value)
-        return value
+        # Promoted shared helper: unattended-safe prompt-with-default
+        # (module_base.settings_store.SettingsStore.ask).
+        return settings.ask('merge', key, cli_value, fallback)
 
     def truthy(v):
         return str(v).strip().lower() in ('1', 'true', 'yes', 'y')
@@ -1103,7 +1116,15 @@ def main() -> int:
     min_size = int(ask('min_size', args.min_size, 50))
     target = float(ask('target', args.target, 0.9))
     project_label = ask('project_label', args.project_label, '')
-    visible = truthy(ask('visible', args.visible, 'true'))
+    # --visible's DEFAULT routes through the shared machine-constant
+    # resolution (module_base.settings_store.realityscan_env - the single
+    # RS_HEADLESS source of truth; headless defaults False = visible,
+    # owner decision 2026-08-07, and an RS_HEADLESS already in the
+    # environment seeds the default too). The CLI flag / stored merge
+    # answer stay the explicit per-run override.
+    rs_env = realityscan_env(settings)
+    visible = truthy(ask('visible', args.visible,
+                         'true' if rs_env['RS_HEADLESS'] == '0' else 'false'))
     auto_model = truthy(ask('auto_model', args.auto_model, 'false'))
     ladder_name = ask('ladder', args.ladder, 'merge_first')
     ladder = LADDERS.get(ladder_name, LADDERS['merge_first'])
@@ -1130,9 +1151,16 @@ def main() -> int:
     scale_min = float(ask('scale_min', args.scale_min, scale_oracle.DEFAULT_SCALE_MIN))
     scale_max = float(ask('scale_max', args.scale_max, scale_oracle.DEFAULT_SCALE_MAX))
 
-    if visible:
-        os.environ['RS_HEADLESS'] = '0'
-        logger.info('GUI-visible instances requested (RS_HEADLESS=0)')
+    # Export the resolved answer explicitly - the .bat-side headless
+    # fallback in SetVariables.bat only governs hand-run scripts. The
+    # other machine constants (RS_INSTANCE / RS_CACHE_DIR) come from the
+    # same resolution; values already in the environment pass through
+    # unchanged.
+    os.environ.update(rs_env)
+    os.environ['RS_HEADLESS'] = '0' if visible else '1'
+    logger.info('RealityScan instances will be %s (RS_HEADLESS=%s)',
+                'GUI-visible' if visible else 'headless',
+                os.environ['RS_HEADLESS'])
 
     if project_label:
         projects_dir = set_project_save_env(images_root, project_label)
@@ -1140,6 +1168,18 @@ def main() -> int:
 
     os.makedirs(output_dir, exist_ok=True)
     logs_dir = os.path.join(output_dir, 'logs')
+
+    # Harvest preflight: every attempt in the cluster loop peels its result
+    # through a PowerShell `Get-ChildItem -Recurse` over images_root, which
+    # cannot cross a directory junction - an empty peel is indistinguishable
+    # from a legitimately empty scene. Refuse up front, before any GPU hours.
+    try:
+        assert_harvestable(images_root, logger)
+    except RuntimeError as exc:
+        logger.error('%s The peel harvest cannot cross a directory junction '
+                     '- FINDINGS.md "The peel harvest cannot cross a '
+                     'directory junction (2026-07-27)".', exc)
+        return 1
 
     try:
         inputs = load_inputs(components_root, args.complist, logger)

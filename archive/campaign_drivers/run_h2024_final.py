@@ -292,9 +292,9 @@ def main() -> int:
         with open(REPORT, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=2)
 
-    # The reparse guard lives in run_h2024_v2 - a junctioned image tree
-    # silently blinds both the XMP export and the peel harvest.
-    from run_h2024_v2 import assert_harvestable  # noqa: E402
+    # The reparse guard lives in modules/harvest_guard - a junctioned image
+    # tree silently blinds both the XMP export and the peel harvest.
+    from modules.harvest_guard import assert_harvestable  # noqa: E402
     assert_harvestable(IMAGES_ROOT, logger)
 
     if not check_space(logger, "phase 1"):

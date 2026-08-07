@@ -1,3 +1,9 @@
+:: SUPERSEDED (owner decision 2026-08-07). Retired with zero callers -
+:: superseded by AlignZone.bat + GrowZone.bat. Carries an unfixed
+:: HANDOFF SHOULD-FIX by design (retired instead of fixed): no
+:: AlignmentParams application, no deselect before exports
+:: (HANDOFF.md 2026-07-24 clean-sweep review backlog, SHOULD-FIX list).
+:: Kept for reference only - do not wire back into the pipeline.
 @echo off
 setlocal
 :: Grow one alignment scene incrementally: add an imagelist, import its

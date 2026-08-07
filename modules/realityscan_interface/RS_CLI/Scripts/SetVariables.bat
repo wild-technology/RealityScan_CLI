@@ -34,6 +34,11 @@ if not defined RS_INSTANCE set RS_INSTANCE=RS1
 :: Headless toggle: set RS_HEADLESS=0 to boot the instance with its GUI
 :: visible (delegation and monitoring work identically); any other value
 :: (or unset) keeps the default headless boot.
+:: NOTE (2026-08-07): the Python layer always passes RS_HEADLESS
+:: explicitly, resolved from rs_settings.json ('realityscan.headless',
+:: default = visible; see module_base/settings_store.py). The headless
+:: fallback below is therefore only the .bat-side default for hand-run
+:: scripts - do not change it here.
 set RS_HEADLESS_FLAG=-headless
 if /I "%RS_HEADLESS%"=="0" set RS_HEADLESS_FLAG=
 

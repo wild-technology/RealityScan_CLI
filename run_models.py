@@ -31,6 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO))
 
+from module_base.settings_store import SettingsStore, realityscan_env  # noqa: E402
 from modules import scale_oracle  # noqa: E402
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa: E402
 from wildscan.workspace import Workspace  # noqa: E402
@@ -113,12 +114,20 @@ def main() -> int:
               for c in rec.get('final_components', [])]
     finals.sort(key=lambda kc: kc[1].get('camera_count') or 0)
 
-    os.environ.setdefault('RS_INSTANCE', 'RS1')
-    os.environ.setdefault('RS_CACHE_DIR', r'E:\rscache')
-    os.environ.setdefault('RS_HEADLESS', '0')
+    # Machine constants from the settings store's 'realityscan' section -
+    # prompt-with-default on a TTY, silent stored/fallback when unattended
+    # (SettingsStore.ask). Values already in the environment win, exactly
+    # as the old setdefault calls allowed: wildscan and other callers pass
+    # explicit RS_* values, and those are never prompted for or demoted.
+    settings = SettingsStore()
+    if not os.environ.get('RS_INSTANCE'):
+        settings.ask('realityscan', 'instance_name', None, 'RS1')
+    if not os.environ.get('RS_CACHE_DIR'):
+        settings.ask('realityscan', 'cache_dir', None, '')
+    os.environ.update(realityscan_env(settings))
     os.environ.pop('RS_PROJECTS_DIR', None)   # dated copies deferred
     os.environ.pop('RS_PROJECT_LABEL', None)
-    cli = RealityScanCLI(logging.getLogger('models'))
+    cli = RealityScanCLI(logging.getLogger('models'), settings)
     logs_dir = str(ws.root / 'logs')
 
     for key, comp in finals:

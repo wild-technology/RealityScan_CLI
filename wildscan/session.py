@@ -550,6 +550,18 @@ def build_commands(session: Session) -> list[StageCommand]:
     chain = [k for k in CHAIN_STAGES if k in session.enabled]
     ws = session.workspace()
 
+    # RealityScan machine constants (RS_INSTANCE / RS_CACHE_DIR /
+    # RS_HEADLESS), resolved ONCE per run plan from the settings store's
+    # 'realityscan' section (module_base.settings_store.realityscan_env -
+    # the single source of truth; headless defaults False = visible, owner
+    # decision 2026-08-07). PRECEDENCE: a variable already set in the
+    # user's environment wins over the stored default - realityscan_env
+    # returns the env value unchanged in that case, so when CommandRunner
+    # overlays this dict onto the inherited environment the user's
+    # override survives.
+    from module_base.settings_store import realityscan_env
+    rs_env = realityscan_env(_settings())
+
     if chain:
         argv = [sys.executable, str(REPO / "main.py"),
                 "--output_dir", session.results_root,
@@ -567,8 +579,7 @@ def build_commands(session: Session) -> list[StageCommand]:
                "RS_NO_INTERACTIVE": "1", "PYTHONIOENCODING": "utf-8"}
         needs_rs = "align" in chain
         if needs_rs:
-            env.update({"RS_INSTANCE": "RS1", "RS_CACHE_DIR": r"E:\rscache",
-                        "RS_HEADLESS": "0"})
+            env.update(rs_env)
         commands.append(StageCommand(
             stage=" + ".join(MODULE_DISPLAY[k] for k in chain),
             argv=argv, env=env, needs_realityscan=needs_rs))
@@ -584,12 +595,23 @@ def build_commands(session: Session) -> list[StageCommand]:
                 "--visible", "true", "--auto_model", "false",
                 "--ladder", "merge_first", "--merge_scope", "neighbour",
                 "--pair_gate", "overlap", "--assemble_only", "false",
+                # 0.0025 = the owner's bounded-loss decision (2026-07-28):
+                # 0.25% of input cameras, sized from the hull's real loss
+                # (5-11 of 4,865) with an order of magnitude of headroom.
+                # Pinned HERE deliberately (not rs_settings): drivers that
+                # left merge options unpinned inherited another session's
+                # stored values (final review 2026-07-29, item c), and
+                # test_wildscan pins this flag by test. Scale band 0.90-1.10
+                # is the metric-scale oracle gate (2026-07-26), set after two
+                # align-time scale collapses (0.175, 0.236) shipped with
+                # camera-count oracles green; known-good components measure
+                # 0.937-1.119. Full provenance: merge_zones.run_ladder's
+                # loss_tolerance_frac comment.
                 "--loss_tolerance", "0.0025", "--scale_gate", "true",
                 "--scale_min", "0.9", "--scale_max", "1.1"]
         commands.append(StageCommand(
             stage="Merge Components", argv=argv,
-            env={"PYTHONIOENCODING": "utf-8", "RS_INSTANCE": "RS1",
-                 "RS_CACHE_DIR": r"E:\rscache", "RS_HEADLESS": "0"},
+            env={"PYTHONIOENCODING": "utf-8", **rs_env},
             needs_realityscan=True))
 
     if "model" in session.enabled:
@@ -597,8 +619,7 @@ def build_commands(session: Session) -> list[StageCommand]:
             stage="Generate Models",
             argv=[sys.executable, str(REPO / "run_models.py"),
                   "--workspace", session.results_root],
-            env={"PYTHONIOENCODING": "utf-8", "RS_INSTANCE": "RS1",
-                 "RS_CACHE_DIR": r"E:\rscache", "RS_HEADLESS": "0"},
+            env={"PYTHONIOENCODING": "utf-8", **rs_env},
             needs_realityscan=True))
 
     if "export" in session.enabled:
@@ -609,8 +630,7 @@ def build_commands(session: Session) -> list[StageCommand]:
             stage="Export Deliverables",
             argv=["cmd", "/c", str(bat), str(ws.assembly_project() or ""),
                   str(ws.exports), str(names_file)],
-            env={"RS_INSTANCE": "RS1", "RS_CACHE_DIR": r"E:\rscache",
-                 "RS_HEADLESS": "0"},
+            env=dict(rs_env),
             needs_realityscan=True))
 
     if "publish" in session.enabled:
