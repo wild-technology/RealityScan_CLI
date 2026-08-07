@@ -1,5 +1,49 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-08-04/05 ON2026 model workflow to final (DONE)
+
+Took the live ON2026 (RH0042/RH0043 Voyis stereo, 38,948 images in
+`M:\ON2026 COLMAP processing\rs\rs_images`) GUI session from a finished
+Normal Detail mesh through to exported deliverables.
+
+**Deliverables** — `M:\ON2026 COLMAP processing\rs\final\` (96.52 GB):
+- `ON2026_final.obj` — 9.37 GB, **30,160,616 verts / 60,322,228 faces**
+- 4 × `*_diffuse.jpg` + 4 × `*_normal.jpg`, each **8192 × 8192**
+- `ON2026_final.rsproj` (17.24 MB + 48.50 GB data, 670 files)
+- `ON2026_premodel_checkpoint.rsproj` (+38.74 GB, 331 files) — the
+  rollback point, taken *before* any model step touched the scene.
+
+**Run**: texture (4×8k) → 4× simplify/clean (70% per pass ⇒ ~24% of
+original tris) → unwrap → reprojectTexture → export OBJ → save.
+23:15 → 03:15 (4 h). Every step clean, `lastError:0`, final `rev:147`.
+
+**Carried by the new `ModelToFinal.bat`** (see CLAUDE.md). It attaches to
+a running instance instead of booting one — necessary here because the
+session was GUI-launched and because every other workflow would have
+called `startRealityScan.bat`, whose `-newScene -deleteAutosave` would
+have destroyed 9 h of reconstruction.
+
+### Open items on this dataset
+
+1. **Color correction never succeeded.** Four `Correcting Image Colors
+   aborted` entries (2420 s, 214 s), no completion line ever. The
+   texture was therefore built on **uncorrected** imagery. For turbid
+   ROV imagery this is a visible quality ceiling. To fix: `correctColors`
+   from the checkpoint, then re-texture.
+2. **The OBJ is exported at 100× scale, Unreal conventions.**
+   `ModelExportParamsObj.xml` carries `MvsExportScaleX/Y/Z=100.0`,
+   `MvsExportTransformationPreset=Unreal`, `MvsExportNormalFlipY=true`.
+   Verified in the artifact: `.rsInfo` says `settingsScale="100 100 100"`
+   / `normalFlip="0 1 0"`, and vertices read ≈ ±180/1100 where the local
+   flight-log frame is ≈ ±2/18 m. **The model is in centimetres, not
+   metres** — wrong for metric/GIS use, right for Unreal. Re-export from
+   `ON2026_final.rsproj` with a scale-1 params XML if a metric model is
+   needed; no recompute required.
+3. Scene CRS: the trajectory was imported as **local Euclidean**
+   (`+proj=geocent`, `local:1 - Euclidean`), not UTM. The
+   `epsg:32757` entry in the .rsproj is the project's default
+   coordinate-system slot and is not what the flight log used.
+
 ## 2026-07-22 fix pass + NA167 end-to-end verification
 
 A full-code review found and fixed (all verified by a 47-check synthetic
@@ -137,7 +181,7 @@ Other findings from the first runs:
 
 ## PENDING RECONCILIATION with LilyJean/COLMAP findings (filed 2026-07-23)
 
-The LilyJean fact base (`C:\Users\jonat\itsmagicIswear\FINDINGS.md`, 34 dated/
+The LilyJean fact base (`C:\Users\jonat\Desktop\CoyoteThings\itsmagicIswear\FINDINGS.md`, 34 dated/
 sourced entries) reached the OPPOSITE preprocessing verdict from this pipeline:
 on 3,607 LilyJean stereo pairs, both adaptive enhancement and fixed backscatter
 subtraction reduced COLMAP registration ~30% vs originals (F-20260721-02,

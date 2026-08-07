@@ -52,7 +52,17 @@ Exceptions that must NOT be renamed:
     `AlignImageList` (.imagelist input for shared-path components),
     `SequentialAlignGrow` (incremental add→log→align),
     `MergeZoneComponents` (.complist of in-place .rsalign paths;
-    merge|align mode; `key:value` settings), `AlignZonesSequentially`.
+    merge|align mode; `key:value` settings), `AlignZonesSequentially`,
+    `ModelToFinal` (the model half on its own: texture → simplify →
+    unwrap → reproject → export → save, against a mesh that already
+    exists). `ModelToFinal` is the one workflow that **attaches** to a
+    running instance instead of booting one — it deliberately does NOT
+    call `startRealityScan.bat`, because that script issues
+    `-newScene -deleteAutosave` when it finds an instance already
+    running and would destroy the very scene it was asked to finish.
+    It also accepts `*` as the instance (see below) and gates on the
+    `lastError:` field of `-getStatus` rather than
+    `errors_<instance>.txt`, which a GUI-launched instance never writes.
   - `RS_CLI/Errors/ErrorWriter.bat` — invoked by RealityScan itself
     (`appProcessAction=ExecuteProgram`); appends every completion to
     `results.log`, failures to `errors.txt`.
@@ -74,7 +84,17 @@ Exceptions that must NOT be renamed:
   but can return prematurely if issued before the instance picks up the
   queued command — hence the double-wait in `:run`.
 - `-getStatus <instance>` → errorlevel 0 iff the instance exists (used
-  for readiness and shutdown verification).
+  for readiness and shutdown verification). It ALSO prints a live
+  progress line on stdout (capture by redirecting; RealityScan is a
+  GUI-subsystem binary): `id:<op> progress:<pct> runtime:<s>
+  endEstimation:<s> rev:<n> lastError:<code>`.
+- **`*` is a valid instance argument** meaning "first available
+  instance", accepted by `-delegateTo`, `-waitCompleted`, `-getStatus`,
+  `-pauseInstance`, `-unpauseInstance` and `-abortInstance`. A
+  GUI/Epic-Launcher RealityScan has no `-setInstanceName` and so answers
+  no named lookup, but IS reachable via `*`. Ambiguous once two
+  instances run — use explicit names for multi-GPU, `*` only to attach
+  to a single interactive session.
 - App settings use `app*` key names (`appQuitOnError`, `appAutoSaveMode`,
   `appProcessAction`, `appProcessActionTime`, `appProcessExecCmd`). The
   legacy `RealityCapture*` key names are dead.

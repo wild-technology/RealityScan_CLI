@@ -214,3 +214,80 @@ Companion docs: `NA167_SESSION_NOTES.md` (revised CLI docs + bug list),
     "'-delegateTo' is not recognized" — so no .rsalign artifact was
     exported; single occurrence across ~10 identical merge workflows,
     unexplained, re-run if the artifact is needed.)
+
+32. **`*` is a valid instance name meaning "the first available
+    instance" — so a GUI-launched RealityScan with no
+    `-setInstanceName` IS reachable from the CLI.** → 2026-08-04, live
+    ON2026 session. A RealityScan started by the Epic Games Launcher
+    (no instance name on its command line) answered `-getStatus RS1`
+    with exit 5, which looked like "unreachable, CLI is useless here".
+    The local Help settled it: `getStatus instanceName|*`,
+    `delegateTo instanceName|*`, `waitCompleted instanceName|*`,
+    `pauseInstance|abortInstance instanceName|*` all accept `*`.
+    Verified: `-getStatus *` → **exit 0** against that same GUI
+    instance. This removes the assumption that only CLI-booted
+    instances can be driven.
+
+33. **`-getStatus` prints a live progress line on stdout, not just an
+    errorlevel — it is a usable error and progress oracle for an
+    instance that has no ErrorWriter hook.** → Same session: capturing
+    stdout gave
+    `id:0x5051 progress:11.1% runtime:575.04sec endEstimation:4579.16sec rev:93 lastError:0`.
+    Fields: operation id, percent, elapsed, estimated remaining,
+    revision, last error code. A GUI-launched instance never ran
+    `startRealityScan.bat`, so `errors_<instance>.txt` does not exist
+    for it and the `:run` marker-file gate is blind; parsing
+    `lastError:` covers that gap. Parser verified against a known-good
+    (`lastError:0` → pass), a known-bad (`lastError:20501` → fail) and
+    an empty status (→ pass, nothing running). NOT yet verified: whether
+    `lastError` is sticky across operations, i.e. whether a code left by
+    a previously aborted operation would trip the gate on the next
+    command. Treat a non-zero `lastError` on the FIRST gated command as
+    "inspect the app log", not "this command failed".
+
+34. **`startRealityScan.bat` is unsafe to call against a scene you want
+    to keep: it issues `-newScene -deleteAutosave` whenever
+    `-getStatus` finds the instance already running.** → Code read
+    while planning how to attach to the live ON2026 session. With `*`
+    resolving to a GUI instance holding hours of finished
+    reconstruction, calling any existing workflow script would have
+    silently wiped it, because every workflow starts by calling
+    `startRealityScan.bat`. Mitigation: `ModelToFinal.bat` attaches via
+    a bare `-getStatus` guard and never calls that script.
+
+35. **`err:7185` "Provided arguments don't match any overload for
+    command 'save'" is the signature of a path that got split on
+    spaces, not of a bad command.** -> 2026-08-04: a checkpoint
+    `-save "M:\ON2026 COLMAP processing\rs\final\...rsproj"` issued via
+    PowerShell `Start-Process -ArgumentList @('-delegateTo','*','-save',$path)`
+    failed instantly. The **array** form of `-ArgumentList` does not
+    quote elements containing spaces for this binary, so RealityScan saw
+    three arguments. The directory was writable (write-test passed);
+    nothing was wrong with the path. Fix: pass `-ArgumentList` as a
+    single **string** with the path explicitly quoted. Same class of bug
+    as CLAUDE.md hard rule 8, arriving through PowerShell rather than
+    through .bat argument splitting.
+
+36. **`lastError` from `-getStatus` is sticky while the instance is
+    idle, but clears when the next operation starts.** -> Same session,
+    resolving the open question in finding 33. After the failed save,
+    four consecutive polls at `id:0xffffffff` all reported
+    `lastError:-2113863583` (0x82010061). The moment the retried save
+    began, the field read `lastError:0` again at `id:0x5035`. So a naive
+    "fail if lastError != 0" gate would blame the *next* command for the
+    *previous* command's error. `ModelToFinal.bat` therefore captures
+    `rev:` before delegating and only treats a non-zero `lastError` as a
+    failure **if `rev` also advanced** - rev increments once per
+    completed operation. When rev is unchanged it warns and continues.
+
+37. **The unwrap preset, not the texture preset, decides the final
+    model's UV layout when simplification is on.** -> 2026-08-04 ON2026
+    run: texturing was asked for at 4x8192, but the exported model is
+    the *simplified* one, which gets unwrapped fresh from
+    `Unwrapping_Simplified.xml` - that file says
+    `unwrapMaximalTexCount=1` at `16384`, which would have silently
+    produced one 16k page instead of four 8k pages (identical texel
+    budget, but 16k exceeds the max texture size many engines accept).
+    Added `Unwrapping_Simplified_4x8k.xml` and made `ModelToFinal.bat`
+    pick the unwrap preset to match the texture preset. Verified in the
+    artifact: four `*_diffuse.jpg`, each exactly 8192x8192.
