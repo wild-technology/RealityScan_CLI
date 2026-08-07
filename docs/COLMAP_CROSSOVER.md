@@ -30,7 +30,7 @@ ROVDataConcat old-vs-new, not photogrammetry).
 The owner delivered the merged COLMAP fact base (colmap_studio ⊕
 itsmagicIswear, C-*/F-* IDs) in-session on 2026-07-24; frozen copy:
 `docs/COLMAP_FINDINGS_UNIFIED.md`. Canonical home is the colmap_studio
-repo on the BIMBOX machine; the itsmagicIswear parent
+repo on the HONEYBADGER machine; the itsmagicIswear parent
 (`C:\Users\jonat\Desktop\CoyoteThings\itsmagicIswear\FINDINGS.md`) is
 frozen there. The RealityScan repo on that machine is checked out as
 `Desktop\CoyoteThings\RS_main` (the fact base's F-20260723-33/34 cite
