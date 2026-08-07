@@ -1,9 +1,12 @@
 # RealityScan 2.2 CLI — revised documentation & bug findings
 
-Compiled from empirical testing on NA167_H2075 (2026-07-22/23). Two
-sections: (1) the official documentation for every command/setting we
-used, **revised** to say what actually happens; (2) bug findings for CLI
-processing. Narrative/test matrix: `MERGE_TEST_PLAN.md`; repo state:
+Compiled from empirical testing on NA167_H2075 (2026-07-22/23) and
+ON2026 (2026-08-04/07). Three sections: (1) the official documentation
+for every command/setting we used, **revised** to say what actually
+happens; (2) bug findings for CLI processing; (3) a consolidated
+reference of operation ids, error codes and exit codes — kept here
+because RealityScan truncates its own log on every instance boot, so
+this document is the only durable record of them. Narrative/test matrix: `MERGE_TEST_PLAN.md`; repo state:
 `HANDOFF.md`; raw results: `D:\na167_h2075\rs_test\merge_test\strategy_results.json`.
 
 ---
@@ -275,6 +278,76 @@ comparison; automated drivers answer prompts via a scripted `input`
 instead of stdin pipes.
 
 ---
+
+## Section 3 — Operation ids, error codes & exit codes
+
+Consolidated because these were previously scattered across `FINDINGS.md`,
+`CLAUDE.md` and `HANDOFF.md`, and because **the app log is not a durable
+record of them** (see 3.5). Everything here is empirical, from
+RealityScan **2.2.0.119430**. Epic documents none of it.
+
+### 3.1 `-getStatus` `id:` field — operation ids
+
+The `id:` in `id:<op> progress:<pct> ... lastError:<code>` identifies the
+*running operation*, not an error. Mapping derived by pairing the id with
+the command that was delegated and the app-log completion line.
+
+| id | Operation | How it was pinned |
+|----|-----------|-------------------|
+| `0xffffffff` | **idle — nothing running** | always with `progress:0.0%` + `endEstimation:0.00sec` |
+| `0x6` | `-exportSelectedModel` | metric OBJ export; log "Exporting Textured and Colored Mesh completed" |
+| `0x7` | `-calculateTexture` | seen immediately after the workflow echoed "Texturing model" |
+| `0x5034` | **UNCONFIRMED** | observed once at 37.2% immediately before a save; adjacent to `0x5035` but never isolated. Do not rely on it. |
+| `0x5035` | `-save` (project) | checkpoint save; log "Saving Project completed in 169.264 seconds" |
+| `0x5051` | Normal Detail reconstruction (`-calculateNormalModel`) | twice on ON2026: 3,499 s / 24 parts and 24,933 s / 163 parts, each ending "Reconstruction in Normal Detail completed" |
+
+A GUI click produces the same id as the equivalent CLI command — these are
+process ids, not CLI-specific. Treat them as build-specific.
+
+### 3.2 Error codes
+
+| Code | Meaning | Notes |
+|------|---------|-------|
+| `0x5076` | Envelope for `Processing failed: Operation aborted.` **and** `Operation warning.` | **Not specific.** Emitted for aborted reconstruction, aborted feature detection, aborted Correcting Image Colors, and the flight-log warning alike. Always printed twice in a row. Never diagnose from this alone. |
+| `err:18002` (+ `0x820000FF`) | Flight log references images not in the scene | "The file contains 1350 images which are not in the current scene." The trajectory still imports fine. Warning-class. |
+| `err:7185` (+ `CPP\0x5555`, `CPP\0x5555\0x557a`) | "Provided arguments don't match any overload for command '\<cmd\>'" | In practice this means **a path with spaces got split into several arguments** — not that the command is wrong. See finding 35. |
+| `err:7155` | "Parsing setting key=value '\<key\>' failed" | Settings passed as `key=value` through .bat args; use `key:value`. Finding 15. |
+| `err:5605` | Rename failed — component selection was cleared | `-mergeComponents` async re-reconstruction races the next command. |
+| `0x82000060` | Command does not exist | `-selectAllComponents` is not a 2.2 command. Finding 13. |
+| `0x8000FFFF` | Generic "unexpected program state" | Covers both malformed `-set` args and genuine solve failures. Finding 16/17. |
+| `0x80070057` | `E_INVALIDARG` | |
+| `0x82010061` | Value left in `lastError` after a failed `-save` | Reported as `lastError:-2113863583`; see 3.3. |
+
+### 3.3 `lastError` encoding and lifetime
+
+- Printed as a **signed 32-bit decimal**. To read as hex, add 2³² when
+  negative: `-2113863583 + 4294967296 = 2181103713 = 0x82010061`.
+- `0` means "no error recorded for the most recent operation".
+- **Sticky while idle, cleared when the next operation starts** — four
+  consecutive idle polls kept a dead error, which vanished the instant the
+  retried save began. Gate on `lastError != 0` **AND** `rev:` advancing,
+  never on `lastError` alone (findings 33, 36).
+
+### 3.4 Exit codes
+
+| Surface | Code | Meaning |
+|---------|------|---------|
+| `RealityScan.exe` process | `0` | success |
+| | *error's decimal code* | with `appQuitOnError=true` |
+| | `3` | crash (minidump at the `-silent` path) |
+| `-getStatus <name>` | `0` | instance exists |
+| | `5` | no such instance (verified: `-getStatus RS1` on a GUI instance) |
+| `appProcessAction` trigger `$(processResult)` | `0`, `1` | both success — `1` is emitted by routine operations such as `-addFolder`; whitelist both |
+| | `0x820000FF` | warning class |
+| | `0x80070057` | `E_INVALIDARG` |
+
+### 3.5 The app log is not a durable record
+
+`%LOCALAPPDATA%\Temp\RealityScan.log` is **truncated when an instance
+boots**. Observed again 2026-08-07: a log holding every code in 3.1/3.2
+from a 14-hour session was reduced to two "Loading Project completed"
+lines by the next boot. Copy the log immediately after any failure — and
+put codes in this document, because nothing else keeps them.
 
 ## Resume state (2026-07-24 — merge investigation COMPLETE)
 

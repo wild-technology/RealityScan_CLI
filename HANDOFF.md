@@ -36,9 +36,15 @@ have destroyed 9 h of reconstruction.
    Verified in the artifact: `.rsInfo` says `settingsScale="100 100 100"`
    / `normalFlip="0 1 0"`, and vertices read ≈ ±180/1100 where the local
    flight-log frame is ≈ ±2/18 m. **The model is in centimetres, not
-   metres** — wrong for metric/GIS use, right for Unreal. Re-export from
-   `ON2026_final.rsproj` with a scale-1 params XML if a metric model is
-   needed; no recompute required.
+   metres** — wrong for metric/GIS use, right for Unreal.
+   **RESOLVED 2026-08-07**: re-exported to `final\metric\` using the new
+   `ModelExportParamsObj_Metric.xml` (scale 1.0, `[[Custom]]` preset,
+   normal-map conventions deliberately left untouched so scale is the
+   only difference). `ON2026_final_metric.obj`, 9.17 GB, same
+   30,160,616 verts / 60,322,228 faces, same four 8192×8192 pages;
+   `.rsInfo` records `settingsScale="1 1 1"` and vertex 0 reads
+   `-1.7990 11.0154 0.4367` against the Unreal build's
+   `-179.8996 1101.5427 43.6697` — exactly 100×. Both exports are kept.
 3. Scene CRS: the trajectory was imported as **local Euclidean**
    (`+proj=geocent`, `local:1 - Euclidean`), not UTM. The
    `epsg:32757` entry in the .rsproj is the project's default
