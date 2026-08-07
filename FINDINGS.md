@@ -2450,12 +2450,34 @@ a re-run with updated nav. Source tag **[ON2026]**.
   +180.000.
   Same dataset, two bands. An earlier version of this entry asserted the
   24.9% reading as established on the assumption of aerospace YPR; that
-  assumption is contradicted by (a). Do not quote either number as settled
-  until the reading is pinned. Note the exporter already implements the
-  obvious mitigation (`ypr_acc = min(180, max(ori_acc, MEASURED/sin_p))`),
-  and that the standing gate above still applies: pin Euler order and
-  camera mount in `FlightLogParams.xml` before any further orientation cell.
-  [ON2026] (2026-08-07) OPEN
+  assumption is contradicted by (a). SUPERSEDED same day by the
+  reconciliation below.
+  RECONCILED (2026-08-07, owner question prompted the re-read): the two
+  figures measure DIFFERENT degeneracies at opposite ends of the pitch
+  range, and are not competing readings of one singularity.
+  - **1.3% (near-vertical)** is the EXPORTER-side degeneracy: its yaw is
+    "heading of the view direction" and its roll is referenced to
+    horizontal, so both definitions collapse for a straight-down view.
+    The exporter already mitigates it - `ypr_acc = min(180, max(ori_acc,
+    MEASURED/sin_p))` widens the accuracy on exactly those rows.
+  - **24.9% (near pitch 90 = horizontal)** is the candidate IMPORT-side
+    degeneracy in RealityScan's OWN parameterisation: staff-confirmed
+    composition is intrinsic Roll -> Pitch -> Yaw with pitch the middle
+    rotation, and any such sequence is singular at middle = +/-90 - which
+    in the 0-=-nadir scale is a HORIZONTAL view. This is the same
+    degeneracy the [H2023] line already flags ("Port's pitch sits at
+    ~88 deg, within 2 deg of the 90 deg degeneracy where roll and yaw
+    axes collapse in this parameterisation"). A wall-inspecting ROV
+    lives there: 24.9% of ON2026 rows within 5 deg of pitch 90.
+  The import-side reading stays CONTINGENT on the unpinned Euler-order
+  import settings (`ifKGrp`/`ifKmode`, established entry above) - the
+  standing gate applies: pin Euler order and camera mount in
+  `FlightLogParams.xml` before any further orientation cell. If the pin
+  confirms the staff composition, the practical consequence is the
+  mirror-image of the exporter's mitigation: orientation priors for
+  near-HORIZONTAL frames deserve the 1/|cos(pitch-90)|-style widening on
+  import, or simply the conservative 90-deg floor already in force.
+  [ON2026] (2026-08-07) OPEN - narrowed to the Euler-order pin
 
 - **The 0.020 position accuracy in the ON2026 logs is a constant CLI
   default, not measured per-sample sigma** (`--pos-acc` default 0.02 in

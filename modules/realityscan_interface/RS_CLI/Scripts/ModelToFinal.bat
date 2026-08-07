@@ -16,7 +16,7 @@ setlocal EnableDelayedExpansion
 ::                           unless export=none)
 ::   %3 final model name     base name for the exported model (default Final)
 ::   %4 texture preset       highpoly|8k|4x8k|16k|fixed100|fixed50
-::                           (default highpoly)
+::                           (default 4x8k - the owner's 8K cap)
 ::   %5 simplify             true/false (default false)
 ::   %6 export format        obj|objmetric|fbx|glb|none (default obj)
 ::                           obj = stock preset, scale 100 (Unreal);
@@ -47,16 +47,11 @@ set "MetadataDir=%Metadata%"
 if not "%~1" == "" ( set "RS_TARGET=%~1" ) else ( if defined RS_INSTANCE_FROM_CALLER ( set "RS_TARGET=%RS_INSTANCE%" ) else ( set "RS_TARGET=*" ) )
 set "export_dir=%~2"
 if "%~3" == "" ( set "final_name=Final" ) else ( set "final_name=%~3" )
-:: DIVERGENCE, UNRESOLVED (2026-08-07): this default is "highpoly"
-:: (2 x 16K texture + 1 x 16K simplified unwrap), which is precisely the
-:: pair GenerateModel.bat records as retired - "8K cap (owner 2026-07-31):
-:: both texture passes limited to 4 x 8K". The ON2026 run passed 4x8k
-:: explicitly and so matched the cap; only this DEFAULT regresses it.
-:: Left as-is pending an owner call, because changing it silently would
-:: change every future deliverable's texture budget. Same open question
-:: applies to SimplifyAutomationParams.xml (70% per pass, 0.70^4 ~ 24%)
-:: below vs GenerateModel.bat's SimplifySmooth_80per (0.80^4 ~ 41%).
-if "%~4" == "" ( set "tex_preset=highpoly" ) else ( set "tex_preset=%~4" )
+:: Default preset 4x8k per the owner's 8K cap (2026-07-31, reaffirmed for
+:: this script 2026-08-07): both texture passes limited to 4 x 8192, matching
+:: GenerateModel.bat. "highpoly" (2 x 16K) remains available explicitly for
+:: the rare consumer that wants single big pages.
+if "%~4" == "" ( set "tex_preset=4x8k" ) else ( set "tex_preset=%~4" )
 if "%~5" == "" ( set "simplify_model=false" ) else ( set "simplify_model=%~5" )
 if "%~6" == "" ( set "export_format=obj" ) else ( set "export_format=%~6" )
 if "%~7" == "" ( set "cull_polygons=false" ) else ( set "cull_polygons=%~7" )
@@ -77,7 +72,12 @@ if /i "%tex_preset%" == "fixed50"   set "TexParams=%MetadataDir%\Texturing_Fixed
 if not defined TexParams goto :badPreset
 if not exist "%TexParams%" goto :noTexParams
 
-set "SimplifyParams=%MetadataDir%\SimplifyAutomationParams.xml"
+:: 80% per pass (owner 2026-08-07), matching GenerateModel.bat's
+:: SimplifySmooth: 0.80^4 ~ 41% of input triangles over the four passes.
+:: The previous SimplifyAutomationParams.xml (70%, ~24%) produced the
+:: 2026-08-04 ON2026 deliverable; the presets differ ONLY in
+:: mvsFltTargetTrisCountRel.
+set "SimplifyParams=%MetadataDir%\SimplifySmooth_80per_Params.xml"
 set "ReprojParams=%MetadataDir%\ReprojectionParams.xml"
 
 :: The UV layout of the FINAL model comes from the unwrap preset, not from

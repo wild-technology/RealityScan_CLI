@@ -44,11 +44,12 @@ until they are answered:
 3. **Validation scope** — smoke fixture A/B, full-zone A/B, or straight to
    the full 38,948 run.
 
-Two further owner calls are recorded as comments in `ModelToFinal.bat`
-rather than decided: its DEFAULT texture preset is the 2×16K + 1×16K pair
-`GenerateModel.bat` records as retired under the 2026-07-31 8K cap, and its
-simplify preset is 70%/pass against `GenerateModel.bat`'s 80%
-(0.70⁴ ≈ 24% vs 0.80⁴ ≈ 41% of input triangles).
+**DECIDED (owner, 2026-08-07):** `ModelToFinal.bat` now matches
+`GenerateModel.bat` on both formerly-open recipe calls — default texture
+preset is `4x8k` (the 2026-07-31 8K cap; `highpoly` = 2×16K remains
+available explicitly) and simplify is `SimplifySmooth_80per_Params.xml`
+(80%/pass, 0.80⁴ ≈ 41% of input triangles). Note the 2026-08-04 ON2026
+deliverable predates this and was simplified at 70%/pass (≈ 24%).
 
 ### READ BEFORE PROPOSING ANY ORIENTATION CELL
 
@@ -62,8 +63,14 @@ wrong analysis produced in this session. Specifically:
   C-20260730-09 (2,262 images) makes 0.02 m / 90° the production winner;
   tight 10° orientation priors were actively worse. Do not propose it
   fresh — the open question is whether TRUE roll changes that.
-- The pitch-convention question is **OPEN and recorded as a conflict**, not
-  settled. Do not quote either the 24.9% or the 1.3% figure as established.
+- The pitch-convention "conflict" is now RECONCILED as two DIFFERENT
+  degeneracies (see the updated `[ON2026]` entry): 1.3% = exporter-side,
+  near-vertical views, already mitigated in the exporter; 24.9% = frames
+  near pitch 90 (horizontal), which is RealityScan's own candidate YPR
+  singularity (middle rotation of intrinsic Roll→Pitch→Yaw), the same
+  degeneracy the H2023 line flags for Port at ~88°. The 24.9% reading is
+  contingent on the unpinned Euler-order import settings — still OPEN, not
+  established.
 - The standing gate elsewhere in this log still applies: pin Euler order
   and camera mount in `FlightLogParams.xml` before any further cell.
 
