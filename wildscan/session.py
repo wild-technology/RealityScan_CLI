@@ -623,14 +623,26 @@ def build_commands(session: Session) -> list[StageCommand]:
             needs_realityscan=True))
 
     if "export" in session.enabled:
-        bat = REPO / ("modules/realityscan_interface/RS_CLI/Scripts/"
-                      "ExportDeliverables.bat")
+        # Through the python driver -> RealityScanCLI.run_batch_script,
+        # like merge and model (hard rule 1). The old ["cmd","/c",bat,...]
+        # Popen had no instance lock, no marker hygiene, no verified
+        # shutdown, broke on space-containing checkout paths, and let the
+        # 'start ""'-booted RealityScan GUI inherit the runner's stdout
+        # PIPE (WINDOWS TRAP 2026-08-07) - run_batch_script gives the .bat
+        # a log file instead. Deliverable pinning (OBJ_NiraParts /
+        # FBX_Parts / dense PLY) stays in ExportDeliverables.bat and its
+        # Metadata presets; the driver only carries the same three
+        # arguments the .bat has always taken.
         names_file = ws.exports / "components.names"
         commands.append(StageCommand(
             stage="Export Deliverables",
-            argv=["cmd", "/c", str(bat), str(ws.assembly_project() or ""),
-                  str(ws.exports), str(names_file)],
-            env=dict(rs_env),
+            argv=[sys.executable,
+                  str(REPO / "modules" / "export_deliverables.py"),
+                  "--project", str(ws.assembly_project() or ""),
+                  "--exports", str(ws.exports),
+                  "--names", str(names_file),
+                  "--log_dir", str(ws.root / "logs")],
+            env={"PYTHONIOENCODING": "utf-8", **rs_env},
             needs_realityscan=True))
 
     if "publish" in session.enabled:
