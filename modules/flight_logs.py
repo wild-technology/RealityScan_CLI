@@ -80,8 +80,8 @@ _LOCAL_TYPE = 'local:1 - Euclidean'
 _FRAME_INCIDENT = (
     "a frame mismatch imports the trajectory silently in the wrong frame "
     "(2026-08-07 incident: the shared FlightLogParams template still "
-    "carried ON2026's local frame and poisoned a UTM 57L import - 3/32 "
-    "cameras registered, exit code 0)")
+    "carried ON2026's local frame and a UTM 57L log imported through it "
+    "with exit code 0 and no warning)")
 
 
 def params_template_frame(template_path: str) -> str:
@@ -110,7 +110,10 @@ def ensure_frame_match(flight_log_path: str, template_path: str) -> str:
     Raises ValueError on mismatch instead of importing: a frame mismatch
     imports the trajectory silently in the wrong frame (2026-08-07
     incident, see _FRAME_INCIDENT: UTM 57L log through the local template
-    registered 3/32 with exit code 0).
+    imported in the wrong frame with exit code 0 and no warning;
+    the frame's effect on that fixture's registration was later isolated
+    as NOT the dominant suppressor - backlog B7 - but a silently
+    mis-framed trajectory is wrong regardless of what it costs).
     """
     expected = ('utm' if utm_zone_from_flight_log_name(flight_log_path)
                 else 'local_euclidean')
@@ -157,8 +160,8 @@ def write_flight_log_params(template_path: str, output_path: str,
       from the flight log itself, never a hand-edited template.
     - Wrong FRAME (incident 2026-08-07): commit 902fcf7 promoted ON2026's
       hand-made local-frame file over the shared template, and a UTM 57L
-      import went through geocent/local:1 silently - registration 3/32
-      with exit code 0. A template that declares the opposite frame from
+      import went through geocent/local:1 silently with exit code 0
+      and no warning. A template that declares the opposite frame from
       the one requested is therefore refused outright (ValueError); pick
       FlightLogParams.xml (UTM) or FlightLogParamsLocal.xml (local).
     """

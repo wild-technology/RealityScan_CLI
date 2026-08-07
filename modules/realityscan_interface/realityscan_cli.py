@@ -725,9 +725,19 @@ class RealityScanCLI:
                         try:
                             os.remove(path)
                         except OSError:
-                            # a reader may hold it transiently; truncate
-                            with open(path, 'w', encoding='utf-8'):
-                                pass
+                            try:
+                                # a reader may hold it transiently; truncate
+                                with open(path, 'w', encoding='utf-8'):
+                                    pass
+                            except OSError:
+                                # Second sharing violation: warn and let the
+                                # .bat's own marker gate produce the loud
+                                # abort - do not kill the attach before the
+                                # workflow even starts (clean-sweep 2026-08-07).
+                                self.logger.warning(
+                                    'Could not clear stale own marker %s - '
+                                    'the workflow marker gate may abort on it.',
+                                    path)
 
             creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 

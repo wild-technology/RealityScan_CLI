@@ -4,7 +4,7 @@
 
 Different dataset and different lineage from the H2024 line below: ON2026
 RH0042/RH0043 Voyis stereo, 38,948 images, `M:\ON2026 COLMAP processing\rs\`.
-Nothing running. Rebased onto `902fcf7`; **not pushed**.
+Nothing running. Rebased onto `9fcd876` (origin/main); pushed after the 2026-08-07 clean-sweep.
 
 **⚠ STRANDED COMMITS ON THE OTHER MACHINE (blocking doc work here).** A
 Honeybadger-side session committed `085b89c` (a `docs/rs-reference/`
@@ -93,10 +93,11 @@ wrong analysis produced in this session. Specifically:
 ### LOOSE ENDS, RANKED
 
 1. Answer the three questions above.
-2. `modules/flight_logs.py` still emits UTM only, while the shared
-   `FlightLogParams.xml` now carries a local-Euclidean value and
-   `testing/ab_orientation_priors.py:115` converts it back to UTM — one
-   template, two mutually exclusive campaign frames, no guard.
+2. ~~One template, two frames, no guard~~ **FIXED later the same day
+   (177a81a)**: `write_flight_log_params` takes `frame=`, the shared
+   template is UTM again, `FlightLogParamsLocal.xml` carries ON2026's
+   local frame, and `ensure_frame_match` hard-fails a mismatched pair.
+   (`ab_orientation_priors.py` now lives in `archive/campaign_drivers/`.)
 3. Re-texture ON2026 from the checkpoint if colour correction matters.
 4. Two ON2026 model paths now coexist: `ModelToFinal.bat` (attach to a live
    scene) and `testing/run_on2026_wreck.py:172` → `GenerateModel.bat`

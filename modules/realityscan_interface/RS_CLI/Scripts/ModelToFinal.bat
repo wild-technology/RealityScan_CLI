@@ -325,7 +325,16 @@ for %%A in ("%ErrorPath%\errors_%RS_INSTANCE%.txt") do if %%~zA GTR 0 goto :runM
 
 :statusGate
 call :readstat
-if not defined RS_STATUS goto :runOk
+:: Silence is not success: an empty status from a VANISHED instance means
+:: it died or was closed mid-operation - especially poisonous on the final
+:: -save, which would otherwise report "completed successfully" over a
+:: crash (clean-sweep 2026-08-07). Distinguish "no status text" (benign,
+:: instance idle-and-quiet) from "instance gone" via the getStatus
+:: errorlevel that :readstat just recorded.
+if not defined RS_STATUS (
+    if not "%RS_STAT_RC%" == "0" goto :runInstanceGone
+    goto :runOk
+)
 if "%RS_LASTERR%" == "" goto :runOk
 if "%RS_LASTERR%" == "0" goto :runOk
 if not "%RS_LASTERR%" == "%RS_LASTERR0%" goto :runNewErr
@@ -334,6 +343,12 @@ goto :runStaleErr
 
 :runNewErr
 echo ERROR: RealityScan reported lastError:%RS_LASTERR% (was %RS_LASTERR0%, rev %RS_REV0%-^>%RS_REV%) during: %*
+exit /b 1
+
+:runInstanceGone
+echo ERROR: instance %RS_TARGET% VANISHED during: %*
+echo        getStatus no longer answers - the instance crashed or was
+echo        closed mid-operation. The operation result is UNKNOWN.
 exit /b 1
 
 :runStaleErr
@@ -361,7 +376,11 @@ exit /b 1
 set "RS_STATUS="
 set "RS_REV="
 set "RS_LASTERR="
+set "RS_STAT_RC=1"
 for /f "usebackq tokens=*" %%S in (`%RealityScan% -getStatus %RS_TARGET% 2^>nul`) do set "RS_STATUS=%%S"
+:: Existence probe, separate from the capture: for /f eats the errorlevel.
+%RealityScan% -getStatus %RS_TARGET% >nul 2>&1
+if not errorlevel 1 set "RS_STAT_RC=0"
 if not defined RS_STATUS exit /b 0
 echo !RS_STATUS! | %SystemRoot%\System32\find.exe "rev:" >nul
 if not errorlevel 1 (

@@ -102,15 +102,18 @@ def run_direct(args: argparse.Namespace) -> int:
     models_report.json beside the project so repeat invocations build the
     same evidence trail workspace mode keeps."""
     project = Path(args.project).resolve()
+    # Validate BEFORE the FileHandler: a mistyped --project whose parent
+    # does not exist must produce this message, not a FileNotFoundError
+    # traceback out of basicConfig (clean-sweep 2026-08-07).
+    if not project.is_file():
+        print(f'ERROR: project not found: {project}', file=sys.stderr)
+        return 1
     logging.basicConfig(
         level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
         handlers=[logging.FileHandler(project.parent / 'models_driver.log',
                                       encoding='utf-8'),
                   logging.StreamHandler(sys.stdout)])
     logger = logging.getLogger('run_models')
-    if not project.is_file():
-        logger.error('project not found: %s', project)
-        return 1
     if shutil.disk_usage(project.parent).free / 1024**3 < MIN_FREE_GB:
         logger.error('ABORT: below the %.0f GB floor', MIN_FREE_GB)
         return 1

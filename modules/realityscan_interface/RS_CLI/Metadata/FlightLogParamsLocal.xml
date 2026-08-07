@@ -7,7 +7,7 @@
        the hand-made original on M: for the ON2026 campaign; commit
        902fcf7 briefly promoted that content over the shared UTM template
        and a UTM 57L import went through this frame silently (2026-08-07
-       incident: 3/32 cameras registered, exit code 0), so the two frames
+       incident: silent wrong-frame import, exit code 0), so the two frames
        now live in separate files. UTM cruises use FlightLogParams.xml;
        write_flight_log_params(frame='local_euclidean') consumes this
        one. -->

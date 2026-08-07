@@ -172,7 +172,10 @@ class SettingsStore:
             self.set(section, key, cli_value)
             return cli_value
         stored = self.get(section, key, fallback)
-        if not sys.stdin.isatty():
+        # sys.stdin is None under pythonw / no-console hosts; isatty()
+        # on None would raise AttributeError before the EOFError guard
+        # ever gets a chance (clean-sweep 2026-08-07).
+        if sys.stdin is None or not sys.stdin.isatty():
             self.set(section, key, stored)
             return stored
         try:

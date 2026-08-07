@@ -1134,8 +1134,16 @@ def main() -> int:
     # environment seeds the default too). The CLI flag / stored merge
     # answer stay the explicit per-run override.
     rs_env = realityscan_env(settings)
-    visible = truthy(ask('visible', args.visible,
-                         'true' if rs_env['RS_HEADLESS'] == '0' else 'false'))
+    if args.visible is None and 'RS_HEADLESS' in os.environ:
+        # An EXPLICIT env var wins outright over any stored answer - a
+        # previous session's persisted visible=true silently overriding
+        # RS_HEADLESS=1 on an unattended run is exactly the recorded
+        # "inherited another session's stored options" incident class
+        # (final review 2026-07-29 item c; clean-sweep 2026-08-07).
+        visible = os.environ['RS_HEADLESS'] == '0'
+    else:
+        visible = truthy(ask('visible', args.visible,
+                             'true' if rs_env['RS_HEADLESS'] == '0' else 'false'))
     auto_model = truthy(ask('auto_model', args.auto_model, 'false'))
     if auto_model:
         # Deprecation notice only - behaviour is deliberately unchanged.

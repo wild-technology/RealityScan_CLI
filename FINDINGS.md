@@ -2374,10 +2374,16 @@ a re-run with updated nav. Source tag **[ON2026]**.
   After a failed `-save`, four consecutive idle polls at `id:0xffffffff` all
   reported the dead code; it cleared the instant the retried save started.
   A gate on `lastError != 0` alone therefore blames the NEXT command for the
-  PREVIOUS command's error. `ModelToFinal.bat` captures `rev:` before
-  delegating and treats non-zero `lastError` as failure only if `rev` also
-  advanced (rev increments once per completed operation).
-  [ON2026] (2026-08-04) ESTABLISHED
+  PREVIOUS command's error. The stickiness itself is ESTABLISHED and
+  unchanged; the GATE DESIGN described in the original version of this
+  entry ("captures `rev:` before delegating and treats non-zero
+  `lastError` as failure only if `rev` also advanced, rev incrementing
+  once per completed operation") is **SUPERSEDED (2026-08-07 battery)**:
+  rev tracks scene MUTATIONS, not operations, so a failed non-mutating
+  command leaves rev unchanged and that gate continued past real
+  failures. The shipped gate baselines `lastError` BEFORE delegating -
+  see the battery entry below.
+  [ON2026] (2026-08-04) ESTABLISHED (gate half superseded 2026-08-07)
 
 - **`err:7185` "Provided arguments don't match any overload for command
   '<cmd>'" means a path got split on spaces, not that the command is
@@ -2504,7 +2510,10 @@ a re-run with updated nav. Source tag **[ON2026]**.
   BACK to UTM. The function also leaves every accuracy-governing key
   untouched (`ifUsePosAcc`, `ifUseOriAcc`, `ifCSopt`, `ifuuInh`,
   `ifuuInhEn`); for `ifKGrp`/`ifKmode` see the established entry above.
-  [ON2026] (2026-08-07) OPEN
+  [ON2026] (2026-08-07) RESOLVED same day (commit 177a81a): frame
+  parameter + second template + ensure_frame_match guard; the cited
+  ab_orientation_priors.py now lives in archive/campaign_drivers/.
+  The accuracy-governing keys remain unpinned (tracked with C1/C6).
 
 ### Defect in this session's own work
 

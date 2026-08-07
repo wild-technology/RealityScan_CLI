@@ -51,9 +51,9 @@ broken, do not interpret the sweep.
 
 | Cell | Change (one variable) | Hypothesis |
 |---|---|---|
-| P0 | no-align XMP export probe | RS may export prior poses without alignment |
-| K0 | baseline `ifKmode=0x0`, `ifKGrp=2` | matches staff composition |
-| KB | scrambled log, baseline keys | oracle known-bad; large disagreement |
+| P0 | no-align XMP export probe | **RAN 2026-08-07: REFUTED** - no prior-pose export without alignment (`-exportXMP` silent no-op; 0x80004005 on component export). Oracle O1 dead. |
+| K0 | baseline `ifKmode=0x0`, `ifKGrp=2` | O2 variant **K0t RAN 2026-08-07**: 6/32. |
+| KB | scrambled log, baseline keys | O2 variant **KBt RAN 2026-08-07**: 8/32 - indistinguishable from K0t, so the STOP RULE FIRED and no sweep cell ran. Diagnosis: the cells delegated a plain `-align` without applying AlignmentParams' `-set` block, so orientation priors were not acting at all. Re-runnable only with a settings-pinned harness; prereq backlog B7(ii) or the GUI dropdown diff. |
 | K1–K5 | `ifKmode=0x1 … 0x5` | one of six YPR axis orders each; import may also ERROR on invalid values (that is a finding too) |
 | G1, G3 | `ifKGrp=1`, `3` | grouping vs mount carrier — if rotations move, ifKGrp carries mount |
 | G-GUI | owner sets the two GUI dropdowns, saves params, we diff | definitive key↔dropdown mapping; 1 minute of owner time, next time the GUI is open |

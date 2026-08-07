@@ -606,7 +606,7 @@ def build_commands(session: Session) -> list[StageCommand]:
                 # is the metric-scale oracle gate (2026-07-26), set after two
                 # align-time scale collapses (0.175, 0.236) shipped with
                 # camera-count oracles green; known-good components measure
-                # 0.937-1.119. Full provenance: merge_zones.run_ladder's
+                # 0.937-1.119. Full provenance: merge_zones.merge_cluster's
                 # loss_tolerance_frac comment.
                 "--loss_tolerance", "0.0025", "--scale_gate", "true",
                 "--scale_min", "0.9", "--scale_max", "1.1"]
