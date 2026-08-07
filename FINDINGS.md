@@ -2580,3 +2580,28 @@ a re-run with updated nav. Source tag **[ON2026]**.
   measuring what it thinks it is. This retroactively weakens any
   historical cell that imported orientations without pinning the block.
   [ON2026] (2026-08-07) ESTABLISHED (narrow scope)
+
+- **`-load` restores a scene with NO model selected - and the attach
+  drivers' whole scenario is finishing a loaded scene.** Live gate B9,
+  four attempts, one variable each: `-calculateTexture` against a
+  freshly loaded scene fails 0x80004005 E_FAIL in 0 s (new error-table
+  row: "texture with nothing selected"); passing the model name through
+  ModelToFinal's %9 fixes it (finish_model.py --source-model). Second
+  attempt proved the OWN-instance marker gate fires on a previous run's
+  ErrorWriter entries - correct behaviour, but it means attach-to-own-
+  instance needs pre-run marker clearing (queued as backlog B11); third
+  attempt established that `progress_<inst>.txt` is HELD OPEN by the
+  live instance (-writeProgress) and only the ErrorWriter-appended
+  errors/results files are clearable while it runs. Final run: exit 0,
+  147 s, full chain, artifacts verified. The attach monitor also
+  surfaces STALE marker lines as if current - diagnose attach failures
+  from the workflow log, not the relayed marker text.
+  [ON2026] (2026-08-07) ESTABLISHED
+
+- **The rerouted export path verified live: ExportDeliverables.bat via
+  modules/export_deliverables.py -> run_batch_script produced all three
+  deliverable legs (OBJ-by-parts, FBX, dense colored PLY - 13 files) in
+  56 s on the smoke component, cleared a deliberately planted stale
+  errors_RS1.txt pre-run, wrote the resource CSV, and shut down
+  verified.** The wildscan portal now has zero paths around the
+  execution layer. [ON2026] (2026-08-07) ESTABLISHED

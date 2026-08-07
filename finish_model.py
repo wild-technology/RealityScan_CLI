@@ -68,6 +68,16 @@ def main() -> int:
                         choices=EXPORT_FORMATS,
                         help='export format (objmetric = OBJ at true scale '
                              '1.0 for survey/GIS; obj = scale 100 Unreal)')
+    parser.add_argument('--source-model', default=None,
+                        help='Model name to finish (ModelToFinal %%9). '
+                             'REQUIRED in practice after attaching to a '
+                             'freshly -load-ed scene: load restores the '
+                             'scene with NO model selected, and '
+                             '-calculateTexture then fails 0x80004005 '
+                             'immediately (live gate B9, 2026-08-07). Only '
+                             'omit when the target instance has a model '
+                             'actively selected (e.g. just computed in the '
+                             'GUI session).')
     parser.add_argument('--save-path', default=None,
                         help='explicit .rsproj path for the final -save; '
                              'omit to save to the project\'s original '
@@ -100,11 +110,16 @@ def main() -> int:
 
     # ModelToFinal.bat positional contract (run_attach_script injects the
     # instance as %1): %2 export dir, %3 name, %4 texture preset,
-    # %5 simplify, %6 format. %7 cull / %8 correct colors / %9 source
-    # model keep their in-script defaults (false/false/selected model).
+    # %5 simplify, %6 format, %7 cull, %8 correct colors, %9 source model.
+    # %7/%8 keep their in-script false defaults; %9 is passed only when
+    # --source-model is given (cmd cannot skip positionals, so the two
+    # defaults are spelled out whenever %9 is needed).
+    script_args = [outdir, args.name, args.preset, args.simplify, args.format]
+    if args.source_model:
+        script_args += ['false', 'false', args.source_model]
     result = cli.run_attach_script(
         'ModelToFinal.bat',
-        [outdir, args.name, args.preset, args.simplify, args.format],
+        script_args,
         logs_dir, instance=args.instance)
 
     if result.success:
