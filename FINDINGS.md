@@ -4,8 +4,8 @@ One entry per established fact, WITH how it was discovered. Append new
 findings at the bottom of the relevant section with a date. Refuted
 hypotheses stay, marked SUPERSEDED.
 
-CONSOLIDATION NOTE (2026-07-24): this file now merges TWO research
-lines that ran in parallel from commit 6069d95:
+CONSOLIDATION NOTE (2026-07-24, extended 2026-08-07): this file merges
+THREE research lines:
 
 - **[H2023]** — NA156 H2023 production line (this machine): settings
   evaluation, camera registry, zone aligns, within-zone growth,
@@ -16,6 +16,14 @@ lines that ran in parallel from commit 6069d95:
   Deep docs: `testing/FINDINGS.md` (frozen numbered log, do not append),
   `testing/MERGE_STRATEGY_REPORT.md`, `testing/MERGE_TEST_PLAN.md`,
   `testing/NA167_SESSION_NOTES.md`.
+- **[ON2026]** — ON2026 RH0042/RH0043 Voyis stereo line (2026-08-04/07):
+  attaching to a GUI-launched instance, the model-to-final half, and the
+  nav/orientation groundwork for a re-run. Deep docs:
+  `testing/NA167_SESSION_NOTES.md` §3 (operation ids, error codes, exit
+  codes). Cross-line: this line's priors are COLMAP-derived and its
+  accuracy matrix lives in the external `colmap_studio` fact base
+  (cells C-20260730-05/09, C-20260803-01), which upstream code already
+  cites — read it before proposing any orientation cell here.
 
 Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
@@ -2330,3 +2338,161 @@ MERGE ATTEMPT's snapshot, and which artifact.
   the 6 m band is NOT settled, only its control arm ran; (e) GenerateModel
   error-whitelist redesign, needs the benign select-miss code from (a)-style
   probing. (2026-07-28)
+
+## ON2026 model-to-final + nav prep (2026-08-04/07)
+
+Model half of ON2026 (RH0042/RH0043 Voyis stereo, 38,948 images) driven to
+final deliverables against a GUI-launched instance, plus the groundwork for
+a re-run with updated nav. Source tag **[ON2026]**.
+
+### CLI behavior
+
+- **`*` is a valid instance argument meaning "first available instance",
+  so a GUI/Epic-Launcher RealityScan with no `-setInstanceName` IS
+  CLI-drivable.** Accepted by `-delegateTo`, `-waitCompleted`, `-getStatus`,
+  `-pauseInstance`, `-unpauseInstance`, `-abortInstance` (local Help,
+  `appbasics/allcommands.htm`). Verified against a live GUI session:
+  `-getStatus RS1` -> exit 5, `-getStatus *` -> exit 0, same process.
+  Ambiguous the moment two instances run, so use explicit names for
+  multi-GPU and reserve `*` for attaching to one interactive session.
+  [ON2026] (2026-08-04) ESTABLISHED
+
+- **`-getStatus` prints an undocumented progress line on stdout, and it is
+  the ONLY error channel for an instance the pipeline did not boot.**
+  `id:0x5051 progress:11.1% runtime:575.04sec endEstimation:4579.16sec rev:93 lastError:0`
+  Capture by redirecting (RealityScan is a GUI-subsystem binary and does not
+  reliably attach to a parent console); both `for /f` pipe capture and file
+  redirection work from cmd. An instance not booted by `startRealityScan.bat`
+  never ran the ErrorWriter hook, so `errors_<instance>.txt` does not exist
+  for it and the usual `:run` marker gate is blind. Operation ids observed:
+  `0xffffffff` idle, `0x6` exportSelectedModel, `0x7` calculateTexture,
+  `0x5035` save, `0x5051` Normal Detail reconstruction. Full table in
+  `testing/NA167_SESSION_NOTES.md` Section 3. [ON2026] (2026-08-04) ESTABLISHED
+
+- **`lastError` is a SIGNED 32-bit decimal, and it is STICKY while the
+  instance is idle.** Add 2^32 to read as hex: `-2113863583` -> `0x82010061`.
+  After a failed `-save`, four consecutive idle polls at `id:0xffffffff` all
+  reported the dead code; it cleared the instant the retried save started.
+  A gate on `lastError != 0` alone therefore blames the NEXT command for the
+  PREVIOUS command's error. `ModelToFinal.bat` captures `rev:` before
+  delegating and treats non-zero `lastError` as failure only if `rev` also
+  advanced (rev increments once per completed operation).
+  [ON2026] (2026-08-04) ESTABLISHED
+
+- **`err:7185` "Provided arguments don't match any overload for command
+  '<cmd>'" means a path got split on spaces, not that the command is
+  wrong.** A `-save "M:\ON2026 COLMAP processing\...\x.rsproj"` issued via
+  PowerShell `Start-Process -ArgumentList @(...)` (ARRAY form) failed
+  instantly; the array form does not quote elements containing spaces for
+  this binary, so RealityScan saw three arguments. Target directory was
+  writable (write-test passed). Fix: pass `-ArgumentList` as a single STRING
+  with the path explicitly quoted. Same class as the cmd/.bat splitting trap,
+  arriving through PowerShell. [ON2026] (2026-08-04) ESTABLISHED
+
+- **`startRealityScan.bat` destroys a live scene if called against one:
+  line 20 issues `-newScene -deleteAutosave` whenever `-getStatus` finds an
+  instance already running.** Still true on `origin/main`. Every other
+  workflow script opens by calling it, including `GenerateModel.bat` and
+  `ExportDeliverables.bat`, so there was no existing safe path to finish a
+  mesh reconstructed interactively in the GUI. `ModelToFinal.bat` exists for
+  exactly that case: it attaches via a bare `-getStatus` guard and never
+  calls that script. Corollary: do NOT route it through
+  `RealityScanCLI.run_batch_script`, which shuts down any running instance
+  before launching. [ON2026] (2026-08-04) ESTABLISHED
+
+- **With simplification on, the UNWRAP preset - not the texture preset -
+  decides the exported model's UV layout.** The exported model is the
+  simplified one and is unwrapped fresh, so a caller asking for 4 x 8192
+  silently got one 16384 page from `Unwrapping_Simplified.xml`
+  (`unwrapMaximalTexCount=1`, `unwrapMaxTexResolution=16384`). Equal texel
+  budget, but 16k exceeds the maximum texture size many engines accept.
+  Verified in the artifact after pairing the presets: four `*_diffuse.jpg`,
+  each exactly 8192x8192. [ON2026] (2026-08-04) ESTABLISHED
+
+- **The app log is not a durable record: `%LOCALAPPDATA%\Temp\RealityScan.log`
+  is truncated when an instance boots.** Watched it happen mid-session - a
+  log carrying every operation id and error code from a 14-hour run was
+  reduced to two "Loading Project completed" lines by the next boot.
+  Independently re-confirms [NA167 #16]. Copy the log immediately after any
+  failure, and keep codes in `testing/NA167_SESSION_NOTES.md` Section 3.
+  [ON2026] (2026-08-07) ESTABLISHED
+
+### Nav / orientation priors
+
+- **Every ON2026 flight-log variant carries yaw/pitch/roll accuracy of
+  exactly 90.0 deg on all 38,948 rows.** Column statistics over five logs
+  (`flight_log_zones.pre_rollfix.txt`, `rs_rollfix/`, `rs_zup/`,
+  `roll0_backup`, current): min = median = max = 90.0 in all three
+  orientation-accuracy columns, while the angle VALUES differ substantially
+  (yaw medians 101/101/167/101/161; pitch 93/93/105/93/75; roll
+  0/-50/2/-50/-176; the current log's altitude median is -0.505 against
+  +0.54 for the four earlier ones). EXPLAINED, not accidental: the generator
+  is `colmap_studio/pipeline/export_rs_flightlog.py`, `--ori-acc` default
+  90.0. Do NOT extend this into "the roll-fix and Z-up experiments are
+  therefore void" - that rider is refuted: the roll fix was settled by an
+  independent oracle (colmap_studio C-20260803-01, fabricated roll=0.00 was
+  wrong by ~93 deg), not by an alignment A/B. [ON2026] (2026-08-07) ESTABLISHED
+
+- **OPEN / OWNER DECISION - the ON2026 pitch column has two incompatible
+  readings and they disagree about where the degeneracy sits.** This entry
+  records the conflict deliberately rather than picking a side.
+  (a) RealityScan's own convention is staff-confirmed above (OndrejTrhan:
+  "Pitch = 0, image is looking down"), i.e. 0 = nadir, 90 = horizontal,
+  intrinsic Roll -> Pitch -> Yaw, YPR interpreted in NED.
+  (b) The exporter that WROTE the column implements the same 0 = nadir
+  scale (docstring lines 192-194) and was validated to 0.4 deg median
+  against RealityScan's solved rotations on 2,260 images
+  (colmap_studio C-20260803-01); it places the singularity at NEAR-VERTICAL
+  and measures exposure as **1.3%** of ON2026 within 5 deg of vertical.
+  (c) Measuring the same column for proximity to |pitch| = 90 instead gives
+  **24.9%** (9,697/38,948 rows; median 75.34, p05 55.18, p95 107.59), and
+  roll additionally wraps the branch cut, holding both -180.000 and
+  +180.000.
+  Same dataset, two bands. An earlier version of this entry asserted the
+  24.9% reading as established on the assumption of aerospace YPR; that
+  assumption is contradicted by (a). Do not quote either number as settled
+  until the reading is pinned. Note the exporter already implements the
+  obvious mitigation (`ypr_acc = min(180, max(ori_acc, MEASURED/sin_p))`),
+  and that the standing gate above still applies: pin Euler order and
+  camera mount in `FlightLogParams.xml` before any further orientation cell.
+  [ON2026] (2026-08-07) OPEN
+
+- **The 0.020 position accuracy in the ON2026 logs is a constant CLI
+  default, not measured per-sample sigma** (`--pos-acc` default 0.02 in
+  `export_rs_flightlog.py`). Constant on all 38,948 rows across x/y/alt.
+  Do NOT infer "real per-sample sigma would be an improvement": 0.02 m
+  validated at 6.3 mm median prior residual and WON the accuracy matrix
+  (colmap_studio C-20260730-05/09, 2,262 images: 0.02 m / 90 deg is the
+  production winner; tight 10 deg orientation priors were actively worse).
+  Scope matters - ON2026 priors are COLMAP-derived, the NA156 line's are
+  nav-derived, and `PRIORS_DISTORTION_TEST_PLAN.md` records tight position
+  priors FRAGMENTING components on that line. [ON2026] (2026-08-07) ESTABLISHED
+
+- **`modules/flight_logs.py` cannot express a local-Euclidean frame - it
+  only ever emits UTM - and the shared `FlightLogParams.xml` now carries a
+  local-frame value, so one template serves two mutually exclusive campaign
+  frames with no guard.** `write_flight_log_params` rewrites only
+  `CoordinateSystemFlightLog` / `CoordinateSystemFlightLogType`, always as
+  `+proj=utm +zone=N[ +south]` / `epsg:326xx|327xx` (byte-identical
+  base -> origin/main). Provenance: `M:\ON2026 COLMAP processing\rs\FlightLogParamsLocal.xml`
+  is byte-identical to `origin/main:.../Metadata/FlightLogParams.xml` - the
+  hand-made local file was promoted into git in `902fcf7` (2026-08-03).
+  Meanwhile `testing/ab_orientation_priors.py:115` calls
+  `write_flight_log_params` on that same geocent template and converts it
+  BACK to UTM. The function also leaves every accuracy-governing key
+  untouched (`ifUsePosAcc`, `ifUseOriAcc`, `ifCSopt`, `ifuuInh`,
+  `ifuuInhEn`); for `ifKGrp`/`ifKmode` see the established entry above.
+  [ON2026] (2026-08-07) OPEN
+
+### Defect in this session's own work
+
+- **`ModelExportParamsObj_Metric.xml` shipped as dead config.** The metric
+  (scale 1.0) OBJ export that fixed the 100x Unreal-preset scale was
+  performed as a MANUAL one-off `-exportSelectedModel` invocation; the code
+  path was never changed. `ModelToFinal.bat` hardcodes
+  `ModelExportParamsObj.xml` (scale 100.0) for `export_format=obj` and its
+  parser accepts only `obj|fbx|glb|none`, so no invocation could reach the
+  metric file and the next automated obj run would reproduce the defect.
+  Caught by adversarial review of the rebase, not by the run. Wired as
+  `objmetric` in the follow-up commit. Lesson: a fix demonstrated by hand
+  is not a fix until a code path reaches it. [ON2026] (2026-08-07) ESTABLISHED

@@ -331,7 +331,7 @@ process ids, not CLI-specific. Treat them as build-specific.
 |------|---------|-------|
 | `0x5076` | Envelope for `Processing failed: Operation aborted.` **and** `Operation warning.` | **Not specific.** Emitted for aborted reconstruction, aborted feature detection, aborted Correcting Image Colors, and the flight-log warning alike. Always printed twice in a row. Never diagnose from this alone. |
 | `err:18002` (+ `0x820000FF`) | Flight log references images not in the scene | "The file contains 1350 images which are not in the current scene." The trajectory still imports fine. Warning-class. |
-| `err:7185` (+ `CPP\0x5555`, `CPP\0x5555\0x557a`) | "Provided arguments don't match any overload for command '\<cmd\>'" | In practice this means **a path with spaces got split into several arguments** — not that the command is wrong. See finding 35. |
+| `err:7185` (+ `CPP\0x5555`, `CPP\0x5555\0x557a`) | "Provided arguments don't match any overload for command '\<cmd\>'" | In practice this means **a path with spaces got split into several arguments** — not that the command is wrong. See the `[ON2026]` entries in the repo-root `FINDINGS.md`. |
 | `err:7155` | "Parsing setting key=value '\<key\>' failed" | Settings passed as `key=value` through .bat args; use `key:value`. Finding 15. |
 | `err:5605` | Rename failed — component selection was cleared | `-mergeComponents` async re-reconstruction races the next command. |
 | `0x82000060` | Command does not exist | `-selectAllComponents` is not a 2.2 command. Finding 13. |
@@ -347,7 +347,8 @@ process ids, not CLI-specific. Treat them as build-specific.
 - **Sticky while idle, cleared when the next operation starts** — four
   consecutive idle polls kept a dead error, which vanished the instant the
   retried save began. Gate on `lastError != 0` **AND** `rev:` advancing,
-  never on `lastError` alone (findings 33, 36).
+  never on `lastError` alone (see the `[ON2026]` CLI-behavior entries in
+  the repo-root `FINDINGS.md`).
 
 ### 3.4 Exit codes
 
