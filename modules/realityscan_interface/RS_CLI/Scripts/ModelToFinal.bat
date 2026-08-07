@@ -18,7 +18,9 @@ setlocal EnableDelayedExpansion
 ::   %4 texture preset       highpoly|8k|4x8k|16k|fixed100|fixed50
 ::                           (default highpoly)
 ::   %5 simplify             true/false (default false)
-::   %6 export format        obj|fbx|glb|none (default obj)
+::   %6 export format        obj|objmetric|fbx|glb|none (default obj)
+::                           obj = stock preset, scale 100 (Unreal);
+::                           objmetric = same OBJ at true scale 1.0
 ::   %7 cull polygons        true/false (default false)
 ::   %8 correct colors       true/false (default false)
 ::   %9 source model name    model to start from; omit to use the model that
@@ -29,15 +31,31 @@ setlocal EnableDelayedExpansion
 :: "-newScene -deleteAutosave" when it finds an instance already running,
 :: which would destroy the live scene this workflow exists to finish.
 
+:: Record whether the CALLER set RS_INSTANCE, before SetVariables.bat does.
+:: SetVariables.bat runs "if not defined RS_INSTANCE set RS_INSTANCE=RS1"
+:: unconditionally, so after that call RS_INSTANCE is ALWAYS defined and any
+:: later "if defined RS_INSTANCE" test is dead code.
+set "RS_INSTANCE_FROM_CALLER="
+if defined RS_INSTANCE set "RS_INSTANCE_FROM_CALLER=1"
+
 echo Reading default variables
 call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
 set "MetadataDir=%Metadata%"
 
 :: ---------------------------------------------------------------- args
-if not "%~1" == "" ( set "RS_TARGET=%~1" ) else ( if defined RS_INSTANCE ( set "RS_TARGET=%RS_INSTANCE%" ) else ( set "RS_TARGET=*" ) )
+if not "%~1" == "" ( set "RS_TARGET=%~1" ) else ( if defined RS_INSTANCE_FROM_CALLER ( set "RS_TARGET=%RS_INSTANCE%" ) else ( set "RS_TARGET=*" ) )
 set "export_dir=%~2"
 if "%~3" == "" ( set "final_name=Final" ) else ( set "final_name=%~3" )
+:: DIVERGENCE, UNRESOLVED (2026-08-07): this default is "highpoly"
+:: (2 x 16K texture + 1 x 16K simplified unwrap), which is precisely the
+:: pair GenerateModel.bat records as retired - "8K cap (owner 2026-07-31):
+:: both texture passes limited to 4 x 8K". The ON2026 run passed 4x8k
+:: explicitly and so matched the cap; only this DEFAULT regresses it.
+:: Left as-is pending an owner call, because changing it silently would
+:: change every future deliverable's texture budget. Same open question
+:: applies to SimplifyAutomationParams.xml (70% per pass, 0.70^4 ~ 24%)
+:: below vs GenerateModel.bat's SimplifySmooth_80per (0.80^4 ~ 41%).
 if "%~4" == "" ( set "tex_preset=highpoly" ) else ( set "tex_preset=%~4" )
 if "%~5" == "" ( set "simplify_model=false" ) else ( set "simplify_model=%~5" )
 if "%~6" == "" ( set "export_format=obj" ) else ( set "export_format=%~6" )
@@ -77,6 +95,12 @@ if not exist "%UnwrapSimplified%" goto :noUnwrapParams
 set "ExportExt="
 set "ExportParams="
 if /i "%export_format%" == "obj" ( set "ExportExt=obj" & set "ExportParams=%MetadataDir%\ModelExportParamsObj.xml" )
+:: objmetric = the same OBJ at TRUE SCALE. Every stock export preset scales
+:: up (100 for the Unreal presets, 10 for GLB), which is right for engines
+:: and wrong for survey/GIS work: an ON2026 export at scale 100 put vertex 0
+:: at -179.90 1101.54 43.67 where the local frame is metres. Without this
+:: branch ModelExportParamsObj_Metric.xml is unreachable dead config.
+if /i "%export_format%" == "objmetric" ( set "ExportExt=obj" & set "ExportParams=%MetadataDir%\ModelExportParamsObj_Metric.xml" )
 if /i "%export_format%" == "fbx" ( set "ExportExt=fbx" & set "ExportParams=%MetadataDir%\ModelExportParamsFBX_U1V1_material.xml" )
 if /i "%export_format%" == "glb" ( set "ExportExt=glb" & set "ExportParams=%MetadataDir%\ModelExportParamsGLB.xml" )
 if /i "%export_format%" == "none" ( set "ExportExt=" & set "ExportParams=" & goto :formatOk )
@@ -181,6 +205,12 @@ call :run -unwrap "%UnwrapSimplified%" || goto :fail
 
 echo Reprojecting texture onto simplified model
 call :run -reprojectTexture "HighPolyTextured" "Simplified" "%ReprojParams%" || goto :fail
+:: Re-select the reprojection TARGET explicitly before renaming. -reproject-
+:: Texture takes source and result as arguments and does not document which
+:: of the two it leaves selected, so renaming "whatever is selected" could
+:: rename the source. GenerateModel.bat does the same re-select for the same
+:: reason.
+call :run -selectModel "Simplified" || goto :fail
 call :run -renameSelectedModel "SimplifiedTextured" || goto :fail
 set "final_source=SimplifiedTextured"
 
@@ -234,7 +264,7 @@ echo ERROR: unwrap parameter file not found: %UnwrapSimplified%
 exit /b 1
 
 :badFormat
-echo ERROR: unknown export format "%export_format%" - use obj^|fbx^|glb^|none
+echo ERROR: unknown export format "%export_format%" - use obj^|objmetric^|fbx^|glb^|none
 exit /b 1
 
 :noExportDir
@@ -279,8 +309,13 @@ ping -n 3 127.0.0.1 >nul
 ping -n 2 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_TARGET%
 
-:: Marker-file gate (only exists for instances booted by startRealityScan.bat)
-if not defined RS_INSTANCE goto :statusGate
+:: Marker-file gate. Only meaningful when we are actually talking to the
+:: instance that owns that marker file. Attached to a foreign instance via
+:: "*", errors_RS1.txt belongs to somebody else and is never cleared by us
+:: (RealityScanCLI._clear_markers only runs inside run_batch_script, which
+:: this script deliberately does not use), so a stale non-empty file would
+:: abort our FIRST operation on an unrelated error.
+if not "%RS_TARGET%" == "%RS_INSTANCE%" goto :statusGate
 if not exist "%ErrorPath%\errors_%RS_INSTANCE%.txt" goto :statusGate
 for %%A in ("%ErrorPath%\errors_%RS_INSTANCE%.txt") do if %%~zA GTR 0 goto :runMarkerErr
 
