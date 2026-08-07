@@ -191,24 +191,13 @@ def test_attach_never_boots_shuts_down_or_clears_markers(
                                    str(tmp_path / 'logs'), instance=TARGET)
 
     assert result.success and result.return_code == 0
-    # FOREIGN markers untouched, byte for byte.
-    for name in (f'errors_{TARGET}.txt', f'progress_{TARGET}.txt',
-                 f'results_{TARGET}.log'):
-        path = os.path.join(ERRORS_DIR, name)
-        assert os.path.isfile(path), f'foreign marker deleted: {path}'
+    # FOREIGN attach: EVERY pre-existing marker survives byte-identical -
+    # the target's belong to its booter, and our OWN files are simply not
+    # involved when the target is not our instance.
+    for path, text in target_markers.items():
+        assert os.path.isfile(path), f'marker was deleted: {path}'
         with open(path, 'r', encoding='utf-8') as f:
-            assert f.read() == target_markers[path], \
-                f'foreign marker modified: {path}'
-    # OWN ErrorWriter markers CLEARED (B9 own-instance exception) ...
-    for name in (f'errors_{OWN_INSTANCE}.txt', f'results_{OWN_INSTANCE}.log'):
-        path = os.path.join(ERRORS_DIR, name)
-        assert not os.path.isfile(path) or not open(path).read(), \
-            f'own stale marker survived: {path}'
-    # ... but OWN progress is NEVER touched (held open by a live instance).
-    own_progress = os.path.join(ERRORS_DIR, f'progress_{OWN_INSTANCE}.txt')
-    assert os.path.isfile(own_progress)
-    with open(own_progress, 'r', encoding='utf-8') as f:
-        assert f.read() == 'own 12%'
+            assert f.read() == text, f'marker was modified: {path}'
     # TARGET results marker is surfaced informationally, never cleared.
     assert result.completed_processes == ['earlier op OK']
     # The executable saw status probes only - no boot, no reset, no quit.
@@ -220,6 +209,41 @@ def test_attach_never_boots_shuts_down_or_clears_markers(
     logs = os.listdir(tmp_path / 'logs')
     assert any(name.startswith('output_') for name in logs)
     assert any(name.startswith('resources_') for name in logs)
+
+
+def test_own_instance_attach_clears_stale_errorwriter_markers(
+        tmp_path, target_markers):
+    """B9 own-instance exception (2026-08-07): attaching to the instance
+    THIS checkout owns clears OUR stale ErrorWriter files (they tripped
+    ModelToFinal's own-marker gate on the first delegated op) - but never
+    progress_<own>, which a live instance holds open via -writeProgress,
+    and never anything belonging to other instances."""
+    exe, calls = _stub_exe(tmp_path)
+    script, record = _stub_workflow(tmp_path)
+    cli = _cli(exe)
+
+    result = cli.run_attach_script(script, ['D:/out', 'Final'],
+                                   str(tmp_path / 'logs'),
+                                   instance=OWN_INSTANCE)
+
+    assert result.success
+    # OWN ErrorWriter markers cleared (removed or truncated) ...
+    for name in (f'errors_{OWN_INSTANCE}.txt', f'results_{OWN_INSTANCE}.log'):
+        path = os.path.join(ERRORS_DIR, name)
+        assert not os.path.isfile(path) or not open(path).read(), \
+            f'own stale marker survived an own-instance attach: {path}'
+    # ... OWN progress untouched ...
+    own_progress = os.path.join(ERRORS_DIR, f'progress_{OWN_INSTANCE}.txt')
+    assert os.path.isfile(own_progress)
+    with open(own_progress, 'r', encoding='utf-8') as f:
+        assert f.read() == 'own 12%'
+    # ... and OTHER instances' markers survive byte-identical.
+    for name in (f'errors_{TARGET}.txt', f'progress_{TARGET}.txt',
+                 f'results_{TARGET}.log'):
+        path = os.path.join(ERRORS_DIR, name)
+        assert os.path.isfile(path)
+        with open(path, 'r', encoding='utf-8') as f:
+            assert f.read() == target_markers[path]
 
 
 # ------------------------------------------------- instance as first arg (c)
