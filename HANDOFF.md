@@ -4,7 +4,9 @@
 
 Different dataset and different lineage from the H2024 line below: ON2026
 RH0042/RH0043 Voyis stereo, 38,948 images, `M:\ON2026 COLMAP processing\rs\`.
-Nothing running. Rebased onto `9fcd876` (origin/main); pushed after the 2026-08-07 clean-sweep.
+Nothing running. Rebased onto `9fcd876` (origin/main); clean-sweep
+complete; **push PENDING** (blocked by this environment's permission
+classifier - the owner runs `git push origin main`).
 
 **⚠ STRANDED COMMITS ON THE OTHER MACHINE (blocking doc work here).** A
 Honeybadger-side session committed `085b89c` (a `docs/rs-reference/`
