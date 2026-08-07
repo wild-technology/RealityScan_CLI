@@ -1,0 +1,23 @@
+<Configuration id="{93DBD041-AE1C-4631-89BC-D9430FCED843}">
+  <entry key="ifuuInhEn" value="true"/>
+  <entry key="ifCSopt" value="1"/>
+  <entry key="gpsLogFileFormat" value="{B438A617-2434-5A24-C1B7-58980F28345A}"/>
+  <!-- Local-Euclidean template (COLMAP local:1 priors; validated on
+       ON2026, FINDINGS C-20260730-05). Provenance: this filename matches
+       the hand-made original on M: for the ON2026 campaign; commit
+       902fcf7 briefly promoted that content over the shared UTM template
+       and a UTM 57L import went through this frame silently (2026-08-07
+       incident: 3/32 cameras registered, exit code 0), so the two frames
+       now live in separate files. UTM cruises use FlightLogParams.xml;
+       write_flight_log_params(frame='local_euclidean') consumes this
+       one. -->
+  <entry key="CoordinateSystemFlightLog" value="+proj=geocent +ellps=WGS84 +no_defs"/>
+  <entry key="CoordinateSystemFlightLogType" value="local:1 - Euclidean"/>
+  <entry key="ifKGrp" value="2"/>
+  <entry key="csvFLIgn" value="true"/>
+  <entry key="ifuuInh" value="0"/>
+  <entry key="ifKmode" value="0x0"/>
+  <entry key="csvFLSep" value="1"/>
+  <entry key="ifUsePosAcc" value="true"/>
+  <entry key="ifUseOriAcc" value="true"/>
+</Configuration>

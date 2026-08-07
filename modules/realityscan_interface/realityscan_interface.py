@@ -7,7 +7,8 @@ from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
 from .. import camera_registry
 from .. import component_manifest
-from ..flight_logs import (find_flight_log, utm_zone_from_flight_log_name,
+from ..flight_logs import (ensure_frame_match, find_flight_log,
+                           utm_zone_from_flight_log_name,
                            write_flight_log_params)
 from .realityscan_cli import RealityScanCLI, METADATA_DIR, set_project_save_env
 
@@ -188,19 +189,27 @@ class RealityScanAlignment(RSModule):
         # regenerate it from the zone tag in the flight log's own filename
         # (flight_log_53N_UTM.txt -> EPSG:32653) whenever possible.
         if flight_log_path and flight_log_params_path:
+            # Frame guard first - never import silently in the wrong frame
+            # (2026-08-07 incident: the shared template carried ON2026's
+            # local frame and poisoned a UTM 57L import; 3/32 registered,
+            # exit code 0). Raises ValueError when the filename's implied
+            # frame contradicts the template's declared frame; the write
+            # below re-checks the same invariant as defense in depth.
+            ensure_frame_match(flight_log_path, flight_log_params_path)
             zone_band = utm_zone_from_flight_log_name(flight_log_path)
             if zone_band is not None:
                 zone, band = zone_band
                 generated = os.path.join(log_dir, f'FlightLogParams_{zone}{band}.xml')
                 flight_log_params_path = write_flight_log_params(
-                    flight_log_params_path, generated, zone, band)
+                    flight_log_params_path, generated, zone, band, frame='utm')
                 self.logger.info(f'Flight log CRS: UTM zone {zone}{band} '
                                  f'(params: {generated})')
             else:
                 self.logger.warning(
                     f'Flight log "{os.path.basename(flight_log_path)}" carries no '
-                    'UTM zone tag - using the params template as-is. Verify its '
-                    'coordinate system matches this cruise!')
+                    'UTM zone tag - LOCAL-frame campaign; using the params '
+                    'template as-is (frame checked: it does not declare UTM). '
+                    'Verify this cruise really uses local:1 priors!')
 
         files_before = set(os.listdir(output_folder))
 

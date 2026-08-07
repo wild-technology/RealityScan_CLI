@@ -75,6 +75,7 @@ RESULTS_LAYOUT = [
 # an unrecognised filename prefix matches a letter. The PIPELINE's camera
 # truth stays in modules/camera_registry.py; the portal only identifies,
 # asks, and records.
+# superseded-by modules/cameras.json cameras/families - pending migration step (c+)
 OFFICIAL_CAMERAS = {
     "Z": "Zeuss 24mm rectilinear zoom (Standard Science Camera)",
     "C": "Cinema (fisheye; 16mm) - Widefield Camera Array",

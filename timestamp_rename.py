@@ -3,6 +3,11 @@
 Script to rename image files with timestamp-first format and validate JPEG integrity.
 Processes files matching pattern: cam*_YYYYMMDDTHHMMSSZ.jpg
 Renames to: YYYYMMDDTHHMMSSZ_cam*.jpg
+
+Formerly masking.py (renamed 2026-08-07): the file never did any masking -
+it has always been this timestamp-rename + JPEG-integrity pass. The stored
+settings section keeps the legacy 'masking' value as a seed so the
+last-used directory survives the rename.
 """
 
 import os
@@ -110,7 +115,9 @@ def process_directory(directory, dry_run=False):
         try:
             old_path.rename(new_path)
             renamed_files.append(new_path)
-            print(f"  ✓ {new_name}")
+            # ASCII-only console output: U+2713 raises UnicodeEncodeError
+            # on cp1252 Windows consoles (trap registry).
+            print(f"  OK {new_name}")
         except Exception as e:
             print(f"  ERROR renaming {old_path.name}: {e}")
 
@@ -122,7 +129,7 @@ def process_directory(directory, dry_run=False):
     for filepath in renamed_files:
         if validate_jpeg(filepath):
             valid_count += 1
-            print(f"  ✓ {filepath.name}")
+            print(f"  OK {filepath.name}")
         else:
             invalid_count += 1
 
@@ -156,9 +163,15 @@ def main():
     settings = SettingsStore()
     if args.directory is not None:
         directory = args.directory
-        settings.set("masking", "directory", directory)
+        settings.set("timestamp_rename", "directory", directory)
     else:
-        directory = settings.prompt("masking", "directory",
+        # Seed the renamed section from the pre-rename 'masking' section so
+        # the stored default survives the script's 2026-08-07 rename.
+        if settings.get("timestamp_rename", "directory") is None:
+            legacy = settings.get("masking", "directory")
+            if legacy is not None:
+                settings.set("timestamp_rename", "directory", legacy)
+        directory = settings.prompt("timestamp_rename", "directory",
                                     "Directory containing image files", ".")
 
     process_directory(directory, dry_run=args.dry_run)

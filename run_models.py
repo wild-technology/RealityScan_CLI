@@ -14,8 +14,21 @@ SaveProjectCopy.bat - per-component dated copies stay deferred
 Resumable: components already reported successful in models_report.json are
 skipped.
 
+Direct mode (--project) drives GenerateModel.bat against an explicit
+on-disk .rsproj instead of a merge-report workspace - for scenes built
+outside the merge pipeline (GUI reconstructions, probes, re-models).
+GenerateModel.bat's contract: %1 scene path, %2 component name (empty =
+maximal component), %3 large-triangle threshold (default 30). Direct mode
+BYPASSES the scale gate (there is no merge report to gate on) - the
+operator vouches for the scene. RS_PROJECTS_DIR/RS_PROJECT_LABEL are left
+untouched in direct mode, so an operator who exports them gets the .bat's
+dated-copy saves; workspace mode still defers dated copies to its single
+end-of-run copy.
+
 Usage:
     py -3.13 run_models.py --workspace F:/na156_h2024_v2 [--force]
+    py -3.13 run_models.py --project D:/scene/Assembly.rsproj \
+                           [--component zone_1_c0] [--large_tri_threshold 30]
 """
 from __future__ import annotations
 
@@ -34,9 +47,24 @@ sys.path.insert(0, str(REPO))
 from module_base.settings_store import SettingsStore, realityscan_env  # noqa: E402
 from modules import scale_oracle  # noqa: E402
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa: E402
-from wildscan.workspace import Workspace  # noqa: E402
+from modules.workspace_census import Workspace  # noqa: E402
 
 MIN_FREE_GB = 50.0
+
+
+def make_cli(logger_name: str = 'models') -> RealityScanCLI:
+    """Machine constants from the settings store's 'realityscan' section -
+    prompt-with-default on a TTY, silent stored/fallback when unattended
+    (SettingsStore.ask). Values already in the environment win, exactly
+    as the old setdefault calls allowed: wildscan and other callers pass
+    explicit RS_* values, and those are never prompted for or demoted."""
+    settings = SettingsStore()
+    if not os.environ.get('RS_INSTANCE'):
+        settings.ask('realityscan', 'instance_name', None, 'RS1')
+    if not os.environ.get('RS_CACHE_DIR'):
+        settings.ask('realityscan', 'cache_dir', None, '')
+    os.environ.update(realityscan_env(settings))
+    return RealityScanCLI(logging.getLogger(logger_name), settings)
 
 
 def resolve_scale(key: str, comp: dict, report: dict,
@@ -65,12 +93,92 @@ def resolve_scale(key: str, comp: dict, report: dict,
         None if stats is None else stats['median'])
 
 
+def run_direct(args: argparse.Namespace) -> int:
+    """Direct mode: GenerateModel.bat against an explicit .rsproj.
+
+    No merge report exists, so the scale gate CANNOT run - stated loudly
+    rather than silently skipped. One component per invocation (the .bat
+    models one component per boot); the outcome is appended to
+    models_report.json beside the project so repeat invocations build the
+    same evidence trail workspace mode keeps."""
+    project = Path(args.project).resolve()
+    logging.basicConfig(
+        level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
+        handlers=[logging.FileHandler(project.parent / 'models_driver.log',
+                                      encoding='utf-8'),
+                  logging.StreamHandler(sys.stdout)])
+    logger = logging.getLogger('run_models')
+    if not project.is_file():
+        logger.error('project not found: %s', project)
+        return 1
+    if shutil.disk_usage(project.parent).free / 1024**3 < MIN_FREE_GB:
+        logger.error('ABORT: below the %.0f GB floor', MIN_FREE_GB)
+        return 1
+    logger.warning('direct mode: no merge report, so the metric-scale gate '
+                   'does NOT run - the operator vouches for %s', project.name)
+
+    cli = make_cli()
+    logs_dir = str(project.parent / 'logs')
+    name = args.component or 'maximal'
+    bat_args = [str(project), args.component]
+    if args.large_tri_threshold is not None:
+        bat_args.append(str(args.large_tri_threshold))
+
+    logger.info('=== model %s in %s ===', name, project.name)
+    started = time.time()
+    res = cli.run_batch_script('GenerateModel.bat', bat_args, logs_dir)
+    entry = {'mode': 'direct', 'project': str(project), 'component': name,
+             'success': res.success, 'errors': res.errors,
+             'duration_min': round((time.time() - started) / 60, 1),
+             'finished': time.strftime('%Y-%m-%d %H:%M:%S')}
+
+    report_path = project.parent / 'models_report.json'
+    out: dict = {'models': []}
+    if report_path.is_file():
+        try:
+            with open(report_path, encoding='utf-8') as fh:
+                out = json.load(fh)
+        except ValueError:
+            logger.warning('unreadable %s - starting a fresh report',
+                           report_path)
+            out = {'models': []}
+    out.setdefault('models', []).append(entry)
+    with open(report_path, 'w', encoding='utf-8') as fh:
+        json.dump(out, fh, indent=2)
+    logger.info('model %s: success=%s in %.1f min - report: %s',
+                name, res.success, entry['duration_min'], report_path)
+    return 0 if res.success else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--workspace', required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--workspace',
+                      help='workspace root carrying a merge report '
+                           '(default mode: scale-gated, smallest-first, '
+                           'resumable)')
+    mode.add_argument('--project',
+                      help='direct mode: explicit on-disk .rsproj for '
+                           'GenerateModel.bat - no merge report needed, '
+                           'scale gate BYPASSED')
+    parser.add_argument('--component', default='',
+                        help="direct mode: component name to model "
+                             "(default '' = maximal component, "
+                             "GenerateModel.bat's own fallback)")
+    parser.add_argument('--large_tri_threshold', type=int, default=None,
+                        help='direct mode: large-triangle threshold, '
+                             'GenerateModel.bat arg 3 (its default: 30)')
     parser.add_argument('--force', action='store_true',
-                        help='re-model components already reported successful')
+                        help='workspace mode: re-model components already '
+                             'reported successful')
     args = parser.parse_args()
+
+    if not args.project and (args.component
+                             or args.large_tri_threshold is not None):
+        parser.error('--component/--large_tri_threshold only apply to '
+                     '--project (direct mode)')
+    if args.project:
+        return run_direct(args)
 
     ws = Workspace(args.workspace)
     logging.basicConfig(
@@ -114,20 +222,9 @@ def main() -> int:
               for c in rec.get('final_components', [])]
     finals.sort(key=lambda kc: kc[1].get('camera_count') or 0)
 
-    # Machine constants from the settings store's 'realityscan' section -
-    # prompt-with-default on a TTY, silent stored/fallback when unattended
-    # (SettingsStore.ask). Values already in the environment win, exactly
-    # as the old setdefault calls allowed: wildscan and other callers pass
-    # explicit RS_* values, and those are never prompted for or demoted.
-    settings = SettingsStore()
-    if not os.environ.get('RS_INSTANCE'):
-        settings.ask('realityscan', 'instance_name', None, 'RS1')
-    if not os.environ.get('RS_CACHE_DIR'):
-        settings.ask('realityscan', 'cache_dir', None, '')
-    os.environ.update(realityscan_env(settings))
+    cli = make_cli()
     os.environ.pop('RS_PROJECTS_DIR', None)   # dated copies deferred
     os.environ.pop('RS_PROJECT_LABEL', None)
-    cli = RealityScanCLI(logging.getLogger('models'), settings)
     logs_dir = str(ws.root / 'logs')
 
     for key, comp in finals:

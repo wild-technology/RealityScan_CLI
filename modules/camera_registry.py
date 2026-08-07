@@ -1,4 +1,13 @@
-"""Single source of truth for the four physical rig cameras.
+"""Single source of truth for the rig cameras - loaded from cameras.json.
+
+The registry DATA now lives in modules/cameras.json (owner per-camera /
+per-rig settings, including the DATA-ONLY rig section for ON2026 Voyis).
+This module parses that file at import time and rebuilds the exact
+structures the pipeline has always consumed; every public signature is
+unchanged. A one-release parity brace (_assert_parity below) re-asserts
+the retired hardcoded tables against the JSON on every import, so a bad
+edit to cameras.json is a hard ImportError naming the divergent key
+instead of a silent behavior change.
 
 The rig carries FOUR cameras that appear under era-specific filename
 families (owner-confirmed 2026-07-23):
@@ -14,24 +23,21 @@ different real intrinsics. Groups matter because the WCA JPGs are
 EXIF-identical (Z CAM E2-F6, no focal tag) -- without the XMP groups
 RealityScan cannot separate the cameras at all.
 
-Mount geometry (pitch offsets, lever arms) is deliberately NOT here:
-it changes per cruise -- the same Cinema unit sits at 10 deg down under
-legacy camlower names and 45 deg under WCA names. Geometry therefore
-keys off family() below, not off the camera; see
-modules/georeference/georeference_images.py for the table.
+Mount geometry (pitch offsets, lever arms) keys off family() below, not
+off the camera: the same Cinema unit sits 10 deg down under legacy
+camlower names and 45 deg under WCA names. The runtime mount table is
+still modules/georeference/georeference_images.py MOUNTS (superseded-by
+cameras.json families[].mount, pending migration step (c+)).
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 from dataclasses import dataclass
 
-# WCA rendered-still naming: P231C0003_<ts>_edt.jpg (P=Port, C=Cinema,
-# S=Starboard; digits vary by cruise/sequence).
-_WCA_PREFIX = re.compile(r'^([pcs])\d+c', re.IGNORECASE)
-# Delimiter-bounded, so 'zeuss'/'herc' cannot be matched from the middle of
-# an otherwise-anchored WCA name. The previous unanchored `'herc' in name`
-# test ran FIRST and would have won against an anchored WCA prefix.
-_ZEUSS_TOKEN = re.compile(r'(^|[_\-.])(zeuss|herc)([_\-.]|$)', re.IGNORECASE)
+_CAMERAS_JSON = os.path.join(
+    os.path.dirname(os.path.realpath(__file__)), 'cameras.json')
 
 
 @dataclass(frozen=True)
@@ -46,31 +52,17 @@ class Camera:
                              # 'brown3' rectilinear)
 
 
-CAMERAS: dict[str, Camera] = {
-    'zeuss': Camera('zeuss', '1', 'Approximate', 23.0, '1', 'Approximate', 'brown3'),
-    # Port/Starboard fisheye: prior 'Approximate' throughout (owner
-    # directive 2026-07-25). Verified NOT to pin distortion at zero even
-    # with no coefficients supplied: cinema has always carried
-    # LensDistortionPrior='Approximate' with no coefficients and still
-    # solved k1 = -0.0524 across 2,204 cameras. 'Unknown' gave the solver
-    # no wiggle-room hint at all.
-    'port': Camera('port', '2', 'Approximate', 16.0, '2', 'Approximate', 'division'),
-    # Cinema focal 17.0 -> 16.0: owner-confirmed 2026-07-25 ("C=16"),
-    # corroborated by the solver's own median 16.37 mm 35-eq over 2,204
-    # cameras in the fresh run.
-    'cinema': Camera('cinema', '3', 'Approximate', 16.0, '3', 'Approximate', 'brown3'),
-    'starboard': Camera('starboard', '4', 'Approximate', 16.0, '4', 'Approximate', 'division'),
-}
+def _load_registry() -> dict:
+    with open(_CAMERAS_JSON, encoding='utf-8') as f:
+        return json.load(f)
 
-# Legacy cam* filename families map onto the same physical cameras.
-_LEGACY_PREFIXES = {
-    'cammid': 'port',
-    'camlower': 'cinema',
-    'camupper': 'starboard',
-}
 
-_WCA_LETTER = {'p': 'port', 'c': 'cinema', 's': 'starboard'}
+_REGISTRY = _load_registry()
 
+# Ordered MOST-SPECIFIC-FIRST straight from the JSON; the order is
+# load-bearing (anchored WCA prefixes, then anchored legacy prefixes, then
+# the delimiter-bounded zeuss/herc token - see family()).
+_FAMILIES: tuple[dict, ...] = tuple(_REGISTRY['families'])
 
 # Filename family -> physical camera. The family is the MOUNT identity and the
 # camera is the OPTICAL identity; they are deliberately separate because the
@@ -78,7 +70,46 @@ _WCA_LETTER = {'p': 'port', 'c': 'cinema', 's': 'starboard'}
 # (legacy camlower sits 10 deg down, while the same Cinema unit under WCA names
 # sits at 45 deg). Keying mount geometry off the CAMERA would silently change
 # every legacy dataset by tens of degrees.
-FAMILY_CAMERA: dict[str, str] = {
+FAMILY_CAMERA: dict[str, str] = {f['family']: f['camera'] for f in _FAMILIES}
+
+# Only cameras a family maps to become runtime Camera rows: the JSON also
+# carries provenance-UNVERIFIED entries (voyis_left/voyis_right) reachable
+# solely through its DATA-ONLY rigs section.
+CAMERAS: dict[str, Camera] = {
+    key: Camera(
+        key,
+        spec['calibration_group'],
+        spec['calibration_prior'],
+        spec['focal_length_35mm'],
+        spec['lens_distortion_group'],
+        spec['lens_distortion_prior'],
+        spec['distortion_model'],
+    )
+    for key, spec in _REGISTRY['cameras'].items()
+    if key in FAMILY_CAMERA.values()
+}
+
+# Compiled per-family matchers, in JSON order. IGNORECASE plus the lower()
+# in family() keeps the historical case behavior for any pattern.
+_MATCHERS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(f['pattern'], re.IGNORECASE), f['family']) for f in _FAMILIES
+)
+
+
+# ---------------------------------------------------------------------------
+# Parity brace (keep for ONE release, then delete with migration step (c+)):
+# the pre-JSON hardcoded tables, byte-for-byte. cameras.json must reproduce
+# them exactly; a mismatch aborts the import so no run can proceed on a
+# silently-diverged registry.
+
+_LEGACY_CAMERAS: dict[str, Camera] = {
+    'zeuss': Camera('zeuss', '1', 'Approximate', 23.0, '1', 'Approximate', 'brown3'),
+    'port': Camera('port', '2', 'Approximate', 16.0, '2', 'Approximate', 'division'),
+    'cinema': Camera('cinema', '3', 'Approximate', 16.0, '3', 'Approximate', 'brown3'),
+    'starboard': Camera('starboard', '4', 'Approximate', 16.0, '4', 'Approximate', 'division'),
+}
+
+_LEGACY_FAMILY_CAMERA: dict[str, str] = {
     'zeuss': 'zeuss',
     'legacy_camupper': 'starboard',
     'legacy_cammid': 'port',
@@ -88,20 +119,57 @@ FAMILY_CAMERA: dict[str, str] = {
     'wca_starboard': 'starboard',
 }
 
-_WCA_FAMILY = {'p': 'wca_port', 'c': 'wca_cinema', 's': 'wca_starboard'}
-
-_LEGACY_FAMILY = (
-    ('camupper', 'legacy_camupper'),
-    ('cammid', 'legacy_cammid'),
-    ('camlower', 'legacy_camlower'),
+# family -> regex source, in match order. The three per-letter WCA rows are
+# the old single `^([pcs])\d+c` prefix split per family; the legacy rows are
+# the old startswith() prefixes, anchored; zeuss is the old token unchanged.
+_LEGACY_FAMILY_PATTERNS: tuple[tuple[str, str], ...] = (
+    ('wca_port', r'^p\d+c'),
+    ('wca_cinema', r'^c\d+c'),
+    ('wca_starboard', r'^s\d+c'),
+    ('legacy_camupper', r'^camupper'),
+    ('legacy_cammid', r'^cammid'),
+    ('legacy_camlower', r'^camlower'),
+    ('zeuss', r'(^|[_\-.])(zeuss|herc)([_\-.]|$)'),
 )
+
+
+def _assert_parity() -> None:
+    """cameras.json must be a byte-for-byte port of the retired tables."""
+    for key in sorted(set(_LEGACY_CAMERAS) | set(CAMERAS)):
+        if CAMERAS.get(key) != _LEGACY_CAMERAS.get(key):
+            raise ImportError(
+                f'cameras.json parity: cameras[{key!r}] diverges from the '
+                f'legacy table: {CAMERAS.get(key)!r} != '
+                f'{_LEGACY_CAMERAS.get(key)!r}')
+    for key in sorted(set(_LEGACY_FAMILY_CAMERA) | set(FAMILY_CAMERA)):
+        if FAMILY_CAMERA.get(key) != _LEGACY_FAMILY_CAMERA.get(key):
+            raise ImportError(
+                f'cameras.json parity: families[{key!r}].camera diverges '
+                f'from the legacy table: {FAMILY_CAMERA.get(key)!r} != '
+                f'{_LEGACY_FAMILY_CAMERA.get(key)!r}')
+    got = tuple((f['family'], f['pattern']) for f in _FAMILIES)
+    if got != _LEGACY_FAMILY_PATTERNS:
+        for i, (have, want) in enumerate(zip(got, _LEGACY_FAMILY_PATTERNS)):
+            if have != want:
+                raise ImportError(
+                    f'cameras.json parity: families[{i}] pattern/order '
+                    f'diverges: {have!r} != {want!r}')
+        raise ImportError(
+            f'cameras.json parity: family count diverges: '
+            f'{len(got)} != {len(_LEGACY_FAMILY_PATTERNS)}')
+
+
+_assert_parity()
 
 
 def family(filename: str) -> str | None:
     """Mount family for an image filename, or None when unknown.
 
-    Matching is MOST SPECIFIC FIRST: anchored WCA prefix, then anchored legacy
-    prefix, then a delimiter-bounded zeuss/herc token.
+    Matching walks the JSON family list MOST SPECIFIC FIRST: anchored WCA
+    prefix, then anchored legacy prefix, then a delimiter-bounded
+    zeuss/herc token. The order is pinned by _assert_parity - an unanchored
+    `'herc' in name` test once ran FIRST and would have won against an
+    anchored WCA prefix.
 
     Callers needing per-cruise mount geometry must key off THIS, never off
     cruise digits. The literal 'p231c'/'c231c' tests that used to live in the
@@ -110,14 +178,9 @@ def family(filename: str) -> str | None:
     confidence, with one suppressed warning for the whole run.
     """
     name = filename.lower()
-    match = _WCA_PREFIX.match(name)
-    if match:
-        return _WCA_FAMILY[match.group(1).lower()]
-    for prefix, fam in _LEGACY_FAMILY:
-        if name.startswith(prefix):
+    for pattern, fam in _MATCHERS:
+        if pattern.search(name):
             return fam
-    if _ZEUSS_TOKEN.search(name):
-        return 'zeuss'
     return None
 
 

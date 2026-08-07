@@ -26,6 +26,7 @@ Run:  py -3.13 -m pytest testing/test_rig_mounts.py
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -199,6 +200,113 @@ def test_geoall_orientation_accuracy_is_the_measured_value():
     assert 'yaw_acc = 15.0' in src
     assert 'roll_acc = 15.0' in src
     assert 'yaw_acc = 3.0' not in src
+
+
+# ------------------------------------------------- cameras.json parity (belt)
+# camera_registry already hard-fails the import if cameras.json diverges from
+# its retained legacy tables (the brace); these tests are the belt on top -
+# they re-read the JSON independently and compare it against the RUNTIME
+# tables, including the MOUNTS copy that still lives in the georeference
+# module (migration step (c+) has not rewired it yet).
+
+CAMERAS_JSON = os.path.join(REPO_ROOT, 'modules', 'cameras.json')
+
+
+def _cameras_json() -> dict:
+    with open(CAMERAS_JSON, encoding='utf-8') as f:
+        return json.load(f)
+
+
+def test_cameras_json_families_match_runtime_family_camera():
+    data = _cameras_json()
+    parsed = {f['family']: f['camera'] for f in data['families']}
+    assert parsed == camera_registry.FAMILY_CAMERA
+
+
+def test_cameras_json_mounts_match_the_runtime_mounts_table():
+    """families[].mount must be a byte-for-byte port of MOUNTS, null
+    included (null means WARN, never zeros - the Starboard rule)."""
+    data = _cameras_json()
+    parsed = {}
+    for entry in data['families']:
+        mount = entry['mount']
+        if mount is not None:
+            mount = {k: v for k, v in mount.items() if not k.startswith('_')}
+        parsed[entry['family']] = mount
+    assert parsed == MOUNTS
+
+
+def test_cameras_json_cameras_match_runtime_registry():
+    data = _cameras_json()
+    for key, cam in camera_registry.CAMERAS.items():
+        spec = data['cameras'][key]
+        assert cam == camera_registry.Camera(
+            key,
+            spec['calibration_group'],
+            spec['calibration_prior'],
+            spec['focal_length_35mm'],
+            spec['lens_distortion_group'],
+            spec['lens_distortion_prior'],
+            spec['distortion_model'],
+        ), f'cameras.json diverges at cameras[{key!r}]'
+
+
+def test_cameras_json_patterns_resolve_like_the_runtime_matcher():
+    """The JSON regexes ARE the runtime matcher now; pin the behavior via
+    the sample filenames rather than trusting the wiring."""
+    data = _cameras_json()
+    import re as _re
+    matchers = [(_re.compile(f['pattern'], _re.IGNORECASE), f['family'])
+                for f in data['families']]
+
+    def json_family(name: str) -> str | None:
+        low = name.lower()
+        for pattern, fam in matchers:
+            if pattern.search(low):
+                return fam
+        return None
+
+    for fam, filename in SAMPLE.items():
+        assert json_family(filename) == fam == camera_registry.family(filename)
+    assert json_family('S231C0003_x.jpg') == 'wca_starboard'
+    assert json_family('unrecognised.jpg') is None
+
+
+def test_cameras_json_defaults_match_the_flight_log_literals():
+    """defaults port the accuracy literals still hardcoded in the two
+    flight-log writers; keep them equal until migration step (c+)."""
+    data = _cameras_json()
+    d = data['defaults']
+    pos, ori = d['position_accuracy_m'], d['orientation_accuracy_deg']
+    for path in (os.path.join(REPO_ROOT, 'modules', 'georeference',
+                              'georeference_images.py'),
+                 os.path.join(REPO_ROOT, 'geoall.py')):
+        src = open(path, encoding='utf-8').read()
+        assert f"pos_x_acc = {pos['x']}" in src, path
+        assert f"pos_y_acc = {pos['y']}" in src, path
+        assert f"alt_acc = {pos['alt']}" in src, path
+        assert f"yaw_acc = {ori['yaw']}" in src, path
+        assert f"roll_acc = {ori['roll']}" in src, path
+    # The unknown-mount pitch fallback, shared by both implementations
+    assert geoall.get_camera_pitch_accuracy('mystery_cam.jpg') == \
+        d['unknown_mount_pitch_accuracy_deg']
+
+
+def test_cameras_json_voyis_entries_are_data_only():
+    """The UNVERIFIED voyis eyes must stay out of the runtime CAMERAS table
+    until a family references them (RealityScan has no stereo-rig support;
+    the rigs section is DATA-ONLY)."""
+    data = _cameras_json()
+    assert data['cameras']['voyis_left']['calibration_group'] == '5'
+    assert data['cameras']['voyis_right']['calibration_group'] == '6'
+    assert 'voyis_left' not in camera_registry.CAMERAS
+    assert 'voyis_right' not in camera_registry.CAMERAS
+    rig = data['rigs']['on2026_voyis']
+    assert rig['frame'] == 'local_euclidean'
+    assert rig['axes'] is None, 'ENU-vs-NED is an OPEN owner decision'
+    assert rig['stereo_baseline_m'] is None, 'unmeasured on ON2026 - keep null'
+    assert (rig['position_accuracy_m'], rig['orientation_accuracy_deg']) == \
+        (0.02, 90.0)
 
 
 if __name__ == '__main__':

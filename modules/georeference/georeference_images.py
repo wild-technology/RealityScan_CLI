@@ -30,6 +30,7 @@ from module_base.parameter import Parameter
 #
 # These are the values in force on 2026-07-26, pinned by
 # testing/test_rig_mounts.py so the table cannot drift unnoticed.
+# superseded-by modules/cameras.json families[].mount - pending migration step (c+)
 MOUNTS: dict[str, dict | None] = {
     'zeuss': {'fwd': 0.5, 'lat': 0.0, 'down': 0.5, 'pitch': 30.0, 'p_acc': 30.0},
     'legacy_camupper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 70.0, 'p_acc': 10.0},
@@ -54,6 +55,7 @@ MOUNTS: dict[str, dict | None] = {
 
 class GeoreferenceImages(RSModule):
     TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+    # superseded-by modules/cameras.json families[].timestamp_formats - pending migration step (c+)
     WCA_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
     ZEUSS_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
     WCA2025_FILENAME_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
@@ -537,6 +539,7 @@ class GeoreferenceImages(RSModule):
         # component's scale further from truth (0.886 / 0.826). See
         # testing/PRIORS_DISTORTION_TEST_PLAN.md "bow 2x2".
         # An intermediate ladder (3/3/0.5 etc.) is untested - queued.
+        # superseded-by modules/cameras.json defaults - pending migration step (c+)
         pos_x_acc = 10.0
         pos_y_acc = 10.0
         alt_acc = 1.0

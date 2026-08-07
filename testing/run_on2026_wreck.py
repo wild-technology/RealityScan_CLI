@@ -4,8 +4,8 @@ with auto-model (mesh+texture per surviving component).
 Modeled on run_h2024_v2.py. Differences, deliberate:
 - Priors come from COLMAP (sparse/0, 99.2%% registered, 0.706 px true
   median), not USBL nav: 0.02 m position / 90 deg orientation accuracies
-  in a LOCAL Euclidean frame (FlightLogParams template swapped to local:1
-  for this campaign; validated FINDINGS C-20260730-05).
+  in a LOCAL Euclidean frame (FlightLogParamsLocal.xml, the dedicated
+  local:1 template; validated FINDINGS C-20260730-05).
 - Alignment params: ON2026_AlignmentParams.xml via RS_ALIGN_PARAMS
   (Brown3 + High sensitivity for rectified VOYIS pairs; the NA167
   template keeps Division/Ultra for its own rig).
@@ -132,9 +132,11 @@ def main():
     # rs\merged...). Final unification instead comes from a MONOLITH align
     # of all 38,948 unique images (no merge scene, no duplicate cameras)
     # with the zone-validated recipe: Division + georef-merge + High +
-    # 0.02 m / 90 deg priors in local:1 (RS_ALIGN_PARAMS + the local
-    # FlightLogParams template). Fallback if this OOMs: GenerateModel on
-    # the fused 29,302-cam core.
+    # 0.02 m / 90 deg priors in local:1 (RS_ALIGN_PARAMS +
+    # FlightLogParamsLocal.xml, the dedicated local-frame template - the
+    # shared FlightLogParams.xml is UTM-only since the 2026-08-07
+    # two-frames incident). Fallback if this OOMs: GenerateModel on the
+    # fused 29,302-cam core.
     # All RealityScan execution goes through RealityScanCLI (hard rule 1:
     # never add a second launch path) - it owns marker hygiene, locking,
     # progress tailing, stall warnings and verified shutdown.
@@ -164,7 +166,7 @@ def main():
             os.path.join(ROOT, "rs_images"),
             mono_dir,
             os.path.join(ROOT, "flight_log_zones.txt"),
-            os.path.join(metadata, "FlightLogParams.xml"),
+            os.path.join(metadata, "FlightLogParamsLocal.xml"),
             "on2026_wreck", "100",
         ])
     else:

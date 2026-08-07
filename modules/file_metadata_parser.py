@@ -11,6 +11,7 @@ from datetime import datetime
 #   • WCA/Zeuss style:  20250705T020039Z
 #   • Modified style:   20250705020039
 # Optionally preceded by camlower_, cammid_, or camupper_
+# superseded-by modules/cameras.json families (legacy prefixes + timestamp_formats) - pending migration step (c+)
 _TIMESTAMP_REGEX = re.compile(r'(?:camlower_|cammid_|camupper_)?(\d{8}T\d{6}Z|\d{14})')
 
 def parse_timestamp_str(filename: str) -> str:

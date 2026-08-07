@@ -43,10 +43,12 @@ import os
 SCHEMA_VERSION = 1
 MANIFEST_SUFFIX = '.manifest.json'
 
-# Image extensions the pipeline aligns (see RealityScanAlignment.__collect_images).
-_IMAGE_EXTENSIONS = ('.png', '.heif', '.jpg', '.jpeg')
-
-_POSE_TAG = 'xcr:Position'
+# The Python-side membership-capture helpers (scan_pose_sidecars,
+# members_from_sidecars, _resolve_image_basename, _POSE_TAG,
+# _IMAGE_EXTENSIONS) were removed 2026-08-07 (owner-authorised):
+# superseded by AlignZone.bat's in-session identity loop, verified
+# caller-free since the 2026-07-28 deprecation sweep (root FINDINGS.md).
+# They live in git history before this commit.
 
 
 def _now_iso() -> str:
@@ -129,88 +131,6 @@ def append_history(manifest_path: str, event: str) -> dict:
     write_manifest(manifest, manifest_path if manifest_path.endswith(MANIFEST_SUFFIX)
                    else manifest_path_for(manifest_path))
     return manifest
-
-
-# ----------------------------------------------------------------------
-# Membership capture from XMP sidecars
-# ----------------------------------------------------------------------
-
-def scan_pose_sidecars(image_root: str) -> dict[str, str]:
-    """Current pose-bearing sidecar state under image_root:
-    {absolute sidecar path: file content} for every .xmp that carries
-    xcr:Position. Read BEFORE camera_registry.sanitize_and_census, which
-    restores sidecars to calibration-only (and would erase membership)."""
-    state: dict[str, str] = {}
-    for root, _dirs, files in os.walk(image_root):
-        for filename in files:
-            if not filename.lower().endswith('.xmp'):
-                continue
-            path = os.path.join(root, filename)
-            try:
-                with open(path, encoding='utf-8', errors='replace') as f:
-                    content = f.read()
-            except OSError:
-                continue
-            if _POSE_TAG in content:
-                state[path] = content
-    return state
-
-
-def members_from_sidecars(after, before=()) -> list[str]:
-    """Image basenames of the component whose export produced the given
-    sidecar delta.
-
-    ``after``/``before`` are sidecar states around ONE export step: either
-    mappings {sidecar path: content} (as returned by scan_pose_sidecars -
-    only pose-bearing entries count) or plain iterables of sidecar paths
-    already known to be pose-bearing. The members are the sidecars that
-    GAINED xcr:Position content in the step. When the caller restores
-    sidecars to calibration-only between steps (sanitize_and_census),
-    ``before`` is simply empty.
-
-    Ordinal sidecars (00000.xmp, ...) carry no identity (finding B10) and
-    are skipped. Each member resolves to the actual image basename next
-    to the sidecar; a sidecar whose image cannot be found resolves to its
-    bare stem.
-    """
-    def pose_set(state) -> set[str]:
-        if isinstance(state, dict):
-            return {p for p, content in state.items()
-                    if content and _POSE_TAG in content}
-        return set(state)
-
-    gained = pose_set(after) - pose_set(before)
-    listing_cache: dict[str, dict[str, list[str]]] = {}
-    members = []
-    for sidecar in sorted(gained):
-        stem = os.path.splitext(os.path.basename(sidecar))[0]
-        if stem.isdigit():
-            continue  # ordinal sidecar - identity lost (B10)
-        members.append(_resolve_image_basename(sidecar, listing_cache))
-    return sorted(members)
-
-
-def _resolve_image_basename(sidecar_path: str,
-                            listing_cache: dict[str, dict[str, list[str]]]) -> str:
-    """Actual image basename for a <stem>.xmp sidecar (RealityScan writes
-    sidecars next to their images), matched case-insensitively by stem."""
-    directory = os.path.dirname(sidecar_path) or '.'
-    stem = os.path.splitext(os.path.basename(sidecar_path))[0]
-    by_stem = listing_cache.get(directory)
-    if by_stem is None:
-        by_stem = {}
-        try:
-            for entry in os.listdir(directory):
-                entry_stem, ext = os.path.splitext(entry)
-                if ext.lower() in _IMAGE_EXTENSIONS:
-                    by_stem.setdefault(entry_stem.lower(), []).append(entry)
-        except OSError:
-            pass
-        listing_cache[directory] = by_stem
-    matches = by_stem.get(stem.lower())
-    if matches:
-        return sorted(matches)[0]
-    return stem
 
 
 # ----------------------------------------------------------------------

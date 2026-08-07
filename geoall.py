@@ -45,6 +45,7 @@ DEFAULT_ROV_DATA_DIR = r"Z:\alldatatables"
 DEFAULT_OUTPUT_DIR = r"Z:\alldatatables"
 
 # Timestamp formats
+# superseded-by modules/cameras.json families[].timestamp_formats - pending migration step (c+)
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 WCA_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
 ZEUSS_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
@@ -67,6 +68,7 @@ def wrap360(angle_deg: float) -> float:
 
 def get_camera_type(filename: str) -> str:
     """Identify camera type from filename."""
+    # superseded-by modules/cameras.json families (display-only labels, no WCA branch) - pending migration step (c+)
     filename_lower = filename.lower()
 
     if filename_lower.startswith('camupper'):
@@ -720,6 +722,7 @@ def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: 
     if os.path.exists(flight_log_filename):
         os.remove(flight_log_filename)
 
+    # superseded-by modules/cameras.json defaults - pending migration step (c+)
     pos_x_acc = 10.0
     pos_y_acc = 10.0
     alt_acc = 1.0

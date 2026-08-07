@@ -64,7 +64,9 @@ Second-hand (from the missing fact base, quoted in HANDOFF):
 
 - Staff caution against over-masking (F-20260723-31) and Ultra detector
   sensitivity manufacturing noise points (F-20260723-26) — relevant to
-  `masking.py` and AlignmentParams choices on turbid imagery.
+  AlignmentParams choices and any future masking step on turbid imagery
+  (the repo has no masking step: `masking.py` was a misnamed timestamp
+  renamer, since renamed `timestamp_rename.py` 2026-08-07).
 - No stereo-rig support in RealityScan (staff-confirmed through
   Aug 2025, F-20260723-27): Voyis-rig scale must come from GCPs /
   distance constraints / locked XMP — consistent with this repo's

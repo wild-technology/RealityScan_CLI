@@ -131,14 +131,15 @@ def _calls(calls_log):
 
 @pytest.fixture
 def target_markers():
-    """Pre-existing marker files owned by the TARGET instance's booter.
-    Attach mode must leave them byte-identical.
+    """Pre-existing marker files, foreign AND own.
 
-    OWN_INSTANCE markers are pinned too: a regression that reinstated
-    run_batch_script's ``self._clear_markers()`` would clear the OWN
-    instance's files (not the target's) and slip past a target-only
-    check. Attach mode owns no markers at all - own-named ones belong to
-    whatever batch run wrote them."""
+    Foreign (TARGET) markers must survive byte-identical - they belong to
+    whoever booted that instance. OWN-instance semantics changed with the
+    B9 live gate (2026-08-07): when attaching to the instance this
+    checkout owns, stale ErrorWriter files (errors/results) are OURS and
+    tripped ModelToFinal's own-marker gate - attach now clears them like
+    run_batch_script would. progress_<own> must still survive: the live
+    instance holds it open via -writeProgress."""
     payloads = {
         os.path.join(ERRORS_DIR, f'errors_{TARGET}.txt'): 'stale-foreign-error',
         os.path.join(ERRORS_DIR, f'progress_{TARGET}.txt'): 'id:texture 41%',
@@ -190,12 +191,25 @@ def test_attach_never_boots_shuts_down_or_clears_markers(
                                    str(tmp_path / 'logs'), instance=TARGET)
 
     assert result.success and result.return_code == 0
-    # Foreign markers untouched, byte for byte.
-    for path, text in target_markers.items():
-        assert os.path.isfile(path), f'marker was deleted: {path}'
+    # FOREIGN markers untouched, byte for byte.
+    for name in (f'errors_{TARGET}.txt', f'progress_{TARGET}.txt',
+                 f'results_{TARGET}.log'):
+        path = os.path.join(ERRORS_DIR, name)
+        assert os.path.isfile(path), f'foreign marker deleted: {path}'
         with open(path, 'r', encoding='utf-8') as f:
-            assert f.read() == text, f'marker was modified: {path}'
-    # results marker is surfaced informationally, never cleared.
+            assert f.read() == target_markers[path], \
+                f'foreign marker modified: {path}'
+    # OWN ErrorWriter markers CLEARED (B9 own-instance exception) ...
+    for name in (f'errors_{OWN_INSTANCE}.txt', f'results_{OWN_INSTANCE}.log'):
+        path = os.path.join(ERRORS_DIR, name)
+        assert not os.path.isfile(path) or not open(path).read(), \
+            f'own stale marker survived: {path}'
+    # ... but OWN progress is NEVER touched (held open by a live instance).
+    own_progress = os.path.join(ERRORS_DIR, f'progress_{OWN_INSTANCE}.txt')
+    assert os.path.isfile(own_progress)
+    with open(own_progress, 'r', encoding='utf-8') as f:
+        assert f.read() == 'own 12%'
+    # TARGET results marker is surfaced informationally, never cleared.
     assert result.completed_processes == ['earlier op OK']
     # The executable saw status probes only - no boot, no reset, no quit.
     joined = '\n'.join(_calls(calls))

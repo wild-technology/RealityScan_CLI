@@ -702,12 +702,32 @@ class RealityScanCLI:
         self._acquire_lock(instance)
         start_time = time.monotonic()
         try:
-            # Difference (b): NO shutdown-before-start, NO marker clearing,
-            # and NO shutdown-after. The instance and its scene belong to
-            # whoever booted it. errors_<instance>.txt exists ONLY for
-            # instances booted by startRealityScan.bat - its absence is not
-            # success, and clearing a foreign instance's markers would
-            # corrupt the owner's error detection mid-run.
+            # Difference (b): NO shutdown-before-start, NO shutdown-after,
+            # and no FOREIGN marker clearing. The instance and its scene
+            # belong to whoever booted it. errors_<instance>.txt exists
+            # ONLY for instances booted by startRealityScan.bat - its
+            # absence is not success, and clearing a foreign instance's
+            # markers would corrupt the owner's error detection mid-run.
+            #
+            # OWN-instance exception (live gate B9, 2026-08-07): when
+            # attaching to the instance THIS checkout owns, a previous
+            # run's ErrorWriter entries are ours and legitimately stale -
+            # they tripped ModelToFinal's own-marker gate on the very
+            # first delegated op. Clear errors/results exactly as
+            # run_batch_script would. NEVER progress_<instance>.txt: the
+            # live instance holds it open via -writeProgress (deleting it
+            # raises WinError 32; truncation is pointless - the writer
+            # keeps appending).
+            if instance == self.instance_name:
+                for kind in ('errors', 'results'):
+                    path = self._marker(kind)
+                    if os.path.isfile(path):
+                        try:
+                            os.remove(path)
+                        except OSError:
+                            # a reader may hold it transiently; truncate
+                            with open(path, 'w', encoding='utf-8'):
+                                pass
 
             creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 

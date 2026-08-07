@@ -37,7 +37,9 @@ docs/MERGE_REWORK_RECOMMENDATIONS.md):
    union flight log + -update, saved + dated copy - then an
    EVALUATION READY report for the owner gate. Optional --auto_model
    runs GenerateModel per surviving component >= min size instead of
-   stopping at the gate.
+   stopping at the gate (DEPRECATED 2026-08-07 - prefer run_models.py,
+   which adds smallest-first ordering, resumability and the
+   quantile-ratio scale fallback; behaviour kept for compatibility).
 
 Usage:
     python merge_zones.py --components_root <aligned_components>
@@ -584,17 +586,19 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
         raise FileNotFoundError(f'No flight_log*_UTM.txt found under {images_root}')
 
     # No UTM tag in the filename = a LOCAL-frame campaign (e.g. COLMAP
-    # local:1 priors, ON2026): mirror the alignment module's behavior and
-    # use the Metadata FlightLogParams template AS-IS instead of failing -
-    # the template is cruise-specific by design and already declares the
-    # campaign CRS (C-20260730-05).
+    # local:1 priors, ON2026; C-20260730-05): use the dedicated
+    # FlightLogParamsLocal.xml template. Never fall back to the shared
+    # UTM template "as-is" - a template carrying the wrong frame imports
+    # silently mis-registered (2026-08-07 incident: ON2026's local frame
+    # in the shared template poisoned a UTM 57L import; 3/32 registered,
+    # exit code 0).
     zone_band = utm_zone_from_flight_log_name(zone_logs[0])
     local_frame = zone_band is None
     if local_frame:
         logger.warning(
             'Flight log "%s" carries no UTM zone tag - LOCAL-frame campaign; '
-            'using the FlightLogParams template as-is. Verify it matches '
-            'this cruise!', os.path.basename(zone_logs[0]))
+            'generating params from FlightLogParamsLocal.xml. Verify this '
+            'cruise really uses local:1 priors!', os.path.basename(zone_logs[0]))
         zone, band = None, None
     else:
         zone, band = zone_band
@@ -620,13 +624,15 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
     with open(union_path, 'w', encoding='utf-8', newline='\r\n') as f:
         f.write(header + '\n' + '\n'.join(rows.values()) + '\n')
 
-    template = os.path.join(METADATA_DIR, 'FlightLogParams.xml')
     if local_frame:
-        params_path = os.path.join(output_dir, 'FlightLogParams_local.xml')
-        shutil.copyfile(template, params_path)
+        params_path = write_flight_log_params(
+            os.path.join(METADATA_DIR, 'FlightLogParamsLocal.xml'),
+            os.path.join(output_dir, 'FlightLogParams_local.xml'),
+            frame='local_euclidean')
     else:
         params_path = write_flight_log_params(
-            template, os.path.join(output_dir, f'FlightLogParams_{zone}{band}.xml'),
+            os.path.join(METADATA_DIR, 'FlightLogParams.xml'),
+            os.path.join(output_dir, f'FlightLogParams_{zone}{band}.xml'),
             zone, band)
     logger.info('flight log%s: %d rows -> %s', suffix, len(rows), union_path)
     return union_path, params_path
@@ -1072,7 +1078,12 @@ def main() -> int:
     parser.add_argument('--visible', default=None,
                         help='true = GUI-visible RealityScan instances (RS_HEADLESS=0)')
     parser.add_argument('--auto_model', default=None,
-                        help='true = run GenerateModel per surviving component >= min_size')
+                        help='true = run GenerateModel per surviving component '
+                             '>= min_size. DEPRECATED (2026-08-07): prefer '
+                             'run_models.py --workspace, which adds '
+                             'smallest-first ordering, resumability and the '
+                             'quantile-ratio scale fallback for fused '
+                             'components; kept for compatibility')
     parser.add_argument('--ladder', default=None,
                         help='merge_first (default) or content_first - see LADDERS')
     parser.add_argument('--loss_tolerance', default=None,
@@ -1126,6 +1137,14 @@ def main() -> int:
     visible = truthy(ask('visible', args.visible,
                          'true' if rs_env['RS_HEADLESS'] == '0' else 'false'))
     auto_model = truthy(ask('auto_model', args.auto_model, 'false'))
+    if auto_model:
+        # Deprecation notice only - behaviour is deliberately unchanged.
+        logger.warning(
+            'DEPRECATED: --auto_model is kept for compatibility only. '
+            'Prefer run_models.py --workspace <root> (smallest-first, '
+            'resumable, quantile-ratio scale fallback) or run_models.py '
+            '--project <assembly.rsproj> --component <name> for a single '
+            'component.')
     ladder_name = ask('ladder', args.ladder, 'merge_first')
     ladder = LADDERS.get(ladder_name, LADDERS['merge_first'])
     merge_scope = ask('merge_scope', args.merge_scope, 'neighbour')
