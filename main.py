@@ -211,6 +211,15 @@ def log_output_data(logger, output_data: dict[str, object], indent: int = 0) -> 
 
 def main(argv) -> None:
     logger = initialize_logger()
+    # --help must never block on the interactive module checkbox (verified
+    # live 2026-08-08: `python main.py --help` under redirected output hung
+    # past 60 s with no message, because initialize_modules() ran before
+    # argparse ever saw argv). With -h/--help present, enable every module
+    # non-interactively so the FULL parser - all modules' options - builds,
+    # prints, and exits.
+    if any(a in ('-h', '--help') for a in argv[1:]):
+        os.environ.setdefault('RS_NO_INTERACTIVE', '1')
+        os.environ.pop('RS_MODULES', None)
     modules = initialize_modules(logger)
     params = initialize_parameters(modules)
     parse_arguments(argv, params, logger)

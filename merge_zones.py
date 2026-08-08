@@ -293,6 +293,24 @@ def fused_export_name(tag: str, attempt_no: int) -> str:
     return f'{tag}_a{attempt_no}'
 
 
+# Merge-scene camera ceiling (C-20260802-01, ON2026 on the 192 GB box):
+# a 34,105-camera merge scene completed at 262 GB peak commit; a ~44k-cam
+# scene died inside RealityScan with 0x8007000E E_OUTOFMEMORY at 319.5 GB
+# after 5.6 h, and the follow-up rung OOM'd the driver Python itself after
+# 19 h. The ceiling is enforced BEFORE launch (an over-ceiling attempt
+# wastes unattended hours and can kill the driver) - deliberately a plain
+# argparse default, never an rs_settings inheritance (safety constants do
+# not silently carry between sessions).
+MAX_MERGE_SCENE_CAMERAS = 34_000
+
+
+def scene_ceiling_verdict(subset: list, ceiling: int) -> tuple:
+    """(refuse, total_cameras) for a candidate merge subset. Pure, like
+    acceptance_verdict, so the suite drives the real decision."""
+    total = sum((m.get('camera_count') or 0) for m in subset)
+    return total > ceiling, total
+
+
 def loss_budget(input_cams: int, loss_tolerance_frac: float) -> int:
     """Absolute camera budget a fusion may drop, from the operator fraction."""
     return int(input_cams * loss_tolerance_frac)
@@ -784,7 +802,8 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                   # another session's stored merge options is a recorded
                   # incident (final review 2026-07-29, item c).
                   loss_tolerance_frac: float = 0.0,
-                  pair_gate: str = 'overlap') -> dict:
+                  pair_gate: str = 'overlap',
+                  max_scene_cameras: int = MAX_MERGE_SCENE_CAMERAS) -> dict:
     """Run the escalation ladder on one border-connected cluster until
     convergence. Returns the cluster record for the report, including the
     final component list (paths + manifests) for the assembly stage."""
@@ -885,6 +904,28 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
             if subset_sig in attempted:
                 break
             attempted.add(subset_sig)
+
+        # Memory-envelope guard: refuse over-ceiling scenes BEFORE any RS
+        # time is spent (C-20260802-01 - an over-envelope attempt burned
+        # 5.6 unattended hours and then OOM'd; the next one killed the
+        # driver). Refusal, not resizing: subset sizing belongs to the
+        # driver's complists; the guard is the backstop.
+        refuse, subset_cams = scene_ceiling_verdict(subset, max_scene_cameras)
+        if refuse:
+            logger.warning(
+                '%s: candidate subset of %d components sums to %s cameras - '
+                'OVER the %s-camera merge-scene ceiling (C-20260802-01: 44k '
+                'cams -> 0x8007000E at 319.5 GB commit on the 192 GB box; '
+                '34k fit at 262 GB). Attempt REFUSED before launch.',
+                tag, len(subset), f'{subset_cams:,}', f'{max_scene_cameras:,}')
+            record['attempts'].append({
+                'label': 'over_scene_ceiling', 'refused': True,
+                'input_count': len(subset), 'input_cameras': subset_cams,
+                'ceiling': max_scene_cameras, 'target': target_key})
+            if merge_scope == 'neighbour' and target_key is not None:
+                exhausted.add(target_key)
+                continue
+            break
 
         # Mechanism-aware rung selection - see effective_ladder_for. In
         # {c2, z4_c1, z4_c2} only c2-z4_c1 share imagery while z4_c2 merely
@@ -1097,6 +1138,14 @@ def main() -> int:
     parser.add_argument('--images_root', help='batched_images_by_zone directory')
     parser.add_argument('--output', help='merge output directory')
     parser.add_argument('--name', default=None, help='assembly project name (default Merged)')
+    parser.add_argument('--max_scene_cameras', type=int,
+                        default=MAX_MERGE_SCENE_CAMERAS,
+                        help='pre-launch refusal ceiling on merge-scene '
+                             'camera count (default %(default)s; '
+                             'C-20260802-01: 44k cams OOMed at 319.5 GB '
+                             'commit on the 192 GB box, 34k fit). Plain '
+                             'argparse default by design - safety limits '
+                             'never inherit from rs_settings.')
     parser.add_argument('--min_size', type=int, default=None,
                         help='report floor: components below this are flagged as pockets (default 50)')
     parser.add_argument('--target', type=float, default=None,
@@ -1317,7 +1366,8 @@ def main() -> int:
                                    ladder, min_size, logs_dir, logger,
                                    merge_scope=merge_scope,
                                    loss_tolerance_frac=loss_tolerance_frac,
-                                   pair_gate=pair_gate)
+                                   pair_gate=pair_gate,
+                                   max_scene_cameras=args.max_scene_cameras)
         report['clusters'].append(record)
         flush()
 

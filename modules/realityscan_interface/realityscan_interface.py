@@ -16,6 +16,24 @@ from .realityscan_cli import RealityScanCLI, METADATA_DIR, set_project_save_env
 # Component/scene files as exported by RealityScan (legacy RealityCapture
 # extensions still accepted so older outputs keep working).
 COMPONENT_EXTENSIONS = ('.rsalign', '.rcalign')
+
+
+def flight_log_params_template(metadata_dir: str, log_path: str | None,
+                               explicit: str | None = None) -> str:
+    """FlightLogParams template for a flight log, by the SAME rule the
+    downstream frame guard (ensure_frame_match) enforces: an explicit
+    choice wins; otherwise a zone-tagged filename selects the UTM
+    template and an untagged one the local:1 Euclidean template.
+
+    Extracted from run() so the rule is unit-testable (2026-08-08: the
+    previous hardcoded UTM template made every local-frame campaign fail
+    the frame guard - the standard align path could not run local:1
+    priors at all)."""
+    if explicit:
+        return explicit
+    if log_path and not utm_zone_from_flight_log_name(log_path):
+        return os.path.join(metadata_dir, "FlightLogParamsLocal.xml")
+    return os.path.join(metadata_dir, "FlightLogParams.xml")
 SCENE_EXTENSIONS = ('.rsproj', '.rcproj')
 
 
@@ -69,6 +87,41 @@ class RealityScanAlignment(RSModule):
             description='Path to the flight log file',
             prompt_user=True,
             disable_when_module_active=['Batch Directory', 'Georeference Images']
+        )
+
+        additional_params['rs_min_component_size'] = Parameter(
+            name='Min Component Size (cameras)',
+            cli_short='r_mcs',
+            cli_long='r_min_component_size',
+            type=int,
+            default_value=50,
+            description=('Smallest component (in cameras) exported after a '
+                         'zone align. CONSEQUENCE: components under this '
+                         'threshold are silently discarded before the merge '
+                         'or model stage ever sees them - for thin features '
+                         '(mast tops, a stern flag-pole) that fragment into '
+                         'small pockets, lower this (e.g. 10-20) or the '
+                         'feature vanishes from the deliverable with no '
+                         'error (review 2026-08-08).'),
+            prompt_user=False
+        )
+
+        additional_params['rs_flight_log_params'] = Parameter(
+            name='Flight Log Params XML',
+            cli_short='r_flp',
+            cli_long='r_flight_log_params',
+            type=str,
+            default_value=None,
+            description=('Explicit FlightLogParams XML declaring the '
+                         "trajectory's coordinate frame. Default: chosen "
+                         'per zone from the flight-log filename (zone tag '
+                         '-> Metadata/FlightLogParams.xml [UTM], untagged '
+                         '-> Metadata/FlightLogParamsLocal.xml [local:1 '
+                         'Euclidean]). The downstream frame guard '
+                         '(ensure_frame_match) enforces the same rule, so '
+                         'a wrong explicit choice fails loudly, never '
+                         'imports silently.'),
+            prompt_user=False
         )
 
         additional_params['rs_model_generate'] = Parameter(
@@ -542,7 +595,25 @@ class RealityScanAlignment(RSModule):
         texture_model = self.params['rs_model_texture'].get_value()
         simplify_model = self.params['rs_model_simplify'].get_value()
 
-        flight_log_params_path = os.path.join(METADATA_DIR, "FlightLogParams.xml")
+        # Frame-aware template selection (2026-08-08, fixes the run2
+        # blocker): pinning the UTM template here made every LOCAL-frame
+        # campaign fail ensure_frame_match in __align_zone - the standard
+        # align path could not process local:1 priors at all. An explicit
+        # rs_flight_log_params wins; otherwise each zone's own flight-log
+        # name picks the template (zone tag -> UTM, untagged -> local),
+        # mirroring exactly the frame the downstream guard will enforce.
+        explicit_flp = None
+        if 'rs_flight_log_params' in self.params:
+            explicit_flp = self.params['rs_flight_log_params'].get_value() or None
+        if explicit_flp and not os.path.isfile(explicit_flp):
+            self.logger.error(
+                'rs_flight_log_params does not exist: %s - falling back to '
+                'frame-derived template selection', explicit_flp)
+            explicit_flp = None
+
+        def params_template_for(log_path):
+            return flight_log_params_template(METADATA_DIR, log_path,
+                                              explicit_flp)
 
         process_data = []
         skipped_zones = []
@@ -604,7 +675,7 @@ class RealityScanAlignment(RSModule):
             try:
                 queue_folder_to_process(
                     local_input_folder, output_dir, local_flight_log_path,
-                    flight_log_params_path, display_output)
+                    params_template_for(local_flight_log_path), display_output)
             except Exception as e:
                 self.logger.error(f"Error queueing folder to process: {e}")
                 skipped_zones.append((local_input_folder, str(e)))
@@ -689,10 +760,13 @@ class RealityScanAlignment(RSModule):
             scene_path = os.path.join(zone_output_dir, zone_name + ".rsproj")
 
             try:
+                min_comp = 50
+                if 'rs_min_component_size' in self.params:
+                    min_comp = int(self.params['rs_min_component_size'].get_value())
                 component_data, scene_data = self.__align_zone(
                     input_folder, zone_output_dir, zone_name,
                     item_flight_log_path, item_flight_log_params_path,
-                    item_display_output)
+                    item_display_output, min_component_size=min_comp)
                 output_data['Components'][zone_output_dir] = component_data
                 output_data['Scenes'][scene_path] = scene_data
             except Exception as e:

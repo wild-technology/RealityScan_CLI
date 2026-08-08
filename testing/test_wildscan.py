@@ -64,8 +64,15 @@ def make_workspace(tmp_path, *, stage: str) -> Workspace:
         for i in range(4):
             (raw / f"img_{i:03d}.jpg").write_bytes(b"j")
     if upto >= 2:
+        # Cover ALL four images: the census's coverage rule (2026-08-07,
+        # workspace_census._detect_georeference) reports 'partial' when the
+        # log covers under half of raw_images - a 1-row log here made the
+        # 'georeference is done' premise of the resume tests false. The
+        # rule is deliberate (silence-is-not-success); the fixture was
+        # stale, dormant while textual was uninstalled on this box.
         (ws / "raw_images" / "flight_log_4Q_UTM.txt").write_text(
-            "filename;X (East);Y (North);Alt\nimg_000.jpg;1;2;3\n",
+            "filename;X (East);Y (North);Alt\n"
+            + "".join(f"img_{i:03d}.jpg;1;2;3\n" for i in range(4)),
             encoding="utf-8")
     if upto >= 3:
         for zone in ("zone_1", "zone_2"):
