@@ -23,6 +23,13 @@ DONE line format the session monitors expect).
 """
 from __future__ import annotations
 
+import sys as _sys
+_sys.exit(
+    "RETIRED 2026-08-08 (PRODUCT_READINESS must-fix 1): this driver ends in "
+    "the abandoned monolith plan against the OLD campaign tree and its "
+    "zone_done() is nav-blind. The live driver is testing/run_on2026_run2.py "
+    "(per-feature delivery from M:\\ON2026_run2). Kept for history only.")
+
 import datetime
 import os
 import shutil
