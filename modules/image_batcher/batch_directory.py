@@ -24,6 +24,7 @@ from module_base.parameter import Parameter
 from module_base.settings_store import SettingsStore
 from ..flight_logs import find_flight_log
 from .. import camera_registry
+from .. import image_exts
 
 
 class BatchDirectory(RSModule):
@@ -38,6 +39,9 @@ class BatchDirectory(RSModule):
         self.settings = SettingsStore()
         self._unknown_camera_example: str | None = None
         self._unknown_camera_count = 0
+        # First flight-log filename that matched nothing on disk - named in
+        # the copy-accounting error so the operator sees the actual string.
+        self._missing_example: str | None = None
 
     def get_parameters(self) -> dict[str, Parameter]:
         additional_params = {}
@@ -362,9 +366,20 @@ class BatchDirectory(RSModule):
         # processed: its explicit input dir, or raw_images when it ran
         # after Extract Images (whose output the search must cover too).
         output_dir = self.params['output_dir'].get_value()
-        if 'geo_input_image_dir' in self.params:
-            return find_flight_log(self.params['geo_input_image_dir'].get_value())
-        return find_flight_log(os.path.join(output_dir, "raw_images"), output_dir)
+        # find_flight_log REFUSES a directory whose logs disagree on UTM
+        # zone (or mix tagged and untagged names). Surface that message
+        # and return None so validate_parameters reports "a valid flight
+        # log is required" instead of an argparse-era traceback escaping
+        # to main.py (audit 2026-08-07).
+        try:
+            if 'geo_input_image_dir' in self.params:
+                return find_flight_log(
+                    self.params['geo_input_image_dir'].get_value())
+            return find_flight_log(os.path.join(output_dir, "raw_images"),
+                                   output_dir)
+        except ValueError as exc:
+            self.logger.error('%s', exc)
+            return None
 
     def __read_flight_log_gdf(self, flight_log_path):
         if flight_log_path is None:
@@ -384,6 +399,20 @@ class BatchDirectory(RSModule):
             if 'Name' in df.columns:
                 df = df.rename(columns={'Name': 'filename'})
             # If already 'filename', no change needed
+
+            # The X/Y columns were validated below but the NAME column
+            # never was, so a log headed 'image;X (East);Y (North)' got
+            # through here and blew up much later as a raw
+            # `KeyError: 'filename'` inside __create_geographic_zones -
+            # OUTSIDE run()'s try/except, i.e. an unhandled traceback out
+            # of main.py (audit 2026-08-07).
+            if 'filename' not in df.columns:
+                self.logger.error(
+                    "Flight log has no 'filename' (or 'Name') column - found "
+                    "%s. RealityScan flight logs name the image in the first "
+                    "column; rename it to 'Name' or 'filename'.",
+                    list(df.columns))
+                return None
 
             if 'X (East)' in df.columns and 'Y (North)' in df.columns:
                 df = df.rename(columns={'X (East)': 'x', 'Y (North)': 'y'})
@@ -777,33 +806,54 @@ class BatchDirectory(RSModule):
     def __index_files(input_dir):
         """One walk over the input tree: filename -> full path, and
         stem -> filename for extension-mismatch diagnostics. Replaces the
-        previous per-file os.walk (O(images x tree size))."""
+        previous per-file os.walk (O(images x tree size)).
+
+        Keys are LOWERCASED: Windows filesystems are case-insensitive, so a
+        log naming `C231C0001.JPG` against `C231C0001.jpg` on disk used to
+        match nothing and produce zone folders holding zero images
+        (audit 2026-08-07)."""
         by_name: dict[str, str] = {}
         by_stem: dict[str, str] = {}
+        all_names: list[str] = []
         for root, _dirs, filenames in os.walk(input_dir):
             for fn in filenames:
-                by_name.setdefault(fn, os.path.join(root, fn))
-                by_stem.setdefault(os.path.splitext(fn)[0], fn)
-        return by_name, by_stem
+                all_names.append(fn)
+                by_name.setdefault(fn.lower(), os.path.join(root, fn))
+                by_stem.setdefault(os.path.splitext(fn)[0].lower(), fn)
+        return by_name, by_stem, all_names
 
     def __copy_files(self, input_dir, batch_folder_dir, files, file_index=None):
-        """Copy files to camera-specific subfolders and generate XMP sidecars."""
+        """Copy files to camera-specific subfolders and generate XMP sidecars.
+
+        Returns (copied, missing). Both used to be discarded: a missing
+        file emitted one warning and `continue`d, and run() reported its
+        image count from the flight-log rows assigned to zones, never from
+        what actually landed on disk - so a whole-dive filename mismatch
+        copied nothing and still returned Success with a plausible number
+        (audit 2026-08-07).
+        """
         if file_index is None:
             file_index = self.__index_files(input_dir)
-        by_name, by_stem = file_index
+        by_name, by_stem = file_index[0], file_index[1]
+        copied = 0
+        missing = 0
 
         for file in files:
-            file_path = by_name.get(file)
+            file_path = by_name.get(file.lower())
 
             if file_path is None:
+                missing += 1
                 # Check if it's an extension mismatch
                 base_name = os.path.splitext(file)[0]
-                other_ext = by_stem.get(base_name)
+                other_ext = by_stem.get(base_name.lower())
+                if self._missing_example is None:
+                    self._missing_example = file
                 if other_ext:
                     self.logger.warning(f"File '{file}' not found, but found '{other_ext}' - flight log may have wrong extension")
                 else:
                     self.logger.warning(f"File not found: {file} - flight log filename does not match any files in directory")
                 continue
+            copied += 1
 
             camera_subfolder = self.__determine_camera_subfolder(file, file_path)
             camera_dir = os.path.join(batch_folder_dir, camera_subfolder)
@@ -819,6 +869,8 @@ class BatchDirectory(RSModule):
             prior_param = (self.params or {}).get('batch_xmp_priors')
             if prior_param is not None and prior_param.get_value():
                 self.__generate_xmp_sidecar(file, camera_dir, camera_subfolder)
+
+        return copied, missing
 
     def __generate_xmp_sidecar(self, image_filename: str, output_path: str, camera_type: str) -> None:
         """
@@ -863,6 +915,9 @@ class BatchDirectory(RSModule):
     def __create_batch_folders(self, output_dir, zones, input_dir, flight_log_path=None):
         """
         Create per-zone folders and write zone-specific flight logs including all original columns.
+
+        Returns (copied, missing) summed over every zone - what actually
+        landed on disk, which is what run() reports and gates on.
         """
         if not zones:
             raise ValueError('No geographic zones were created.')
@@ -879,6 +934,20 @@ class BatchDirectory(RSModule):
 
         # Index the input tree once for all zones
         file_index = self.__index_files(input_dir)
+        # A .tif/.heif dataset is recognised imagery elsewhere in the
+        # pipeline (modules.image_exts.ALL_IMAGE_EXTS) but cannot be
+        # batched here; say what is being left behind instead of filtering
+        # it away in silence (audit 2026-08-07).
+        skipped = image_exts.skipped_by_extension(
+            file_index[2], self.ACCEPTED_EXTENSIONS)
+        if skipped:
+            self.logger.warning(
+                '%d recognised image(s) under %s are NOT batched (%s): this '
+                'stage copies only %s.', sum(skipped.values()), input_dir,
+                ', '.join(f'{n} x {e}' for e, n in sorted(skipped.items())),
+                ', '.join(sorted(self.ACCEPTED_EXTENSIONS)))
+        total_copied = 0
+        total_missing = 0
 
         for i, zone_files in enumerate(zones):
             batch_folder_name = f"zone_{i + 1}"
@@ -886,7 +955,10 @@ class BatchDirectory(RSModule):
             os.makedirs(batch_folder_dir, exist_ok=True)
 
             unique_zone_files = list(dict.fromkeys(zone_files))
-            self.__copy_files(input_dir, batch_folder_dir, unique_zone_files, file_index)
+            zone_copied, zone_missing = self.__copy_files(
+                input_dir, batch_folder_dir, unique_zone_files, file_index)
+            total_copied += zone_copied
+            total_missing += zone_missing
 
             # Create flight log per zone
             if flight_log_df is not None:
@@ -914,15 +986,51 @@ class BatchDirectory(RSModule):
 
             self._update_loading_bar(bar, 1)
 
+        return total_copied, total_missing
 
-    def _prompt_int(self, key: str, message: str, fallback: int) -> int:
+    def _explicit_param(self, name: str):
+        """A parameter's value when it was EXPLICITLY supplied (differs
+        from the Parameter's declared default), else None.
+
+        The orchestrator sets every parameter from the command line, the
+        'main' settings section, or the declared default - only the last
+        of those is "unanswered", and only an unanswered parameter should
+        defer to the 'batch' settings section."""
+        param = (self.params or {}).get(name)
+        if param is None:
+            return None
+        value = param.get_value()
+        return None if value is None or value == param.get_default_value() \
+            else value
+
+    def _stored_default(self, key: str, fallback, cli_value=None):
+        """Which value the prompt should offer as its default.
+
+        An EXPLICIT caller value (a --b_min flag reaching the Parameter)
+        must WIN over rs_settings.json; the stored value is only a
+        convenience default for an unanswered prompt. Before this, the
+        'batch' section beat the command line: with the repo's stored
+        min_zone_size=300 (from NA173) and --b_min 2000, the batcher zoned
+        at 300 - and because both keys feed _input_fingerprint, the wrong
+        zoning was then recorded as legitimate provenance
+        (audit 2026-08-07). Mirrors SettingsStore.ask's precedence, which
+        already gets this right, and the reason the merge driver pins its
+        options rather than inheriting them.
+        """
+        if cli_value is not None:
+            return cli_value
+        return self.settings.get('batch', key, fallback)
+
+    def _prompt_int(self, key: str, message: str, fallback: int,
+                    cli_value=None) -> int:
         """Integer prompt whose last-entered value persists as the next
         run's default (rs_settings.json, section "batch").
 
         EOF-safe: unattended runs (hidden consoles report isatty()=True
         with an EOF stdin) silently take the stored/fallback value - the
-        same convention as merge_zones/grow_zone ask()."""
-        stored = self.settings.get('batch', key, fallback)
+        same convention as merge_zones/grow_zone ask(). An explicit
+        ``cli_value`` outranks the stored value (see _stored_default)."""
+        stored = self._stored_default(key, fallback, cli_value)
         while True:
             try:
                 raw = input(f"{message} [{stored}]: ").strip()
@@ -940,8 +1048,9 @@ class BatchDirectory(RSModule):
         return value
 
     def _prompt_float(self, key: str, message: str, fallback: float,
-                      lo: float = None, hi: float = None) -> float:
-        stored = self.settings.get('batch', key, fallback)
+                      lo: float = None, hi: float = None,
+                      cli_value=None) -> float:
+        stored = self._stored_default(key, fallback, cli_value)
         while True:
             try:
                 raw = input(f"{message} [{stored}]: ").strip()
@@ -979,10 +1088,12 @@ class BatchDirectory(RSModule):
 
         self.params['batch_min_zone_size'].set_value(self._prompt_int(
             'min_zone_size', 'Minimum zone size',
-            self.params['batch_min_zone_size'].get_value()))
+            self.params['batch_min_zone_size'].get_value(),
+            cli_value=self._explicit_param('batch_min_zone_size')))
         self.params['batch_max_zone_size'].set_value(self._prompt_int(
             'max_zone_size', 'Maximum zone size',
-            self.params['batch_max_zone_size'].get_value()))
+            self.params['batch_max_zone_size'].get_value(),
+            cli_value=self._explicit_param('batch_max_zone_size')))
 
         target_size = int(self.params['batch_target_images_per_zone'].get_value())
         min_size = int(self.params['batch_min_zone_size'].get_value())
@@ -1069,7 +1180,39 @@ class BatchDirectory(RSModule):
             # in_progress FIRST: if the copy dies half way, the next run must
             # find a marker saying "unfinished", not an absent one.
             self._write_fingerprint(output_dir, flight_log_path, status='in_progress')
-            self.__create_batch_folders(output_dir, final_zones, input_dir, flight_log_path)
+            copied, missing = self.__create_batch_folders(
+                output_dir, final_zones, input_dir, flight_log_path)
+
+            # FAIL CLOSED on what actually landed on disk. The summary used
+            # to be built from the ZONE LISTS ('Total Images in Batches'),
+            # so a whole-dive filename mismatch - extension case, path-
+            # qualified names in the log - copied nothing, reported
+            # Success with a plausible number, wrote the 'complete'
+            # fingerprint (which then blessed the empty tree for reuse) and
+            # handed empty folders to alignment (audit 2026-08-07).
+            if copied == 0:
+                self.logger.error(
+                    'ZERO images were copied into the zone folders: none of '
+                    'the %d flight-log filename(s) matched a file under %s '
+                    '(e.g. %r). The zoning is meaningless and the fingerprint '
+                    'is deliberately left at "in_progress". Check that the '
+                    'flight log belongs to this imagery.',
+                    total_in_batches, input_dir, self._missing_example)
+                return {'Success': False, 'Images Copied': 0,
+                        'Images Missing': missing,
+                        'Output Directory': output_dir}
+            if missing:
+                self.logger.error(
+                    '%d of %d zone member(s) were NOT found under %s '
+                    '(e.g. %r) - those images are absent from the zones and '
+                    'from the alignment that follows.',
+                    missing, total_in_batches, input_dir,
+                    self._missing_example)
+                if missing > total_in_batches // 2:
+                    return {'Success': False, 'Images Copied': copied,
+                            'Images Missing': missing,
+                            'Output Directory': output_dir}
+
             self._write_fingerprint(output_dir, flight_log_path, status='complete')
 
             avg_zone_size = total_in_batches / len(final_zones) if final_zones else 0
@@ -1082,6 +1225,8 @@ class BatchDirectory(RSModule):
                 'Final Overlap': f"{overlap_percent}%",
                 'Total Unique Images': len(gdf),
                 'Total Images in Batches': total_in_batches,
+                'Images Copied': copied,
+                'Images Missing': missing,
                 'Output Directory': output_dir,
                 'UTM Zone': self.utm_zone_suffix or 'N/A'
             }

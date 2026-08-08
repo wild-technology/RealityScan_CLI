@@ -47,6 +47,30 @@ from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa
 TEXTURE_PRESETS = ('highpoly', '8k', '4x8k', '16k', 'fixed100', 'fixed50')
 EXPORT_FORMATS = ('obj', 'objmetric', 'fbx', 'glb', 'none')
 
+# What ModelToFinal.bat is expected to leave on disk per --format. Both OBJ
+# variants also write the material file; a textured OBJ without its .mtl is
+# an untextured OBJ to every consumer.
+EXPECTED_ARTIFACTS = {
+    'obj': ('.obj', '.mtl'),
+    'objmetric': ('.obj', '.mtl'),
+    'fbx': ('.fbx',),
+    'glb': ('.glb',),
+    'none': (),
+}
+
+
+def missing_exports(outdir: str, name: str, fmt: str) -> list[str]:
+    """Expected deliverable files that are absent or zero-length.
+
+    ``format=none`` exports nothing by design, so it has nothing to check.
+    """
+    missing = []
+    for ext in EXPECTED_ARTIFACTS.get(fmt, ()):
+        path = os.path.join(outdir, name + ext)
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
+            missing.append(path)
+    return missing
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -123,6 +147,21 @@ def main() -> int:
         logs_dir, instance=args.instance)
 
     if result.success:
+        # POST-CONDITION, not exit code alone. RealityScan reports success
+        # for do-nothing operations - a selection-driven export under
+        # -silent auto-answers the "Export Selection" dialog and exports
+        # NOTHING (MergeZoneComponents.bat records the census reading 0) -
+        # so "the workflow returned 0" is not evidence a deliverable
+        # exists (audit 2026-08-07).
+        missing = missing_exports(outdir, args.name, args.format)
+        if missing:
+            logger.error(
+                'ModelToFinal returned success but the deliverable is NOT on '
+                'disk: %s. RealityScan reports success for do-nothing '
+                'exports, so the exit code alone proves nothing - check the '
+                'instance still had a model selected (--source-model) and '
+                'see %s.', ', '.join(missing), result.log_path)
+            return 1
         logger.info('ModelToFinal succeeded in %.1f min. Exports in %s. '
                     'Log: %s', result.duration_seconds / 60, outdir,
                     result.log_path)

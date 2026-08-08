@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from modules.workspace_census import (  # noqa: F401
     IMAGE_EXTS,
+    MODEL_REPORT_NAMES,
     STAGE_ORDER,
     STAGE_TITLES,
     ComponentInfo,
@@ -19,6 +20,7 @@ from modules.workspace_census import (  # noqa: F401
     _count_images,
     _find_flight_logs,
     _load_json,
+    _records,
 )
 
 __all__ = [

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 
 from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
@@ -32,7 +33,9 @@ class RealityScanAlignment(RSModule):
             cli_long='r_input',
             type=str,
             default_value=None,
-            description='Directory containing the images to align (or folder of batched images)',
+            description='Directory containing the images to align; a batched '
+                        'ROOT (holding zone_* subfolders) is EXPANDED into '
+                        'one alignment scene per zone',
             prompt_user=True,
             disable_when_module_active='Batch Directory'
         )
@@ -110,6 +113,29 @@ class RealityScanAlignment(RSModule):
 
         return {**super().get_parameters(), **additional_params}
 
+    @staticmethod
+    def __superseded_path(output_folder: str) -> str:
+        """Where a previous run's zone folder is moved to.
+
+        OUTSIDE aligned_components/, deliberately. Keeping it as a sibling
+        (``zone_1.superseded_<stamp>``) preserved the data but left its
+        ``*.rsalign.manifest.json`` files inside the tree that
+        component_analysis.load_manifests walks RECURSIVELY and that the
+        workspace census iterates as zone folders - measured on a fixture:
+        the census read "2 components / 2,400 cameras across 2 zones" for
+        one re-aligned zone, and the merge saw two manifests for one
+        .rsalign (the export names repeat, so the stale manifest's path
+        resolves to the NEW file). rmtree could not do that; the
+        rename-aside introduced it (audit-verification 2026-08-07).
+        """
+        normalized = os.path.normpath(output_folder)
+        components_root = os.path.dirname(normalized)
+        workspace = os.path.dirname(components_root) or components_root
+        return os.path.join(
+            workspace, 'superseded',
+            f'{os.path.basename(components_root)}_{os.path.basename(normalized)}'
+            f'_{time.strftime("%Y%m%d-%H%M%S")}')
+
     def __check_and_create_folder(self, path):
         """
         Checks if a folder exists, if not, creates it.
@@ -166,10 +192,63 @@ class RealityScanAlignment(RSModule):
         # be indistinguishable from this run's (exportLatestComponents
         # reuses names like "Component 0.rsalign") and would poison the
         # files_before/after diff below.
+        #
+        # But the previous run's tree holds its SAVED PROJECT and every
+        # exported .rsalign - GPU-hours of work - and the only backup, the
+        # dated RC_projects copy, is off by default (rs_project_label
+        # defaults to ''). Deleting that on a logger.warning was the one
+        # unguarded destructive step in the align path (audit 2026-08-07),
+        # so a tree carrying deliverables is RENAMED aside instead: same
+        # clean-slate premise, no data loss, one os.rename and no copy cost.
         if os.path.isdir(output_folder) and os.listdir(output_folder):
-            self.logger.warning('Clearing previous exports in %s', output_folder)
-            shutil.rmtree(output_folder)
+            keepers = [f for f in os.listdir(output_folder)
+                       if f.endswith(COMPONENT_EXTENSIONS + SCENE_EXTENSIONS)]
+            if keepers:
+                superseded = self.__superseded_path(output_folder)
+                os.makedirs(os.path.dirname(superseded), exist_ok=True)
+                os.rename(output_folder, superseded)
+                self.logger.warning(
+                    'Previous run left %d project/component file(s) in %s - '
+                    'moved the whole folder to %s instead of deleting it. '
+                    'Remove it yourself once you no longer need it.',
+                    len(keepers), output_folder, superseded)
+            else:
+                self.logger.warning('Clearing previous exports in %s (no '
+                                    'project or component files in it)',
+                                    output_folder)
+                shutil.rmtree(output_folder)
         self.__check_and_create_folder(output_folder)
+
+        # The pipeline WRITES INTO the folder it is given: AlignZone.bat's
+        # identity harvest MOVES every pose-bearing .xmp out of the image
+        # tree into <output>/identity_r0, and sanitize_and_census then
+        # rewrites or deletes whatever pose sidecars remain. That is
+        # correct for a pipeline-made zone tree and a surprise for a
+        # user-supplied folder of their own priors, which the goal
+        # explicitly supports ("run against user-given folders"). Say so
+        # once, loudly, before anything moves (audit 2026-08-07).
+        pose_sidecars = 0
+        for root, _dirs, files in os.walk(input_folder):
+            for name in files:
+                if not name.lower().endswith('.xmp'):
+                    continue
+                try:
+                    with open(os.path.join(root, name), encoding='utf-8',
+                              errors='replace') as fh:
+                        if 'xcr:Position' in fh.read():
+                            pose_sidecars += 1
+                except OSError:
+                    continue
+        if pose_sidecars:
+            self.logger.warning(
+                'HEADS UP: %s contains %d pose-bearing .xmp sidecar(s). This '
+                'workflow MOVES them into %s (they are not returned) and '
+                'rewrites the remaining sidecars to calibration-only content '
+                '- leftover pose sidecars auto-import as exact-pose priors on '
+                'any later add (bug B7). Copy the folder first if those '
+                'sidecars are yours.',
+                input_folder, pose_sidecars,
+                os.path.join(output_folder, 'identity_r0'))
 
         if flight_log_path is None or not os.path.isfile(flight_log_path):
             # Never fail the run, but never be silent about it either:
@@ -232,6 +311,24 @@ class RealityScanAlignment(RSModule):
                 'identity harvest?) - restored/removed for hygiene',
                 leftover)
 
+        # RUNS ON EVERY EXIT PATH. The identity harvest MOVES pose sidecars
+        # out of the image tree and never re-exports the last-peeled
+        # component's, leaving those images with NO calibration prior at
+        # all; sanitize_and_census above only touches sidecars that are
+        # STILL PRESENT, so it cannot repair that. This call used to sit
+        # after the failure and no-component returns below, i.e. it was
+        # skipped precisely when the operator re-runs - re-opening the
+        # FINDINGS 2026-07-25 defect (796 of 4,540 zone_1 images left
+        # ungrouped, which CONFOUNDED PD-4/PD-4a) that the same entry
+        # records as fixed (audit 2026-08-07). Idempotent: (0, 0) on a
+        # complete tree.
+        created, no_camera = camera_registry.ensure_calibration_sidecars(
+            input_folder)
+        if created:
+            self.logger.info(
+                'Restored %d calibration sidecar(s) displaced by the identity '
+                'harvest in %s', created, input_folder)
+
         if not result.success:
             self.logger.error(f"RealityScan workflow failed for {input_folder}: "
                               f"{result.errors or f'exit code {result.return_code}'} (log: {result.log_path})")
@@ -266,11 +363,9 @@ class RealityScanAlignment(RSModule):
         if scene_success:
             manifest_paths = self.capture_component_identities(
                 input_folder, output_folder, scene_name, flight_log_path)
-        # The identity harvest MOVES pose sidecars out of the image tree and
-        # never re-exports the last-peeled component's, leaving those images
-        # with no calibration prior at all. Left unrepaired, a later re-align
-        # of this folder silently runs with a partially ungrouped camera set
-        # (measured: 796 of 4,540 zone_1 images, FINDINGS 2026-07-25).
+        # (The calibration-sidecar repair ran above, on every exit path -
+        # capture_component_identities also regenerates each member's
+        # sidecar as it walks the harvest, so nothing is lost by the move.)
         camera_registry.ensure_calibration_sidecars(input_folder)
 
         registered = 0
@@ -398,6 +493,38 @@ class RealityScanAlignment(RSModule):
         return manifest_paths
 
     @staticmethod
+    def zone_subfolders(root):
+        """The zone directories of a BATCHED ROOT, or [] when ``root`` is
+        itself one scene's image folder.
+
+        A folder counts as a zone container when at least one immediate
+        child directory is named ``zone_*`` or carries its own
+        ``flight_log*_UTM.txt``. Without this, an align-only resume - the
+        exact state default_enabled() produces once batching is done -
+        passed the batched root as rs_input_image_dir and -addFolder's
+        recursion fused EVERY zone into ONE alignment scene, silently
+        nullifying the zoning with identical logs and exit status
+        (audit 2026-08-07).
+        """
+        if not os.path.isdir(root):
+            return []
+        zones = []
+        for name in sorted(os.listdir(root)):
+            path = os.path.join(root, name)
+            if not os.path.isdir(path):
+                continue
+            try:
+                has_log = bool(find_flight_log(path))
+            except ValueError:
+                # Mixed-zone logs in that directory: it is emphatically a
+                # zone folder. The refusal belongs to the align step,
+                # which reports it per zone, not to this cheap probe.
+                has_log = True
+            if name.lower().startswith('zone_') or has_log:
+                zones.append(path)
+        return zones
+
+    @staticmethod
     def __collect_images(image_folder):
         """All image files under the folder, recursively - a batch zone
         keeps its images in per-camera subfolders."""
@@ -418,6 +545,7 @@ class RealityScanAlignment(RSModule):
         flight_log_params_path = os.path.join(METADATA_DIR, "FlightLogParams.xml")
 
         process_data = []
+        skipped_zones = []
 
         def queue_folder_to_process(local_input_folder, local_output_dir, local_flight_log_path, local_flight_log_params_path, local_display_output):
             """Queue the folder TREE as one alignment scene.
@@ -433,7 +561,13 @@ class RealityScanAlignment(RSModule):
                 raise ValueError(f"Input folder {local_input_folder} is not a directory")
 
             if not self.__collect_images(local_input_folder):
-                self.logger.warning(f"No images found under {local_input_folder} - skipping")
+                # A skipped zone must still land in the tally: it used to
+                # appear in neither 'Components' nor 'Zones Failed', so
+                # 'Component Count' silently excluded it (audit 2026-08-07).
+                self.logger.error(
+                    'No images found under %s - the zone is SKIPPED and '
+                    'counted as a failure', local_input_folder)
+                skipped_zones.append((local_input_folder, 'no images found'))
                 return
 
             process_data.append({
@@ -444,15 +578,54 @@ class RealityScanAlignment(RSModule):
                 'display_output': local_display_output
             })
 
+        def resolve_and_queue(local_input_folder, batch_path):
+            """Resolve this folder's flight log, then queue it - recording a
+            zone-level FAILURE if either step refuses.
+
+            find_flight_log now REFUSES a directory whose logs disagree on
+            UTM zone (or mix tagged and untagged names). That ValueError
+            escaped run() as an unhandled traceback out of main.py on two
+            of the three call sites here: the batcher grew the matching
+            catch, the aligner did not (audit-verification 2026-08-07).
+            A frame disagreement must fail the ZONE rather than align it
+            with no trajectory, so it lands in skipped_zones and therefore
+            in 'Zones Failed'.
+            """
+            try:
+                local_flight_log_path = self.__get_flight_log_path(batch_path)
+            except ValueError as exc:
+                self.logger.error(
+                    '%s The zone is SKIPPED and counted as a failure - pass '
+                    'the intended log explicitly, or keep one cruise/zone '
+                    'per directory.', exc)
+                skipped_zones.append(
+                    (local_input_folder, 'flight logs disagree on UTM zone'))
+                return
+            try:
+                queue_folder_to_process(
+                    local_input_folder, output_dir, local_flight_log_path,
+                    flight_log_params_path, display_output)
+            except Exception as e:
+                self.logger.error(f"Error queueing folder to process: {e}")
+                skipped_zones.append((local_input_folder, str(e)))
+
         # single folder input (not running after batched images module)
         if 'rs_input_image_dir' in self.params:
             input_folder = self.params['rs_input_image_dir'].get_value()
-            overall_flight_log_path = self.__get_flight_log_path()
-
-            try:
-                queue_folder_to_process(input_folder, output_dir, overall_flight_log_path, flight_log_params_path, display_output)
-            except Exception as e:
-                self.logger.error(f"Error queueing folder to process: {e}")
+            # A supplied BATCHED ROOT is expanded per zone, exactly as the
+            # chained branch below does. Handing the whole root to
+            # -addFolder recurses into every zone and produces ONE fused
+            # scene - the zoning silently gone (audit 2026-08-07).
+            zone_dirs = self.zone_subfolders(input_folder)
+            if zone_dirs:
+                self.logger.info(
+                    '%s is a batched ROOT (%d zone folder(s)) - aligning one '
+                    'scene per zone, not one fused scene',
+                    input_folder, len(zone_dirs))
+                for zone_dir in zone_dirs:
+                    resolve_and_queue(zone_dir, zone_dir)
+            else:
+                resolve_and_queue(input_folder, None)
         # running after batched images module
         else:
             batch_directory = os.path.join(self.params['output_dir'].get_value(), "batched_images_by_zone")
@@ -466,12 +639,7 @@ class RealityScanAlignment(RSModule):
 
             for batch_folder in batch_folders:
                 batch_input_folder = os.path.join(batch_directory, batch_folder)
-                batch_flight_log_path = self.__get_flight_log_path(batch_input_folder)
-
-                try:
-                    queue_folder_to_process(batch_input_folder, output_dir, batch_flight_log_path, flight_log_params_path, display_output)
-                except Exception as e:
-                    self.logger.error(f"Error queueing folder to process: {e}")
+                resolve_and_queue(batch_input_folder, batch_input_folder)
 
         output_data = {}
         output_data['Success'] = True
@@ -543,12 +711,30 @@ class RealityScanAlignment(RSModule):
         # Overall success must reflect the per-zone outcomes: this module
         # previously reported Success=True with every zone failed, which
         # made a fully failed alignment run look complete (and exit 0).
+        # Zones skipped for holding no images are recorded here too - they
+        # used to appear in no tally at all (audit 2026-08-07).
+        for skipped, reason in skipped_zones:
+            output_data['Components'].setdefault(
+                os.path.join(output_dir,
+                             os.path.basename(os.path.normpath(skipped))),
+                {'Success': False, 'Error': reason, 'Skipped': True})
         component_results = list(output_data['Components'].values())
         succeeded = sum(1 for c in component_results if c.get('Success'))
         output_data['Zones Succeeded'] = succeeded
         output_data['Zones Failed'] = len(component_results) - succeeded
-        if not component_results or succeeded == 0:
+        output_data['Component Count'] = len(process_data)
+        # ANY failed zone fails the run. 'Zones Failed: 9' with one success
+        # used to return Success=True and exit 0 - a merged deliverable
+        # missing nine tenths of the dive, reported as a completed stage.
+        if not component_results or output_data['Zones Failed'] > 0:
             output_data['Success'] = False
+            if succeeded:
+                self.logger.error(
+                    '%d of %d zone(s) FAILED - the run is marked unsuccessful '
+                    'so the missing zones cannot be merged in silently. The '
+                    '%d successful zone(s) are on disk and a re-run resumes '
+                    'from them.', output_data['Zones Failed'],
+                    len(component_results), succeeded)
 
         return output_data
 

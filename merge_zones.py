@@ -69,7 +69,9 @@ from modules import camera_registry
 from modules import component_analysis
 from modules import component_manifest
 from modules import scale_oracle
-from modules.flight_logs import utm_zone_from_flight_log_name, write_flight_log_params
+from modules.flight_logs import (assert_one_zone,
+                                 utm_zone_from_flight_log_name,
+                                 write_flight_log_params)
 from modules.harvest_guard import assert_harvestable
 from modules.realityscan_interface.realityscan_cli import (
     RealityScanCLI, METADATA_DIR, set_project_save_env)
@@ -585,6 +587,16 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
     if not zone_logs:
         raise FileNotFoundError(f'No flight_log*_UTM.txt found under {images_root}')
 
+    # os.walk order is not deterministic and, more importantly, not
+    # CORRECT: the frame for the whole merge used to be read off
+    # zone_logs[0] while the rows were read in sorted() order, so one
+    # untagged (or foreign-zone) log anywhere under images_root flipped
+    # the entire merge to the local template on a logger.warning - the
+    # 2026-08-07 silent mis-frame class _FRAME_INCIDENT exists to prevent
+    # (audit 2026-08-07). Sort once, then require unanimity.
+    zone_logs = sorted(zone_logs)
+    zone_band = assert_one_zone(zone_logs, images_root)
+
     # No UTM tag in the filename = a LOCAL-frame campaign (e.g. COLMAP
     # local:1 priors, ON2026; C-20260730-05): use the dedicated
     # FlightLogParamsLocal.xml template. Never fall back to the shared
@@ -592,7 +604,6 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
     # silently mis-registered (2026-08-07 incident: ON2026's local frame
     # in the shared template poisoned a UTM 57L import; 3/32 registered,
     # exit code 0).
-    zone_band = utm_zone_from_flight_log_name(zone_logs[0])
     local_frame = zone_band is None
     if local_frame:
         logger.warning(
@@ -604,7 +615,7 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
         zone, band = zone_band
 
     header, rows = None, {}
-    for log_path in sorted(zone_logs):
+    for log_path in zone_logs:
         with open(log_path, encoding='utf-8') as f:
             lines = f.read().splitlines()
         if not lines:
@@ -617,6 +628,25 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
             if only_basenames is not None and name not in only_basenames:
                 continue
             rows.setdefault(name, line)
+
+    # A union log with NO rows is not a georeferenced merge: the workflow
+    # imports it, runs -update against zero constraints, and ships an
+    # UNGEOREFERENCED merged component with workflow_success true
+    # (audit 2026-08-07). Refuse instead, naming what was asked for.
+    if not rows:
+        raise ValueError(
+            f'The union flight log for {output_dir} would have ZERO rows: '
+            f'{len(zone_logs)} zone log(s) under {images_root} matched none '
+            f'of the '
+            f'{"whole scene" if only_basenames is None else str(len(only_basenames)) + " requested image(s)"}'
+            '. Importing it would leave the merged component ungeoreferenced '
+            'while every step still reports success. Check that the zone '
+            'logs belong to these components.')
+    if only_basenames is not None and len(rows) < len(only_basenames) // 2:
+        logger.error(
+            'Union flight log covers only %d of %d requested image(s) - more '
+            'than half the merge inputs have NO trajectory constraint',
+            len(rows), len(only_basenames))
 
     suffix = f'_{tag}' if tag else ''
     crs_tag = 'local' if local_frame else f'{zone}{band}'
@@ -1382,16 +1412,36 @@ def main() -> int:
               'testing/scale_oracle.py on the input components for the '
               'pre-assembly figure; measuring the deliverable needs a pose '
               'export from a COPY of the saved project.']
+    # The gate file is a TERMINAL-STATE document naming a project the
+    # census then reads as "merge done". Writing it before checking the
+    # assembly workflow's result declared that state for a project that
+    # was never saved (audit 2026-08-07): gate the write on success, and
+    # on failure leave an equally loud EVALUATION_BLOCKED.txt instead.
+    if not result.success:
+        blocked_path = os.path.join(output_dir, 'EVALUATION_BLOCKED.txt')
+        blocked = ['EVALUATION BLOCKED - the assembly workflow FAILED',
+                   f'project (NOT saved): {report["assembly"]["project"]}',
+                   f'errors: {result.errors or "<none reported>"}',
+                   f'assembly dir: {assembly_dir}',
+                   f'workflow log: {result.log_path}',
+                   '',
+                   'No EVALUATION_READY gate was written, so the workspace '
+                   'census will not report this merge as done.',
+                   ''] + lines[2:]
+        with open(blocked_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(blocked) + '\n')
+        report['evaluation_blocked'] = blocked_path
+        flush()
+        logger.error('Assembly workflow failed - see %s and %s',
+                     assembly_dir, blocked_path)
+        return 1
+
     eval_path = os.path.join(output_dir, 'EVALUATION_READY.txt')
     with open(eval_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
     logger.info('\n%s', '\n'.join(lines))
     report['evaluation_ready'] = eval_path
     flush()
-
-    if not result.success:
-        logger.error('Assembly workflow failed - see %s', assembly_dir)
-        return 1
 
     if auto_model:
         model_targets = [c for c in finals if (c['camera_count'] or 0) >= min_size]
@@ -1403,6 +1453,7 @@ def main() -> int:
         logger.info('auto_model: generating models for %d component(s)',
                     len(model_targets))
         proj = report['assembly']['project']
+        model_failures = []
         for c in model_targets:
             comp_name = os.path.splitext(os.path.basename(c['rsalign']))[0]
             res = cli.run_batch_script('GenerateModel.bat',
@@ -1416,12 +1467,28 @@ def main() -> int:
             rslog = os.path.join(logs_dir, f'rslog_model_{comp_name}.txt')
             snapshot_rs_log(rslog, logger)
             if not res.success:
+                model_failures.append(comp_name)
                 logger.error('Model workflow FAILED for %s - RealityScan log '
                              'snapshot: %s', comp_name, rslog)
             report.setdefault('models', []).append(
                 {'component': comp_name, 'success': res.success,
                  'errors': res.errors, 'rslog': rslog})
             flush()
+
+        # run_models.py stops on the first model failure "so evidence
+        # survives"; this loop logged every failure and still fell through
+        # to 'Merge stage complete' / return 0, so a run in which NO model
+        # was produced reported success (audit 2026-08-07). Same contract
+        # in both callers of GenerateModel.bat now: an aggregate check.
+        logger.info('auto_model: %d of %d model(s) succeeded',
+                    len(model_targets) - len(model_failures),
+                    len(model_targets))
+        if model_failures:
+            logger.error('auto_model: %d model(s) FAILED (%s). The merge '
+                         'itself succeeded - its gate is %s - but the models '
+                         'are incomplete.', len(model_failures),
+                         ', '.join(model_failures), eval_path)
+            return 1
 
     logger.info('Merge stage complete. Owner evaluation gate: %s', eval_path)
     return 0

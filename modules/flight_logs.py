@@ -29,6 +29,35 @@ _NORTH_BANDS = set('NPQRSTUVWX')
 _ZONE_IN_NAME = re.compile(r'_(\d{1,2})([C-HJ-NP-X])_UTM\.txt$', re.IGNORECASE)
 
 
+def assert_one_zone(paths, context: str) -> tuple[int, str] | None:
+    """The single UTM zone shared by every flight log in ``paths``.
+
+    Returns the (zone, band) they agree on, or None when they all carry no
+    zone tag (a local-frame campaign). Raises ValueError when they
+    DISAGREE - including a tagged/untagged mix, which is a frame
+    disagreement, not just a zone one.
+
+    Determinism is not correctness: picking "the first" log out of a
+    mixed-zone directory georeferences the other cruise's imagery ~2,000 km
+    away, silently, under a CRS derived from the wrong filename
+    (audit 2026-08-07).
+    """
+    seen: dict[tuple[int, str] | None, list[str]] = {}
+    for path in paths:
+        seen.setdefault(utm_zone_from_flight_log_name(path), []).append(path)
+    if len(seen) <= 1:
+        return next(iter(seen), None) if seen else None
+    detail = '; '.join(
+        f'{"no zone tag" if z is None else str(z[0]) + z[1]}: '
+        + ', '.join(os.path.basename(p) for p in sorted(files))
+        for z, files in sorted(seen.items(),
+                               key=lambda kv: (kv[0] is not None, kv[0])))
+    raise ValueError(
+        f'{context} holds flight logs of DISAGREEING coordinate frames '
+        f'({detail}). Refusing to pick one: {_FRAME_INCIDENT}. Keep exactly '
+        'one cruise/zone per directory, or pass the intended log explicitly.')
+
+
 def find_flight_log(*directories: str | None) -> str | None:
     """Return the first flight log found across the candidate directories.
 
@@ -36,13 +65,16 @@ def find_flight_log(*directories: str | None) -> str | None:
     logs before any is searched for a legacy ``flight_log.txt``, so a
     georeferenced log always wins over a stale legacy one. Multiple UTM
     logs in one directory resolve to the lexicographically first for
-    determinism. Returns ``None`` when nothing matches.
+    determinism - but only after :func:`assert_one_zone` has verified they
+    all name the SAME zone; disagreement raises ValueError rather than
+    silently choosing. Returns ``None`` when nothing matches.
     """
     valid = [d for d in directories if d and os.path.isdir(d)]
 
     for directory in valid:
         matches = sorted(glob.glob(os.path.join(directory, 'flight_log*_UTM.txt')))
         if matches:
+            assert_one_zone(matches, directory)
             return matches[0]
 
     for directory in valid:
@@ -67,9 +99,51 @@ def utm_zone_from_flight_log_name(path: str) -> tuple[int, str] | None:
     return zone, band
 
 
+def validate_utm_zone(zone, band) -> tuple[int, str]:
+    """(zone, BAND) after checking both are real, or ValueError.
+
+    utm_zone_from_flight_log_name validates what it PARSES; the writers
+    below took whatever they were handed, so a typo produced a
+    plausible-looking but nonexistent CRS with exit code 0 - and an
+    unknown band silently fell into the NORTHERN branch, turning a
+    southern-hemisphere typo into a northern EPSG (audit 2026-08-07).
+    """
+    try:
+        zone_int = int(zone)
+    except (TypeError, ValueError):
+        raise ValueError(f'invalid UTM zone {zone!r} - must be an '
+                         'integer 1-60') from None
+    band_up = str(band).upper()
+    if not 1 <= zone_int <= 60 or band_up not in _SOUTH_BANDS | _NORTH_BANDS:
+        raise ValueError(
+            f'invalid UTM zone {zone_int}{band_up} - zone must be 1-60 and '
+            'the MGRS latitude band one of C-X excluding I and O. Take both '
+            'from the flight log filename via utm_zone_from_flight_log_name, '
+            'never from a hand-edited template.')
+    return zone_int, band_up
+
+
+def crs_for_flight_log(path: str | None) -> str | None:
+    """``'EPSG:32654'`` for a zone-tagged flight log, else None.
+
+    The publish path needs this: georeferenced OBJ/FBX exports carry raw
+    UTM metres (ModelExportParamsOBJ_NiraParts sets
+    MvsExportIsGeoreferenced with scale 1.0 and no offset), and uploading
+    them without a CRS puts the asset in the wrong part of the world
+    (audit 2026-08-07).
+    """
+    if not path:
+        return None
+    zone_band = utm_zone_from_flight_log_name(path)
+    if zone_band is None:
+        return None
+    return f'EPSG:{epsg_for_utm_zone(*zone_band)}'
+
+
 def epsg_for_utm_zone(zone: int, band: str) -> int:
     """EPSG code for a WGS84 UTM zone: 326xx north, 327xx south."""
-    return (32700 if band.upper() in _SOUTH_BANDS else 32600) + zone
+    zone, band = validate_utm_zone(zone, band)
+    return (32700 if band in _SOUTH_BANDS else 32600) + zone
 
 
 # The local-Euclidean coordinate-system pair RealityScan expects for
@@ -87,6 +161,16 @@ _FRAME_INCIDENT = (
 def params_template_frame(template_path: str) -> str:
     """Coordinate frame a FlightLogParams XML declares:
     ``'utm'`` | ``'local_euclidean'`` | ``'unknown'``."""
+    # Named error instead of a raw FileNotFoundError (missing file) or
+    # PermissionError (a DIRECTORY passed as the template) out of open():
+    # this is reached from both public entry points, so the operator has
+    # to be told WHICH file the pipeline wanted (audit 2026-08-07).
+    if not os.path.isfile(template_path):
+        raise FileNotFoundError(
+            f'FlightLogParams template not found (or is not a file): '
+            f'{template_path!r}. Expected one of '
+            'Metadata/FlightLogParams.xml (UTM cruises) or '
+            'Metadata/FlightLogParamsLocal.xml (local-frame campaigns).')
     with open(template_path, encoding='utf-8') as f:
         content = f.read()
     proj_m = re.search(
@@ -182,8 +266,9 @@ def write_flight_log_params(template_path: str, output_path: str,
             raise ValueError("frame='utm' requires zone and band "
                              '(parse them from the flight-log filename via '
                              'utm_zone_from_flight_log_name)')
+        zone, band = validate_utm_zone(zone, band)
         epsg = epsg_for_utm_zone(zone, band)
-        south = ' +south' if band.upper() in _SOUTH_BANDS else ''
+        south = ' +south' if band in _SOUTH_BANDS else ''
         hemisphere = 'S' if south else 'N'
         proj = f'+proj=utm +zone={zone}{south} +datum=WGS84 +units=m +no_defs'
         crs_type = f'epsg:{epsg} - WGS 84 / UTM zone {zone}{hemisphere}'
@@ -200,7 +285,11 @@ def write_flight_log_params(template_path: str, output_path: str,
         r'(<entry key="CoordinateSystemFlightLogType" value=")[^"]*("/>)',
         lambda m: m.group(1) + crs_type + m.group(2), content)
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    # A bare relative output name has no dirname; makedirs('') raises
+    # WinError 3 (audit 2026-08-07).
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(output_path, 'w', encoding='utf-8', newline='') as f:
         f.write(content)
     return output_path

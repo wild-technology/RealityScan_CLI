@@ -8,6 +8,7 @@ Optimized with multiprocessing and binary search for speed.
 
 from __future__ import annotations
 
+import argparse
 import bisect
 import csv
 import glob
@@ -25,6 +26,8 @@ from multiprocessing import Pool, cpu_count
 # accuracy where the module claims 15 - two contradictory answers for the
 # same rig, in the file the docs call canonical (review finding M4).
 from modules.georeference.georeference_images import MOUNTS as _MOUNTS
+from modules.georeference.georeference_images import (
+    PRIOR_ACCURACY_DEFAULTS as _ACCURACY_DEFAULTS)
 from modules import camera_registry as _camera_registry
 
 import utm
@@ -83,8 +86,9 @@ def get_camera_type(filename: str) -> str:
         return 'Unknown'
 
 
-def get_camera_pitch_accuracy(filename: str) -> float:
-    """Pitch accuracy (degrees) from the shared MOUNTS table.
+def get_camera_pitch_accuracy(filename: str) -> float | None:
+    """Pitch accuracy (degrees) from the shared MOUNTS table, or None when
+    the mount has never been measured.
 
     This was a stale parallel table the M4/M5 unification missed (audit #6,
     2026-07-28): lever arm and pitch offset were routed through MOUNTS while
@@ -92,16 +96,16 @@ def get_camera_pitch_accuracy(filename: str) -> float:
     10.0 default against the module's 15.0, and Zeuss got 10.0 against 30.0 -
     3x overconfidence on the mount with the least ground truth. PD-0
     established that over-tight orientation accuracy FRAGMENTS the solve.
-    Unknown families keep the conservative fallback.
+
+    NO MOUNT now means NO PRIOR, not a 10 deg fallback (audit 2026-08-07):
+    the old fallback asserted "this camera looks straight ahead" at 10 deg
+    confidence for a mount nobody ever measured. The row's Pitch and Pitch
+    Accuracy fields are written empty instead.
     """
     mount = _mount(filename)
     if mount and 'p_acc' in mount:
         return float(mount['p_acc'])
-    # Same fallback as the module, same rationale: 10 deg for an UNKNOWN
-    # mount, deliberately not tighter - a confident claim on an unknown
-    # mount is the worst possible case (final review: this briefly said 15
-    # here vs 10 there, the exact divergence M4 exists to prevent).
-    return 10.0
+    return None
 
 
 
@@ -111,14 +115,15 @@ def _mount(filename: str) -> dict | None:
     return _MOUNTS.get(fam) if fam else None
 
 
-def get_camera_pitch_offset(filename: str) -> float:
-    """Camera down-tilt from the vehicle forward axis, in degrees.
+def get_camera_pitch_offset(filename: str) -> float | None:
+    """Camera down-tilt from the vehicle forward axis, in degrees, or None
+    when the mount has never been measured (= no pitch prior).
 
     Delegates to the shared table; the local prefix chain had no WCA branch so
     Cinema silently lost its 45 deg down-look in standalone runs.
     """
     mount = _mount(filename)
-    return 0.0 if mount is None else mount['pitch']
+    return None if mount is None else mount['pitch']
 
 
 def get_camera_offsets(filename: str) -> tuple[float, float, float]:
@@ -168,7 +173,8 @@ def convert_to_rc_orientation(heading_mag: float | None, pitch_vehicle: float | 
     else:
         rc_yaw = None
 
-    if pitch_vehicle is not None:
+    # camera_offset None = no measured mount = no pitch prior at all.
+    if pitch_vehicle is not None and camera_offset is not None:
         camera_pitch_from_horiz = pitch_vehicle - camera_offset
         rc_pitch = 90.0 + camera_pitch_from_horiz
     else:
@@ -206,14 +212,28 @@ def parse_timestamp_from_filename(filename: str) -> datetime | None:
 
 
 def convert_to_utm(lat, lon, utm_zone_cache: dict):
-    """Convert latitude and longitude to UTM coordinates."""
+    """Convert latitude and longitude to UTM, PINNED to the first row's zone.
+
+    The zone used to latch on the first converted row while every later row
+    was still converted in ITS OWN natural zone, so a track crossing a zone
+    boundary got a silent ~500 km easting jump (an equator crossing ~9,900 km
+    of northing) inside a log whose filename claimed one zone
+    (audit 2026-08-07). Mirrors GeoreferenceImages.__convert_to_utm; the
+    crossing count rides in utm_zone_cache['crossings'] for the summary.
+    """
     if lat is None or lon is None:
         return None, None
     try:
-        easting, northing, zone_number, zone_letter = utm.from_latlon(lat, lon)
-        if 'zone' not in utm_zone_cache:
+        if 'force' not in utm_zone_cache:
+            easting, northing, zone_number, zone_letter = utm.from_latlon(lat, lon)
+            utm_zone_cache['force'] = (zone_number, zone_letter)
             utm_zone_cache['zone'] = f"{zone_number}{zone_letter}"
-        return easting, northing
+            return easting, northing
+        zone_number, zone_letter = utm_zone_cache['force']
+        if utm.latlon_to_zone_number(lat, lon) != zone_number:
+            utm_zone_cache['crossings'] = utm_zone_cache.get('crossings', 0) + 1
+        return utm.from_latlon(lat, lon, force_zone_number=zone_number,
+                               force_zone_letter=zone_letter)[:2]
     except Exception as e:
         print(f"Error: Failed to convert to UTM coordinates: {e}")
         return None, None
@@ -595,11 +615,14 @@ def _validate_single_image(filepath: str) -> dict:
         return {'valid': False, 'filename': filename, 'filepath': filepath, 'error': str(e)}
 
 
-def validate_and_cleanup_images(output_dir: str, dive_numbers: list[str]) -> dict:
+def validate_and_cleanup_images(output_dir: str, dive_numbers: list[str],
+                                delete_corrupt: str = 'ask') -> dict:
     """
     Validate all copied images across all dives using multiprocessing.
     Searches in camera-specific subdirectories.
     Offers to delete corrupt files. Returns validation statistics.
+
+    ``delete_corrupt`` is 'ask' (prompt, EOF-safe -> keep), 'yes' or 'no'.
     """
     print(f"\n{'='*80}")
     print("IMAGE VALIDATION AND CLEANUP")
@@ -682,7 +705,22 @@ def validate_and_cleanup_images(output_dir: str, dive_numbers: list[str]) -> dic
                 print(f"    ... and {len(corrupt_files) - 5} more")
 
         print(f"\n{'='*80}")
-        response = input("\nDelete all corrupt images? (yes/no): ").strip().lower()
+        # EOF-safe (Windows trap registry: isatty() lies under hidden
+        # consoles). The non-destructive branch is the fallback - an
+        # unattended run must never delete the operator's imagery, and a
+        # raw EOFError traceback here used to abort the summary too.
+        if delete_corrupt == 'yes':
+            response = 'yes'
+        elif delete_corrupt == 'no':
+            print("--delete-corrupt=no: leaving corrupt images in place.")
+            response = 'no'
+        else:
+            try:
+                response = input("\nDelete all corrupt images? (yes/no): ").strip().lower()
+            except EOFError:
+                print("Non-interactive run: NOT deleting anything. "
+                      "Pass --delete-corrupt=yes to delete unattended.")
+                response = 'no'
 
         if response == 'yes':
             deleted_count = 0
@@ -714,23 +752,39 @@ def validate_and_cleanup_images(output_dir: str, dive_numbers: list[str]) -> dic
     return validation_stats
 
 
-def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: str | None, output_dir: str) -> str:
+def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: str | None,
+                        output_dir: str, accuracies: dict | None = None,
+                        declination_deg: float | None = None) -> str:
     """Generate a flight log file with position and orientation accuracy. Includes camera subfolder in image paths."""
-    zone_suffix = utm_zone if utm_zone else "UNKNOWN"
-    flight_log_filename = os.path.join(output_dir, f"flight_log_{dive_number}_{zone_suffix}_UTM.txt")
+    # Never emit a '_UNKNOWN_' tag into a *_UTM.txt name: it parses as "no
+    # zone tag", which every downstream consumer reads as a LOCAL-frame
+    # campaign (audit 2026-08-07). Same rule as the module's writer.
+    if utm_zone:
+        flight_log_filename = os.path.join(
+            output_dir, f"flight_log_{dive_number}_{utm_zone}_UTM.txt")
+    else:
+        flight_log_filename = os.path.join(
+            output_dir, f"flight_log_{dive_number}_UNRESOLVED.txt")
+        print(f"ERROR: no UTM zone resolved for {dive_number} - writing "
+              f"{os.path.basename(flight_log_filename)}, deliberately OUTSIDE "
+              "the flight_log*_UTM.txt discovery glob so it cannot be "
+              "mistaken for a local-frame log.")
 
     if os.path.exists(flight_log_filename):
         os.remove(flight_log_filename)
 
-    # superseded-by modules/cameras.json defaults - pending migration step (c+)
-    pos_x_acc = 10.0
-    pos_y_acc = 10.0
-    alt_acc = 1.0
-    # 15.0, not 3.0: PD-0 measured 3-5 deg claimed accuracy FRAGMENTING
-    # the solve while 15 deg gained registration. geoall claimed 3.0 while
-    # the georeference module claimed 15.0 - the same rig, two answers.
-    yaw_acc = 15.0
-    roll_acc = 15.0
+    # ONE accuracy table, shared with the georeference module
+    # (PRIOR_ACCURACY_DEFAULTS). These were literals in both files, so the
+    # two could - and did - disagree; --pos-accuracy/--alt-accuracy/
+    # --orientation-accuracy override them per run (audit 2026-08-07).
+    acc = dict(_ACCURACY_DEFAULTS)
+    acc.update(accuracies or {})
+    pos_x_acc = pos_y_acc = float(acc['pos_xy'])
+    alt_acc = float(acc['alt'])
+    yaw_acc = float(acc['yaw'])
+    roll_acc = float(acc['roll'])
+    decl = (MAGNETIC_DECLINATION_DEG if declination_deg is None
+            else float(declination_deg))
 
     with open(flight_log_filename, "w") as f:
         f.write(
@@ -744,7 +798,7 @@ def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: 
 
             camera_pitch_offset = get_camera_pitch_offset(image["FILENAME"])
             rc_yaw, rc_pitch, rc_roll = convert_to_rc_orientation(
-                heading_mag, pitch_vehicle, roll_vehicle, camera_pitch_offset, MAGNETIC_DECLINATION_DEG
+                heading_mag, pitch_vehicle, roll_vehicle, camera_pitch_offset, decl
             )
 
             pitch_acc = get_camera_pitch_accuracy(image["FILENAME"])
@@ -811,21 +865,70 @@ def print_dive_summary(dive_number: str, csv_rows: int, examined: int, stats: di
     print(f"{'='*80}\n")
 
 
-def main():
+def build_arg_parser() -> "argparse.ArgumentParser":
+    """CLI front end (added 2026-08-07).
+
+    geoall used to ignore argv entirely and prompt unconditionally, so it
+    could not be run unattended and `geoall.py --help` was an EOFError
+    traceback - while the docs call it the canonical georeferencer. Every
+    flag routes through SettingsStore.ask (CLI value wins, is persisted,
+    and an unattended run silently takes the stored value), matching
+    run_models/finish_model conventions.
+    """
+    p = argparse.ArgumentParser(description=__doc__.strip().splitlines()[1])
+    p.add_argument('--image-base-dir', default=None,
+                   help="image base directory (contains 'edt' subdirectories)")
+    p.add_argument('--rov-data-dir', default=None,
+                   help='ROV data directory (dive datatable CSVs)')
+    p.add_argument('--output-dir', default=None,
+                   help='output directory (flight logs and copied images)')
+    p.add_argument('--declination', type=float, default=None,
+                   help='magnetic declination at the site in degrees, east '
+                        'positive (default 0 = nav heading treated as true '
+                        'north)')
+    p.add_argument('--pos-accuracy', type=float, default=None,
+                   help='X/Y position accuracy claimed for every image, in '
+                        'metres (default %.1f)' % _ACCURACY_DEFAULTS['pos_xy'])
+    p.add_argument('--alt-accuracy', type=float, default=None,
+                   help='altitude accuracy claimed for every image, in metres '
+                        '(default %.1f)' % _ACCURACY_DEFAULTS['alt'])
+    p.add_argument('--orientation-accuracy', type=float, default=None,
+                   help='yaw/roll accuracy claimed for every image, in '
+                        'degrees (default %.1f; 3-5 fragments the solve, '
+                        'PD-0)' % _ACCURACY_DEFAULTS['yaw'])
+    p.add_argument('--delete-corrupt', choices=('ask', 'yes', 'no'),
+                   default='ask',
+                   help="what to do with corrupt images found during "
+                        "validation; unattended runs always behave as 'no'")
+    return p
+
+
+def main(argv: list[str] | None = None):
     """Main execution function."""
+    args = build_arg_parser().parse_args(argv)
     settings = SettingsStore()
-    image_base_dir = settings.prompt(
-        "geoall", "image_base_dir",
-        "Image base directory (contains 'edt' subdirectories)",
+    image_base_dir = settings.ask(
+        "geoall", "image_base_dir", args.image_base_dir,
         DEFAULT_IMAGE_BASE_DIR)
-    rov_data_dir = settings.prompt(
-        "geoall", "rov_data_dir",
-        "ROV data directory (dive datatable CSVs)",
-        DEFAULT_ROV_DATA_DIR)
-    output_dir = settings.prompt(
-        "geoall", "output_dir",
-        "Output directory (flight logs and copied images)",
-        DEFAULT_OUTPUT_DIR)
+    rov_data_dir = settings.ask(
+        "geoall", "rov_data_dir", args.rov_data_dir, DEFAULT_ROV_DATA_DIR)
+    output_dir = settings.ask(
+        "geoall", "output_dir", args.output_dir, DEFAULT_OUTPUT_DIR)
+    declination = float(settings.ask(
+        "geoall", "declination_deg", args.declination,
+        MAGNETIC_DECLINATION_DEG))
+    accuracies = {
+        'pos_xy': float(settings.ask("geoall", "pos_accuracy_m",
+                                     args.pos_accuracy,
+                                     _ACCURACY_DEFAULTS['pos_xy'])),
+        'alt': float(settings.ask("geoall", "alt_accuracy_m",
+                                  args.alt_accuracy,
+                                  _ACCURACY_DEFAULTS['alt'])),
+        'yaw': float(settings.ask("geoall", "orientation_accuracy_deg",
+                                  args.orientation_accuracy,
+                                  _ACCURACY_DEFAULTS['yaw'])),
+    }
+    accuracies['roll'] = accuracies['yaw']
 
     print("="*80)
     print("GEOREFERENCE IMAGES - MULTI-DIVE PROCESSOR (OPTIMIZED)")
@@ -834,7 +937,10 @@ def main():
     print(f"ROV Data Directory:    {rov_data_dir}")
     print(f"Output Directory:      {output_dir}")
     print(f"Match Threshold:       {MATCH_THRESHOLD_SEC} seconds")
-    print(f"Magnetic Declination:  {MAGNETIC_DECLINATION_DEG}°")
+    # ASCII only in console output (Windows cp1252 consoles crash on non-ASCII).
+    print(f"Magnetic Declination:  {declination} deg")
+    print(f"Prior Accuracies:      pos {accuracies['pos_xy']} m, "
+          f"alt {accuracies['alt']} m, orientation {accuracies['yaw']} deg")
     print(f"Worker Processes:      {NUM_WORKERS}")
     print("="*80)
     print("Features:")
@@ -905,7 +1011,14 @@ def main():
             if matched_images:
                 copied_count, failed_count, camera_copy_counts = copy_matched_images(matched_images, dive_number, output_dir)
 
-                flight_log_path = generate_flight_log(matched_images, dive_number, utm_zone, output_dir)
+                flight_log_path = generate_flight_log(
+                    matched_images, dive_number, utm_zone, output_dir,
+                    accuracies=accuracies, declination_deg=declination)
+                if utm_zone_cache.get('crossings'):
+                    print(f"WARNING: {utm_zone_cache['crossings']} nav row(s) "
+                          f"lie outside pinned UTM zone {utm_zone} and were "
+                          "projected into it anyway - confirm the survey "
+                          "really spans a zone boundary.")
 
                 overall_stats['total_matches'] += stats['matches_made']
                 overall_stats['total_copied'] += copied_count
@@ -953,7 +1066,8 @@ def main():
     print(f"{'='*80}\n")
 
     if processed_dives and overall_stats['total_copied'] > 0:
-        validation_stats = validate_and_cleanup_images(output_dir, processed_dives)
+        validation_stats = validate_and_cleanup_images(
+            output_dir, processed_dives, delete_corrupt=args.delete_corrupt)
 
         if validation_stats.get('deleted', 0) > 0:
             print(f"\nFinal image count after cleanup: {overall_stats['total_copied'] - validation_stats['deleted']}")

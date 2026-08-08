@@ -345,7 +345,19 @@ class ExtractImages(RSModule):
 
         if os.path.isdir(output_dir) and os.listdir(output_dir):
             self.logger.warning('Extracted images folder already exists. Overwrite? (y/n)')
-            overwrite = input()
+            # EOF-safe, refusing the DESTRUCTIVE branch: a bare input()
+            # raised EOFError out of validate_parameters on any unattended
+            # run (Windows trap registry: isatty() lies under hidden
+            # consoles). It failed closed, so this is robustness, not a
+            # loss path - same pattern as batch_directory's identical
+            # prompt (audit 2026-08-07).
+            try:
+                overwrite = input()
+            except EOFError:
+                return False, ('Extracted images folder already exists and '
+                               'this run is non-interactive - refusing to '
+                               'overwrite it. Delete it yourself, or point '
+                               '--output_dir somewhere else.')
 
             if overwrite.strip().lower() != 'y':
                 return False, 'Extracted images folder not created'

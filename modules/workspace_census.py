@@ -15,7 +15,12 @@ already writes - the same signals the unattended drivers use to resume:
     aligned_components/<zone>/      *.rsalign + *.rsalign.manifest.json
     <merge>/merge_report.json       merge terminal + EVALUATION_READY.txt
     <merge>/assembly/*.rsproj       the assembly project
-    final_report.json               modelled components
+    models_report.json              modelled components (run_models.py -
+                                    the CURRENT writer; the two H2024
+                                    names below are legacy and kept
+                                    readable so old workspaces still
+                                    census)
+    final_report.json               modelled components (legacy H2024)
     fused_models_report.json        fused-component models + measured scale
     exports/<comp>/{obj,fbx,ply}    deliverable exports
 
@@ -88,12 +93,40 @@ def _find_flight_logs(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("flight_log*_UTM.txt"))
 
 
+# Model-report filenames, newest convention FIRST. run_models.py writes
+# models_report.json (both modes); the other two are the retired H2024
+# driver names, still read so an old workspace censuses correctly. Adding
+# models_report.json here is what stops the portal re-ticking a finished
+# model stage on every resume (audit 2026-08-07).
+MODEL_REPORT_NAMES = ("models_report.json", "final_report.json",
+                      "fused_models_report.json")
+
+
 def _load_json(path: Path) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def _records(report: dict, *keys: str) -> list[dict]:
+    """The list of dict records under the first present key.
+
+    _load_json guards I/O and JSON errors but not SHAPE: a report whose
+    ``clusters`` is a dict (or whose entries are strings) used to crash the
+    census with ``AttributeError: 'str' object has no attribute 'get'``
+    (audit 2026-08-07). Anything that is not a dict record is dropped.
+    """
+    for key in keys:
+        value = report.get(key)
+        if value:
+            if isinstance(value, dict):
+                value = list(value.values())
+            if isinstance(value, list):
+                return [r for r in value if isinstance(r, dict)]
+    return []
 
 
 class Workspace:
@@ -168,6 +201,22 @@ class Workspace:
                     rows = max(0, sum(1 for _ in fh) - 1)
             except OSError:
                 pass
+            # A header-only log is the "nothing matched the nav table"
+            # artifact, and reporting it 'done' laundered it into a
+            # completed stage (audit 2026-08-07). Silence is not success.
+            if rows == 0:
+                return StageStatus(
+                    "georeference", "blocked",
+                    f"{logs[0].name} has 0 rows - NO image matched the nav "
+                    "table (wrong nav file, wrong --g_type, or a clock "
+                    "offset). Re-run georeference before aligning.")
+            images = _count_images(self.raw_images)
+            if images and rows < images // 2:
+                return StageStatus(
+                    "georeference", "partial",
+                    f"{logs[0].name} ({rows:,} rows) covers only "
+                    f"{100.0 * rows / images:.0f}% of the {images:,} images "
+                    "in raw_images/")
             return StageStatus("georeference", "done",
                                f"{logs[0].name} ({rows:,} rows)")
         return StageStatus("georeference", "pending", "no flight_log_*_UTM.txt")
@@ -186,11 +235,29 @@ class Workspace:
         zones = sorted(p for p in self.batched.iterdir() if p.is_dir())
         marker = self.batched / "batch_inputs.json"
         details = []
+        empty = []
+        total = 0
         for z in zones:
             n = _count_images(z)
+            total += n
+            if n == 0:
+                empty.append(z.name)
             has_log = bool(_find_flight_logs(z))
             details.append(f"{z.name}: {n:,} images"
                            + ("" if has_log else "  [no flight log]"))
+        # Zone folders that hold NO images are the flight-log/disk filename
+        # mismatch artifact - the batcher created the folders and copied
+        # nothing. Counting folders alone reported that 'done' and handed
+        # empty trees to alignment (audit 2026-08-07).
+        if zones and total == 0:
+            return StageStatus("batch", "blocked",
+                               f"{len(zones)} zone folders but ZERO images "
+                               "copied - the flight log's filenames do not "
+                               "match any file in the input tree", details)
+        if zones and empty:
+            return StageStatus("batch", "partial",
+                               f"{len(zones)} zones, but {len(empty)} hold no "
+                               f"images: {', '.join(empty[:5])}", details)
         if zones and marker.is_file():
             return StageStatus("batch", "done",
                                f"{len(zones)} zones, fingerprint present",
@@ -234,10 +301,23 @@ class Workspace:
         if not merge:
             return StageStatus("merge", "pending", "no merge_report.json")
         report = _load_json(merge / "merge_report.json")
-        finals = [c for rec in report.get("clusters", [])
-                  for c in rec.get("final_components", [])]
+        finals = [c for rec in _records(report, "clusters")
+                  for c in _records(rec, "final_components")]
         gate = merge / "EVALUATION_READY.txt"
         cams = sum(c.get("camera_count") or 0 for c in finals)
+        # The gate file alone is not proof: merge_zones used to write it
+        # BEFORE checking the assembly workflow's result, so a failed
+        # assembly left a document declaring a terminal state for a project
+        # that was never saved (audit 2026-08-07). Require the recorded
+        # workflow_success too - absent (older reports) still counts.
+        assembly = report.get("assembly")
+        assembly_ok = (not isinstance(assembly, dict)
+                       or assembly.get("workflow_success") is not False)
+        if finals and gate.is_file() and not assembly_ok:
+            return StageStatus("merge", "blocked",
+                               f"{merge.name}: EVALUATION_READY present but "
+                               "the assembly workflow FAILED - the assembly "
+                               "project was never saved")
         if finals and gate.is_file():
             return StageStatus("merge", "done",
                                f"{merge.name}: {len(finals)} final "
@@ -251,17 +331,19 @@ class Workspace:
 
     def _detect_model(self) -> StageStatus:
         done: list[str] = []
-        for name in ("final_report.json", "fused_models_report.json"):
+        for name in MODEL_REPORT_NAMES:
             report = _load_json(self.root / name)
-            models = report.get("models") or report.get("components") or []
-            done += [m.get("component") for m in models if m.get("success")]
+            for m in _records(report, "models", "components"):
+                if m.get("success"):
+                    done.append(m.get("component"))
+        done = [d for d in done if d]
         merge = self.latest_merge()
         finals = []
         if merge:
             rep = _load_json(merge / "merge_report.json")
             finals = [c.get("key", "").split("/")[-1]
-                      for rec in rep.get("clusters", [])
-                      for c in rec.get("final_components", [])]
+                      for rec in _records(rep, "clusters")
+                      for c in _records(rec, "final_components")]
         if done and finals and set(finals) <= set(done):
             return StageStatus("model", "done",
                                f"{len(done)} of {len(finals)} components "
@@ -278,20 +360,42 @@ class Workspace:
             return StageStatus("export", "pending", "no exports/")
         comps = sorted(p for p in self.exports.iterdir() if p.is_dir())
         details = []
+        exported: set[str] = set()
         for c in comps:
             kinds = [k.name for k in c.iterdir()
                      if k.is_dir() and any(k.iterdir())]
             if kinds:
+                exported.add(c.name)
                 details.append(f"{c.name}: {', '.join(sorted(kinds))}")
+        # The denominator is what the MERGE declared final, not what
+        # exports/ happens to contain: measuring exports against itself
+        # reported "1 of 1" for a 1-of-6 export (audit 2026-08-07).
+        expected = set()
+        merge = self.latest_merge()
+        if merge:
+            rep = _load_json(merge / "merge_report.json")
+            expected = {c.get("key", "").split("/")[-1]
+                        for rec in _records(rep, "clusters")
+                        for c in _records(rec, "final_components")}
+            expected.discard("")
         if details:
-            return StageStatus("export", "partial" if len(details) < max(len(comps), 1)
-                               else "done",
+            missing = sorted(expected - exported)
+            if missing:
+                return StageStatus(
+                    "export", "partial",
+                    f"{len(exported)} of {len(expected)} component(s) "
+                    f"exported; missing: {', '.join(missing)}", details)
+            if len(details) < max(len(comps), 1):
+                return StageStatus("export", "partial",
+                                   f"{len(details)} of {len(comps)} export "
+                                   "folder(s) hold deliverables", details)
+            return StageStatus("export", "done",
                                f"{len(details)} component(s) exported", details)
         return StageStatus("export", "pending", "exports/ is empty")
 
     def _detect_publish(self) -> StageStatus:
         report = _load_json(self.root / "publish_report.json")
-        assets = report.get("assets", [])
+        assets = _records(report, "assets")
         if assets:
             ok = sum(1 for a in assets
                      if (a.get("cesium") or {}).get("success")
@@ -314,19 +418,21 @@ class Workspace:
         if not merge:
             return []
         report = _load_json(merge / "merge_report.json")
-        scales = report.get("input_scales", {})
+        scales = report.get("input_scales")
+        scales = scales if isinstance(scales, dict) else {}
         out: dict[str, ComponentInfo] = {}
-        for rec in report.get("clusters", []):
-            for c in rec.get("final_components", []):
+        for rec in _records(report, "clusters"):
+            for c in _records(rec, "final_components"):
                 key = c.get("key", "?")
                 name = key.split("/")[-1]
-                v = scales.get(key, {})
+                v = scales.get(key)
+                v = v if isinstance(v, dict) else {}
                 out[name] = ComponentInfo(
                     key=name, cameras=c.get("camera_count"),
                     scale=v.get("median"), scale_status=v.get("status", ""))
-        for rep_name in ("final_report.json", "fused_models_report.json"):
+        for rep_name in MODEL_REPORT_NAMES:
             rep = _load_json(self.root / rep_name)
-            for m in rep.get("models") or rep.get("components") or []:
+            for m in _records(rep, "models", "components"):
                 name = m.get("component")
                 if name in out and m.get("success"):
                     out[name].modelled = True

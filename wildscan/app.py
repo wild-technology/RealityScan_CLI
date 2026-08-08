@@ -39,7 +39,8 @@ from .branding import (CSS, MIST, OK, SAND, STATUS_COLOR, STATUS_GLYPH, TEAL,
 from .runner import CommandRunner, LogLine, ProgressUpdate, RunFinished
 from .session import (ALL_STAGES, Session, build_commands, build_questions,
                       default_enabled, default_session, export_names_file,
-                      prepare_results_root, save_last_run, scan_raw_data)
+                      prepare_results_root, save_last_run, scan_raw_data,
+                      write_camera_records)
 from .workspace import STAGE_TITLES, Workspace
 
 
@@ -390,8 +391,31 @@ class RunScreen(Screen):
         app: WildScanApp = self.app  # type: ignore[assignment]
         if "export" in app.session.enabled:
             export_names_file(app.session)
+        write_camera_records(app.session)
         self.commands = build_commands(app.session)
         self._advance()
+
+    def _refresh_export_command(self) -> None:
+        """Re-resolve the Export stage's --project/--names from a FRESH
+        workspace, immediately before it launches.
+
+        Both were baked in at plan time (on_mount), before any stage ran,
+        so a run that included Merge exported the PREVIOUS run's assembly
+        under the new run's name: the argv carried the old
+        ws.assembly_project() and export_names_file's `if names:` guard
+        left a stale components.names in place (audit 2026-08-07).
+        """
+        app: WildScanApp = self.app  # type: ignore[assignment]
+        cmd = self.commands[self.current]
+        if "export_deliverables.py" not in " ".join(cmd.argv):
+            return
+        export_names_file(app.session)
+        ws = Workspace(app.session.results_root)
+        project = str(ws.assembly_project() or "")
+        for flag, value in (("--project", project),
+                            ("--names", str(ws.exports / "components.names"))):
+            if flag in cmd.argv:
+                cmd.argv[cmd.argv.index(flag) + 1] = value
 
     def _advance(self) -> None:
         self.current += 1
@@ -402,6 +426,7 @@ class RunScreen(Screen):
                 Text("Esc for the pipeline status view.", style=OK))
             self.query_one("#r-continue", Button).disabled = True
             return
+        self._refresh_export_command()
         cmd = self.commands[self.current]
         self.query_one("#r-title", Label).update(
             f"Stage {self.current + 1} of {len(self.commands)}: {cmd.stage}")

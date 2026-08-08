@@ -46,6 +46,42 @@ from module_base.settings_store import SettingsStore, realityscan_env  # noqa: E
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa: E402
 
 
+# Per component, ExportDeliverables.bat writes one subfolder per format.
+EXPORT_KINDS = ('obj', 'fbx', 'ply')
+
+
+def read_component_names(names_file: str) -> list[str]:
+    """Non-blank component names from the list file, BOM-tolerant."""
+    with open(names_file, encoding='utf-8-sig') as fh:
+        return [line.strip() for line in fh if line.strip()]
+
+
+def missing_exports(exports_dir: str, names: list[str]) -> list[str]:
+    """'<component>/<kind>' entries that hold no non-empty file.
+
+    The .bat's per-component loop runs zero iterations on an empty name
+    list, falls through to -quit and exits 0; and a selection-driven
+    export under -silent can auto-answer the "Export Selection" dialog and
+    export NOTHING while still succeeding (MergeZoneComponents.bat records
+    the census reading 0). Exit code plus an empty errors marker is
+    therefore not evidence a deliverable exists (audit 2026-08-07).
+    """
+    missing = []
+    for name in names:
+        for kind in EXPORT_KINDS:
+            kind_dir = os.path.join(exports_dir, name, kind)
+            try:
+                produced = any(
+                    os.path.getsize(os.path.join(kind_dir, f)) > 0
+                    for f in os.listdir(kind_dir)
+                    if os.path.isfile(os.path.join(kind_dir, f)))
+            except OSError:
+                produced = False
+            if not produced:
+                missing.append(f'{name}/{kind}')
+    return missing
+
+
 def run_export(project: str, exports_dir: str, names_file: str,
                log_dir: str = None, logger: logging.Logger = None,
                settings: SettingsStore = None):
@@ -100,6 +136,21 @@ def main() -> int:
     if not os.path.isfile(args.names):
         logger.error('component name list not found: %r', args.names)
         return 1
+    # An EMPTY (or whitespace-only) list makes the .bat's `for /f` loop run
+    # ZERO iterations, -quit, and exit 0: a no-op that reports success and
+    # produces no deliverables at all (audit 2026-08-07).
+    try:
+        names = read_component_names(args.names)
+    except OSError as exc:
+        logger.error('cannot read component name list %r: %s', args.names, exc)
+        return 1
+    if not names:
+        logger.error('component name list %r names NOTHING - the export '
+                     'workflow would boot RealityScan, export zero '
+                     'components and exit 0. Populate it from the merge '
+                     "report's final_components first.", args.names)
+        return 1
+    logger.info('exporting %d component(s): %s', len(names), ', '.join(names))
 
     # Prompt-with-default on a TTY, silent stored/fallback when unattended
     # (SettingsStore.ask); values already in the environment are never
@@ -114,9 +165,21 @@ def main() -> int:
                         log_dir=args.log_dir, logger=logger,
                         settings=settings)
     if result.success:
+        missing = missing_exports(args.exports, names)
+        if missing:
+            logger.error(
+                'export workflow returned success but %d of %d expected '
+                'deliverable folder(s) hold no file: %s. RealityScan reports '
+                'success for do-nothing exports (a selection-driven export '
+                'under -silent can export NOTHING), so the exit code alone '
+                'proves nothing. Log: %s',
+                len(missing), len(names) * len(EXPORT_KINDS),
+                ', '.join(missing[:12]) + (' ...' if len(missing) > 12 else ''),
+                result.log_path)
+            return 1
         logger.info('export deliverables succeeded in %.1f min. '
-                    'Deliverables in %s. Log: %s',
-                    result.duration_seconds / 60, args.exports,
+                    '%d component(s) exported to %s. Log: %s',
+                    result.duration_seconds / 60, len(names), args.exports,
                     result.log_path)
         return 0
     logger.error('export deliverables FAILED (exit %s, %s). Log: %s',

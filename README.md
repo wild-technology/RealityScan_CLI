@@ -142,6 +142,39 @@ The design (informed by hard-won lessons — see
    old code polled `tasklist` for `RealityCapture.exe` after the executable
    had been renamed `RealityScan.exe`, so the wait always returned
    immediately and raced ahead of the CLI.)
+6. **Boot mode refuses `*` as an instance name.** `*` means "first
+   available instance" and a GUI/Epic-Launcher RealityScan answers it —
+   so booting against it would `-quit` and then `-newScene
+   -deleteAutosave` somebody's live interactive scene. Only *attach* mode
+   (`finish_model.py` / `run_attach_script`) accepts `*`; it never boots
+   and never resets.
+7. **Workflow arguments are validated before they reach `cmd`.** Python's
+   `list2cmdline` quotes only on whitespace and `cmd` re-parses even a
+   quoted argument, so `& ^ | < > ( ) = , ; % ! " ` ` in a path are
+   silently split, eaten, or *executed* — with the process still
+   returning 0. `RealityScanCLI` raises a `ValueError` naming the
+   argument instead. If an expedition folder is called `NA167, dive 2` or
+   `Wreck & Debris`, rename it or pass the value through a file/env var
+   (hard rule 8).
+
+### The input image folder is WRITTEN INTO
+
+Alignment does not treat the folder you hand it as read-only, and this
+matters when you point the pipeline at your own imagery rather than a
+pipeline-made zone tree:
+
+- the in-session identity harvest **MOVES** every pose-bearing `.xmp`
+  sidecar out of the tree into `<output>/identity_r<K>` and does not put
+  it back (leftover pose sidecars auto-import as exact-pose priors on any
+  later add — bug B7);
+- remaining sidecars are **rewritten** to calibration-only content, or
+  **deleted** when the filename matches no known camera;
+- missing calibration sidecars are **regenerated** for recognised
+  cameras.
+
+A run whose input folder already contains pose sidecars logs a loud
+warning naming the count before anything moves. Copy the folder first if
+those sidecars are yours.
 
 ### Multi-GPU
 

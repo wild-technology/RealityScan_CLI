@@ -38,6 +38,7 @@ sys.path.insert(0, REPO_ROOT)
 
 import geoall  # noqa: E402
 from modules import camera_registry  # noqa: E402
+from modules.georeference import georeference_images as geo_module  # noqa: E402
 from modules.georeference.georeference_images import (  # noqa: E402
     MOUNTS,
     GeoreferenceImages,
@@ -195,11 +196,18 @@ def test_geoall_covers_wca_at_all(geo):
 
 
 def test_geoall_orientation_accuracy_is_the_measured_value():
-    """3 deg FRAGMENTS the solve (PD-0); 15 deg is the measured figure."""
+    """3 deg FRAGMENTS the solve (PD-0); 15 deg is the measured DEFAULT.
+
+    Was a source grep for the literal `yaw_acc = 15.0`; the value now comes
+    from the shared PRIOR_ACCURACY_DEFAULTS table geoall imports, so the
+    check is on the default it actually writes (audit 2026-08-07)."""
+    assert geoall._ACCURACY_DEFAULTS['yaw'] == 15.0
+    assert geoall._ACCURACY_DEFAULTS['roll'] == 15.0
+    # No second table anywhere in geoall: the 3-vs-15 divergence M4 exists
+    # to prevent came from exactly such a private copy.
     src = open(os.path.join(REPO_ROOT, 'geoall.py'), encoding='utf-8').read()
-    assert 'yaw_acc = 15.0' in src
-    assert 'roll_acc = 15.0' in src
     assert 'yaw_acc = 3.0' not in src
+    assert 'yaw_acc = 15.0' not in src
 
 
 # ------------------------------------------------- cameras.json parity (belt)
@@ -272,24 +280,27 @@ def test_cameras_json_patterns_resolve_like_the_runtime_matcher():
     assert json_family('unrecognised.jpg') is None
 
 
-def test_cameras_json_defaults_match_the_flight_log_literals():
-    """defaults port the accuracy literals still hardcoded in the two
-    flight-log writers; keep them equal until migration step (c+)."""
+def test_cameras_json_defaults_match_the_shared_accuracy_table():
+    """cameras.json's defaults and the ONE runtime table must agree.
+
+    The accuracies used to be literals in BOTH flight-log writers and this
+    test grepped for them as source text; they are now the defaults of
+    georeference_images.PRIOR_ACCURACY_DEFAULTS, which geoall imports, so
+    the contract is a value comparison rather than a string search
+    (audit 2026-08-07)."""
     data = _cameras_json()
     d = data['defaults']
     pos, ori = d['position_accuracy_m'], d['orientation_accuracy_deg']
-    for path in (os.path.join(REPO_ROOT, 'modules', 'georeference',
-                              'georeference_images.py'),
-                 os.path.join(REPO_ROOT, 'geoall.py')):
-        src = open(path, encoding='utf-8').read()
-        assert f"pos_x_acc = {pos['x']}" in src, path
-        assert f"pos_y_acc = {pos['y']}" in src, path
-        assert f"alt_acc = {pos['alt']}" in src, path
-        assert f"yaw_acc = {ori['yaw']}" in src, path
-        assert f"roll_acc = {ori['roll']}" in src, path
-    # The unknown-mount pitch fallback, shared by both implementations
-    assert geoall.get_camera_pitch_accuracy('mystery_cam.jpg') == \
-        d['unknown_mount_pitch_accuracy_deg']
+    assert geo_module.PRIOR_ACCURACY_DEFAULTS['pos_xy'] == pos['x'] == pos['y']
+    assert geo_module.PRIOR_ACCURACY_DEFAULTS['alt'] == pos['alt']
+    assert geo_module.PRIOR_ACCURACY_DEFAULTS['yaw'] == ori['yaw']
+    assert geo_module.PRIOR_ACCURACY_DEFAULTS['roll'] == ori['roll']
+    # geoall must consume the SAME object, not a copy of the numbers.
+    assert geoall._ACCURACY_DEFAULTS is geo_module.PRIOR_ACCURACY_DEFAULTS
+    # An UNKNOWN mount now gets NO pitch prior in either implementation -
+    # cameras.json records that as null, not as a 10 deg fallback.
+    assert d['unknown_mount_pitch_accuracy_deg'] is None
+    assert geoall.get_camera_pitch_accuracy('mystery_cam.jpg') is None
 
 
 def test_cameras_json_voyis_entries_are_data_only():

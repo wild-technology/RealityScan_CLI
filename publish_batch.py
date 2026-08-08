@@ -32,6 +32,30 @@ REPO = Path(__file__).resolve().parent
 logger = logging.getLogger('publish_batch')
 
 
+def resolve_input_crs(workspace: Path) -> str | None:
+    """``'EPSG:32654'`` from the workspace's own flight log, or None.
+
+    Searches the merge output (whose union log is what the exported
+    components were built against) before raw_images/ and the root, and
+    raises SystemExit when zone-tagged logs DISAGREE rather than picking
+    one - the same rule flight_logs.find_flight_log applies.
+    """
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from modules.flight_logs import assert_one_zone, crs_for_flight_log
+    logs = sorted(workspace.glob('*/flight_log*_UTM.txt')) + \
+        sorted((workspace / 'raw_images').glob('flight_log*_UTM.txt')) + \
+        sorted(workspace.glob('flight_log*_UTM.txt'))
+    tagged = [p for p in logs if crs_for_flight_log(str(p))]
+    if not tagged:
+        return None
+    try:
+        assert_one_zone([str(p) for p in tagged], str(workspace))
+    except ValueError as exc:
+        raise SystemExit(f'cannot resolve an input CRS: {exc}') from None
+    return crs_for_flight_log(str(tagged[0]))
+
+
 def run(argv: list[str], dry_run: bool) -> dict:
     printable = ' '.join(a if ' ' not in a else f'"{a}"' for a in argv)
     if dry_run:
@@ -66,6 +90,25 @@ def main() -> int:
     if not exports.is_dir():
         raise SystemExit(f'no exports directory under {args.workspace}')
 
+    # The exports are georeferenced: ModelExportParamsOBJ_NiraParts sets
+    # MvsExportIsGeoreferenced with scale 1.0 and no offset, i.e. raw UTM
+    # metres. Publishing them with no CRS silently places the asset in the
+    # wrong part of the world, and nothing in the portal path supplied one
+    # (audit 2026-08-07). Resolve it from the workspace's own flight log
+    # when --input-crs was not given, and REFUSE when a zone-tagged log
+    # exists but no CRS could be derived from it.
+    input_crs = args.input_crs
+    if not input_crs:
+        input_crs = resolve_input_crs(Path(args.workspace))
+        if input_crs:
+            logger.info('input CRS resolved from the workspace flight log: '
+                        '%s', input_crs)
+        else:
+            logger.warning(
+                'no zone-tagged flight_log*_UTM.txt under %s - publishing '
+                'WITHOUT an input CRS (correct only for a local-frame '
+                'campaign). Pass --input-crs to be explicit.', args.workspace)
+
     cesium_token = os.environ.get('CESIUM_ION_TOKEN')
     nira_dir = os.environ.get('NIRACLIENT_DIR')
     if not cesium_token:
@@ -94,8 +137,8 @@ def main() -> int:
         if cesium_token or args.dry_run:
             argv = [sys.executable, str(REPO / 'publish_cesium.py'),
                     '--name', name, '--dir', str(comp / 'obj'), '--poll']
-            if args.input_crs:
-                argv += ['--input-crs', args.input_crs]
+            if input_crs:
+                argv += ['--input-crs', input_crs]
             entry['cesium'] = run(argv, args.dry_run)
         if nira_dir or args.dry_run:
             argv = [sys.executable, str(REPO / 'publish_nira.py'),

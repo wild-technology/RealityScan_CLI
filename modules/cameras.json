@@ -19,22 +19,28 @@
   ],
   "defaults": {
     "_comment": [
-      "Flight-log accuracy columns, verbatim from",
-      "modules/georeference/georeference_images.py __generate_flight_log",
-      "(and mirrored by geoall.generate_flight_log).",
+      "Flight-log accuracy columns. Since 2026-08-07 these are the",
+      "DEFAULTS of real knobs, not literals:",
+      "modules/georeference/georeference_images.PRIOR_ACCURACY_DEFAULTS is",
+      "the one table, exposed as --g_pos_accuracy / --g_alt_accuracy /",
+      "--g_orientation_accuracy on the module and --pos-accuracy /",
+      "--alt-accuracy / --orientation-accuracy on geoall.py.",
       "Position accuracy is END-TO-END PER-IMAGE UNCERTAINTY, not sensor",
       "spec: claiming the sensor figure (1/1/0.1) measurably FRAGMENTS",
       "solves (testing/PRIORS_DISTORTION_TEST_PLAN.md 'bow 2x2').",
       "Orientation stays at HONEST 15 deg until the mounts are",
       "ground-truthed: PD-0/PD-0b measured 3-5 deg claimed accuracy",
       "FRAGMENTING the solve while 15 deg gained registration.",
-      "unknown_mount_pitch_accuracy_deg is the shared fallback for an",
-      "UNKNOWN mount, deliberately not tighter - a confident claim on an",
-      "unknown mount is the worst possible case."
+      "unknown_mount_pitch_accuracy_deg is null BY DESIGN: an UNKNOWN",
+      "mount gets NO pitch prior at all. It used to be 10.0, i.e. 'this",
+      "camera looks straight ahead' asserted at 10 deg confidence on a",
+      "mount nobody measured - the invention MOUNTS['wca_starboard']=null",
+      "exists to refuse (audit 2026-08-07). Pitch and Pitch Accuracy are",
+      "written EMPTY for those rows; yaw/roll still come from the nav."
     ],
     "position_accuracy_m": {"x": 10.0, "y": 10.0, "alt": 1.0},
     "orientation_accuracy_deg": {"yaw": 15.0, "roll": 15.0},
-    "unknown_mount_pitch_accuracy_deg": 10.0
+    "unknown_mount_pitch_accuracy_deg": null
   },
   "cameras": {
     "_comment": [

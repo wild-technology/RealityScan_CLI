@@ -50,6 +50,14 @@ set "name_list=%~3"
 
 if not exist "%scene_path%" ( echo ERROR: project not found: %scene_path% & exit /b 1 )
 if not exist "%name_list%" ( echo ERROR: name list not found: %name_list% & exit /b 1 )
+:: An EMPTY (or whitespace-only) list makes the per-component `for /f`
+:: below run ZERO iterations: it falls through to -quit and exits 0 -
+:: a no-op that reports success and produces no deliverables at all
+:: (audit 2026-08-07). Count the names FIRST, before an instance boots.
+set /a name_count=0
+for /f "usebackq delims=" %%N in ("%name_list%") do set /a name_count+=1
+if %name_count% EQU 0 goto :emptyList
+echo Components to export: %name_count%
 if not exist "%out_dir%" mkdir "%out_dir%"
 
 echo Project: %scene_path%
@@ -100,6 +108,11 @@ call :run -selectModel "%comp%_HighPoly_Raw" || exit /b 1
 call :run -calculateVertexColors || exit /b 1
 call :run -exportModel "%comp%_HighPoly_Raw" "%out_dir%\%comp%\ply\%comp%_dense.ply" "%PlyParams%" || exit /b 1
 exit /b 0
+
+:emptyList
+echo ERROR: component name list "%name_list%" names NOTHING.
+echo   Populate it from the merge report final_components before exporting.
+exit /b 1
 
 :fail
 echo ERROR: export workflow failed - see %ErrorsFile% and the RealityScan log

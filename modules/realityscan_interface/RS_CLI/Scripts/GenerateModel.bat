@@ -179,6 +179,18 @@ for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7
     call :try_delete_model %%M
 )
 
+:: POSITIVE PROOF the deliverable survived the sweep, before the save
+:: persists whatever is left. The 21 deletes above rest entirely on
+:: RealityScan writing an error for a missing model name - the one
+:: assumption the fact base says not to make (silence is not success)
+:: - and :try_delete_model own header records the hazard: a no-op
+:: -selectModel leaves the PREVIOUS selection live and the following
+:: -deleteSelectedModel then targeted the deliverable (audit #4).
+:: One delegated op, and a silently eaten model can no longer be
+:: written to disk as if it were the product (audit 2026-08-07).
+echo Verifying the deliverable still exists
+call :run -selectModel "%model_tag%_Simplified_Textured" || goto :deliverableGone
+
 echo Saving project
 call :run -save "%scene_path%" || goto :fail
 
@@ -190,6 +202,12 @@ if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
 echo Shutting down RealityScan instance %RS_INSTANCE%
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
+
+:deliverableGone
+echo ERROR: %model_tag%_Simplified_Textured is GONE after the intermediate
+echo   sweep - the project was NOT saved, so the pre-sweep scene on disk is
+echo   still intact. Re-run and check the delete loop.
+goto :fail
 
 :fail
 echo ERROR: model workflow failed - see %ErrorsFile% and the RealityScan log

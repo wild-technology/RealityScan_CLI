@@ -358,11 +358,15 @@ class Question:
     kind: str                    # text | path | file | number | bool
     default: str = ""
     required: bool = False
+    choices: tuple[str, ...] = ()
 
     def validate(self, value: str) -> str | None:
         value = value.strip()
         if not value:
             return "this one is required" if self.required else None
+        if self.choices and value.lower() not in {c.lower()
+                                                  for c in self.choices}:
+            return "must be one of: " + ", ".join(self.choices)
         if self.kind == "path" and not Path(value).is_dir():
             return f"{value} is not a directory"
         if self.kind == "file" and not Path(value).is_file():
@@ -387,8 +391,17 @@ _KIND_BY_NAME = {
     "rs_input_image_dir": "path",
     "rs_flight_log_path": "file",
 }
+# geo_input_type is REQUIRED (audit 2026-08-07): it has default_value None,
+# so a blank answer used to be accepted, dropped from argv, and only
+# rejected by GeoreferenceImages.validate_parameters ("No data type
+# specified") after the operator had already pressed Run.
 _REQUIRED = {"image_input_video", "geo_input_image_dir",
-             "geo_input_flight_log"}
+             "geo_input_flight_log", "geo_input_type"}
+# Answers constrained to a fixed set - validated at the question, not four
+# screens later.
+_CHOICES_BY_NAME = {
+    "geo_input_type": ("Zeuss", "WCA", "WCA2025", "All"),
+}
 # Alignment's per-zone model flags are a separate, gated stage here.
 _FORCED_ANSWERS = {"r_model_generate": "false", "r_model_cull_poly": "false",
                    "r_model_texture": "false", "r_model_simplify": "false",
@@ -414,6 +427,35 @@ def _module_registry() -> dict:
             "align": RealityScanAlignment(_quiet),
         }
     return _MODULES
+
+
+def chain_arg_names(chain: list[str]) -> set[str]:
+    """Every ``--<cli_long>`` main.py's parser ACCEPTS for this chain.
+
+    Mirrors main.py's initialize_parameters exactly: the two global
+    parameters, plus each enabled module's parameters minus any whose
+    disable_when_module_active names another enabled module. main.py builds
+    its argparse from the ENABLED modules only and rejects anything else
+    with exit 2, so forwarding the full persisted answer set made the
+    portal's own command unrunnable on 29 of 31 stage selections - and
+    default_enabled() unticks completed stages, so the SECOND session
+    always landed in the broken region (audit 2026-08-07).
+    """
+    names = {"output_dir", "continue_automatically"}
+    enabled_displays = {MODULE_DISPLAY[k] for k in chain if k in MODULE_DISPLAY}
+    for key in chain:
+        module = _module_registry().get(key)
+        if module is None:
+            continue
+        for p in module.get_parameters().values():
+            disabled_by = getattr(p, "disable_when_module_active", None)
+            if disabled_by:
+                if isinstance(disabled_by, str):
+                    disabled_by = [disabled_by]
+                if any(d in enabled_displays for d in disabled_by):
+                    continue
+            names.add(p.cli_long)
+    return names
 
 
 def scan_processed_data(location: str | Path) -> dict[str, list[Path]]:
@@ -525,7 +567,8 @@ def build_questions(session: Session, scan: RawDataScan) -> list[Question]:
                 stage=key, arg=p.cli_long,
                 prompt=(p.description or p.name).strip(),
                 kind=kind, default=default,
-                required=name in _REQUIRED))
+                required=name in _REQUIRED,
+                choices=_CHOICES_BY_NAME.get(name, ())))
     return questions
 
 
@@ -567,15 +610,28 @@ def build_commands(session: Session) -> list[StageCommand]:
         argv = [sys.executable, str(REPO / "main.py"),
                 "--output_dir", session.results_root,
                 "--continue_automatically", "true"]
+        # ONLY the flags main.py's parser accepts for THIS selection.
+        # session.answers is the persisted superset (it carries the whole
+        # previous run's answers by design, so a resumed session keeps its
+        # defaults) - forwarding all of it made argparse exit 2 with
+        # "unrecognized arguments" before a single stage ran.
+        accepted = chain_arg_names(chain)
         for arg, value in session.answers.items():
             # cam_* answers are the portal's camera record (persisted for
             # the maintainers + next session), never main.py arguments.
             if arg.startswith("cam_"):
                 continue
+            if arg not in accepted:
+                continue
             if value.strip():
                 argv += [f"--{arg}", value.strip()]
-        for arg, value in _FORCED_ANSWERS.items():
-            argv += [f"--{arg}", value]
+        # The forced model flags belong to RealityScan Alignment, so they
+        # are only legal when 'align' is in the chain; they used to be
+        # appended unconditionally, which alone rejected every
+        # align-less selection.
+        if "align" in chain:
+            for arg, value in _FORCED_ANSWERS.items():
+                argv += [f"--{arg}", value]
         env = {"RS_MODULES": ",".join(MODULE_DISPLAY[k] for k in chain),
                "RS_NO_INTERACTIVE": "1", "PYTHONIOENCODING": "utf-8"}
         needs_rs = "align" in chain
@@ -650,6 +706,16 @@ def build_commands(session: Session) -> list[StageCommand]:
         argv = [sys.executable, str(REPO / "publish_batch.py"),
                 "--workspace", session.results_root,
                 "--prefix", session.label or ws.root.name]
+        # The exports ARE georeferenced - ModelExportParamsOBJ_NiraParts
+        # sets MvsExportIsGeoreferenced with scale 1.0 and no offset, i.e.
+        # raw UTM metres - so uploading them with no CRS silently places
+        # the asset in the wrong part of the world. publish_batch resolves
+        # the EPSG from the workspace's own flight log when this is
+        # omitted; pinned here for the same reason --loss_tolerance is
+        # (audit 2026-08-07).
+        crs = workspace_input_crs(ws)
+        if crs:
+            argv += ["--input-crs", crs]
         if not (os.environ.get("CESIUM_ION_TOKEN")
                 or os.environ.get("NIRACLIENT_DIR")):
             argv.append("--dry-run")
@@ -658,6 +724,65 @@ def build_commands(session: Session) -> list[StageCommand]:
             env={"PYTHONIOENCODING": "utf-8"}))
 
     return commands
+
+
+def workspace_input_crs(ws: Workspace) -> str | None:
+    """``'EPSG:32654'`` for the workspace's imagery, or None for a
+    local-frame campaign (no zone tag anywhere)."""
+    from modules.flight_logs import crs_for_flight_log  # noqa: PLC0415
+    candidates = list(_find_flight_logs(ws.raw_images)) or \
+        list(_find_flight_logs(ws.root))
+    merge = ws.latest_merge()
+    if merge:
+        candidates = sorted(merge.glob("flight_log*_UTM.txt")) + candidates
+    for path in candidates:
+        crs = crs_for_flight_log(str(path))
+        if crs:
+            return crs
+    return None
+
+
+def write_camera_records(session: Session) -> Path | None:
+    """Persist the portal's per-camera answers beside the results.
+
+    The wizard asks for a new camera's official name, lens, LEVER ARM and
+    TILT as REQUIRED answers and then drops every cam_* key when building
+    main.py's argv - by design (they are records, not pipeline arguments;
+    the runtime truth is modules/cameras.json + MOUNTS). Collecting a
+    required answer and leaving it only in rs_settings.json meant the
+    measurement the operator just took was effectively lost
+    (audit 2026-08-07). Writing them into the workspace keeps them with
+    the dive they describe and gives the maintainer the exact text to port
+    into cameras.json / MOUNTS.
+
+    Returns the file path, or None when there were no camera answers.
+    """
+    records = {k: v for k, v in session.answers.items()
+               if k.startswith("cam_") and str(v).strip()}
+    if not records or not session.results_root:
+        return None
+    import json  # noqa: PLC0415
+    root = Path(session.results_root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "camera_records.json"
+    payload = {
+        "_comment": [
+            "Camera identities the WildScan operator supplied for filename",
+            "prefixes the registry did not recognise. These are RECORDS,",
+            "not runtime settings: the pipeline's camera truth is",
+            "modules/cameras.json (optics/calibration groups) and",
+            "modules/georeference/georeference_images.py MOUNTS (lever arm,",
+            "tilt, pitch accuracy). Until a prefix is added there, its",
+            "images get NO pitch prior at all - deliberately, so no run",
+            "invents a mount that was never measured.",
+        ],
+        "expedition": session.expedition,
+        "dive": session.dive,
+        "cameras": records,
+    }
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, sort_keys=True)
+    return path
 
 
 def prepare_results_root(session: Session) -> list[str]:
@@ -674,11 +799,17 @@ def export_names_file(session: Session) -> None:
     merge = ws.latest_merge()
     if not merge:
         return
-    from .workspace import _load_json  # noqa: PLC0415
+    from .workspace import _load_json, _records  # noqa: PLC0415
     rep = _load_json(merge / "merge_report.json")
     names = [c.get("key", "").split("/")[-1]
-             for rec in rep.get("clusters", [])
-             for c in rec.get("final_components", [])]
+             for rec in _records(rep, "clusters")
+             for c in _records(rec, "final_components")]
+    names = [n for n in names if n]
+    # `if names:` is deliberate but has a sharp edge the caller must cover:
+    # when the CURRENT report yields nothing this returns without touching
+    # an existing components.names, so a stale list survives. The export
+    # stage re-resolves both --project and --names at launch time
+    # (wildscan/app.py _refresh_export_command) for exactly that reason.
     if names:
         ws.exports.mkdir(parents=True, exist_ok=True)
         with open(ws.exports / "components.names", "w",

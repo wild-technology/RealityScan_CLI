@@ -118,21 +118,24 @@ def initialize_parameters(modules) -> dict[str, Parameter]:
 
     return params
 
-def parse_arguments(argv, params, logger) -> None:
-    """
-    Parses CLI args and prompts for any missing values.
+def _str_to_bool(value: str) -> bool:
+    # argparse with type=bool would treat any non-empty string
+    # (including "False") as True
+    return value.strip().lower() in ('true', 't', 'yes', 'y', '1')
 
-    Prompted values are persisted to rs_settings.json (section "main") and
-    offered as the default on the next run - press enter to reuse them.
-    """
-    def str_to_bool(value: str) -> bool:
-        # argparse with type=bool would treat any non-empty string
-        # (including "False") as True
-        return value.strip().lower() in ('true', 't', 'yes', 'y', '1')
 
+def build_arg_parser(params) -> argparse.ArgumentParser:
+    """The parser this run accepts - built from the ENABLED modules only.
+
+    Extracted from parse_arguments so callers that GENERATE a main.py
+    command line (the WildScan portal) can be tested against the real
+    parser instead of a parallel list of flag names. A flag not defined
+    here is an argparse exit-2 "unrecognized arguments" before any stage
+    runs (audit 2026-08-07).
+    """
     parser = argparse.ArgumentParser()
     for p in params.values():
-        arg_type = str_to_bool if p.get_type() is bool else p.get_type()
+        arg_type = _str_to_bool if p.get_type() is bool else p.get_type()
         # argparse %-expands help text at print_help() time, so a literal
         # percent in a description (e.g. "96.3% -> 89.6%") crashes --help
         # and every argparse error path. Descriptions stay human-readable
@@ -140,6 +143,18 @@ def parse_arguments(argv, params, logger) -> None:
         parser.add_argument(f'-{p.cli_short}', f'--{p.cli_long}',
                             type=arg_type,
                             help=p.get_description().replace('%', '%%'))
+    return parser
+
+
+def parse_arguments(argv, params, logger) -> None:
+    """
+    Parses CLI args and prompts for any missing values.
+
+    Prompted values are persisted to rs_settings.json (section "main") and
+    offered as the default on the next run - press enter to reuse them.
+    """
+    str_to_bool = _str_to_bool
+    parser = build_arg_parser(params)
     args = parser.parse_args(argv[1:])
 
     settings = SettingsStore()

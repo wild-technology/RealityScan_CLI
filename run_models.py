@@ -47,7 +47,7 @@ sys.path.insert(0, str(REPO))
 from module_base.settings_store import SettingsStore, realityscan_env  # noqa: E402
 from modules import scale_oracle  # noqa: E402
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa: E402
-from modules.workspace_census import Workspace  # noqa: E402
+from modules.workspace_census import Workspace, _records  # noqa: E402
 
 MIN_FREE_GB = 50.0
 
@@ -184,6 +184,14 @@ def main() -> int:
         return run_direct(args)
 
     ws = Workspace(args.workspace)
+    # Validate BEFORE the FileHandler, exactly as run_direct does: a
+    # mistyped --workspace (or one naming a FILE) used to die with a
+    # FileNotFoundError traceback out of basicConfig trying to open
+    # <workspace>/models_driver.log (audit 2026-08-07).
+    if not ws.root.is_dir():
+        print(f'ERROR: workspace not found (or not a directory): {ws.root}',
+              file=sys.stderr)
+        return 1
     logging.basicConfig(
         level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
         handlers=[logging.FileHandler(ws.root / 'models_driver.log',
@@ -220,9 +228,16 @@ def main() -> int:
         with open(report_path, 'w', encoding='utf-8') as fh:
             json.dump(out, fh, indent=2)
 
+    # _records drops anything that is not a dict record: a merge report
+    # whose 'clusters' is a dict (or holds strings) used to crash here with
+    # AttributeError instead of a message (audit 2026-08-07).
     finals = [(c.get('key', '?'), c)
-              for rec in report.get('clusters', [])
-              for c in rec.get('final_components', [])]
+              for rec in _records(report, 'clusters')
+              for c in _records(rec, 'final_components')]
+    if not finals:
+        logger.error('merge report %s declares no final components - nothing '
+                     'to model', merge / 'merge_report.json')
+        return 1
     finals.sort(key=lambda kc: kc[1].get('camera_count') or 0)
 
     cli = make_cli()
@@ -246,7 +261,11 @@ def main() -> int:
             out['models'].append(entry)
             flush()
             continue
-        if shutil.disk_usage(ws.root.drive + '\\').free / 1024**3 < MIN_FREE_GB:
+        # The resolved path, not a reconstructed drive root: Path('ws').drive
+        # is '' for a relative --workspace, so `drive + '\\'` became '\\'
+        # and the floor measured the SYSTEM drive instead of the data
+        # volume (audit 2026-08-07).
+        if shutil.disk_usage(ws.root).free / 1024**3 < MIN_FREE_GB:
             logger.error('ABORT: below the %.0f GB floor', MIN_FREE_GB)
             entry['skipped'] = 'disk_floor'
             out['models'].append(entry)

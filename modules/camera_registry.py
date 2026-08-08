@@ -7,7 +7,9 @@ structures the pipeline has always consumed; every public signature is
 unchanged. A one-release parity brace (_assert_parity below) re-asserts
 the retired hardcoded tables against the JSON on every import, so a bad
 edit to cameras.json is a hard ImportError naming the divergent key
-instead of a silent behavior change.
+instead of a silent behavior change. It is a SUBSET check: adding a new
+expedition's camera/family to cameras.json is supported and does not trip
+it - only changing or removing a legacy row does.
 
 The rig carries FOUR cameras that appear under era-specific filename
 families (owner-confirmed 2026-07-23):
@@ -98,9 +100,11 @@ _MATCHERS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
 
 # ---------------------------------------------------------------------------
 # Parity brace (keep for ONE release, then delete with migration step (c+)):
-# the pre-JSON hardcoded tables, byte-for-byte. cameras.json must reproduce
-# them exactly; a mismatch aborts the import so no run can proceed on a
-# silently-diverged registry.
+# the pre-JSON hardcoded tables, byte-for-byte. cameras.json must still
+# CONTAIN every row below, unchanged and in the same relative order; a
+# divergence aborts the import so no run can proceed on a silently-changed
+# registry. ADDING cameras/families is explicitly allowed - see
+# _assert_parity's docstring.
 
 _LEGACY_CAMERAS: dict[str, Camera] = {
     'zeuss': Camera('zeuss', '1', 'Approximate', 23.0, '1', 'Approximate', 'brown3'),
@@ -134,29 +138,53 @@ _LEGACY_FAMILY_PATTERNS: tuple[tuple[str, str], ...] = (
 
 
 def _assert_parity() -> None:
-    """cameras.json must be a byte-for-byte port of the retired tables."""
-    for key in sorted(set(_LEGACY_CAMERAS) | set(CAMERAS)):
-        if CAMERAS.get(key) != _LEGACY_CAMERAS.get(key):
+    """Every retired legacy row must still be PRESENT and UNCHANGED in
+    cameras.json, and the legacy patterns must keep their relative order.
+
+    ADDITIONS ARE ALLOWED. This used to demand a byte-for-byte
+    reproduction - exact family set, exact family COUNT - which made
+    "add your expedition's camera to cameras.json" a hard ImportError that
+    bricked main.py, wildscan and every standalone driver at once, even
+    though the module's own docstring calls that file the place owner
+    per-rig settings live (audit 2026-08-07). The brace's real job is to
+    prove no legacy behaviour drifted while the JSON became the source of
+    truth, and a subset check proves exactly that.
+
+    Order still matters for the legacy rows because family() walks the
+    list MOST SPECIFIC FIRST (an unanchored 'herc' token once beat an
+    anchored WCA prefix). New rows may sit anywhere; if a new pattern
+    shadows a legacy one, THAT is the author's problem to test - the
+    relative order of the seven legacy rows is what is pinned here.
+    """
+    for key, legacy in sorted(_LEGACY_CAMERAS.items()):
+        if key not in CAMERAS:
+            raise ImportError(
+                f'cameras.json parity: cameras[{key!r}] is MISSING - the '
+                'retired legacy cameras may be extended but never removed')
+        if CAMERAS[key] != legacy:
             raise ImportError(
                 f'cameras.json parity: cameras[{key!r}] diverges from the '
-                f'legacy table: {CAMERAS.get(key)!r} != '
-                f'{_LEGACY_CAMERAS.get(key)!r}')
-    for key in sorted(set(_LEGACY_FAMILY_CAMERA) | set(FAMILY_CAMERA)):
-        if FAMILY_CAMERA.get(key) != _LEGACY_FAMILY_CAMERA.get(key):
+                f'legacy table: {CAMERAS[key]!r} != {legacy!r}')
+    for key, legacy in sorted(_LEGACY_FAMILY_CAMERA.items()):
+        if FAMILY_CAMERA.get(key) != legacy:
             raise ImportError(
                 f'cameras.json parity: families[{key!r}].camera diverges '
                 f'from the legacy table: {FAMILY_CAMERA.get(key)!r} != '
-                f'{_LEGACY_FAMILY_CAMERA.get(key)!r}')
-    got = tuple((f['family'], f['pattern']) for f in _FAMILIES)
-    if got != _LEGACY_FAMILY_PATTERNS:
-        for i, (have, want) in enumerate(zip(got, _LEGACY_FAMILY_PATTERNS)):
-            if have != want:
-                raise ImportError(
-                    f'cameras.json parity: families[{i}] pattern/order '
-                    f'diverges: {have!r} != {want!r}')
+                f'{legacy!r}')
+    got = {f['family']: f['pattern'] for f in _FAMILIES}
+    for fam, pattern in _LEGACY_FAMILY_PATTERNS:
+        if got.get(fam) != pattern:
+            raise ImportError(
+                f'cameras.json parity: families[{fam!r}] pattern diverges: '
+                f'{got.get(fam)!r} != {pattern!r}')
+    order = [f['family'] for f in _FAMILIES]
+    legacy_order = [fam for fam, _ in _LEGACY_FAMILY_PATTERNS]
+    seen_order = [fam for fam in order if fam in set(legacy_order)]
+    if seen_order != legacy_order:
         raise ImportError(
-            f'cameras.json parity: family count diverges: '
-            f'{len(got)} != {len(_LEGACY_FAMILY_PATTERNS)}')
+            f'cameras.json parity: the legacy families changed relative '
+            f'order ({seen_order} != {legacy_order}); family() matching is '
+            'most-specific-first and the order is load-bearing')
 
 
 _assert_parity()

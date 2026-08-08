@@ -191,6 +191,46 @@ RESOURCE_SAMPLE_SECONDS = 30.0
 SHUTDOWN_VERIFY_TIMEOUT_SECONDS = 900
 STATUS_CALL_TIMEOUT_SECONDS = 60
 
+# ---------------------------------------------------------------------------
+# Workflow-argument validation (the ONE boundary, hard rule 1)
+# ---------------------------------------------------------------------------
+# Python's list2cmdline quotes an argument only when it contains WHITESPACE,
+# and cmd re-parses even a quoted argument, so these characters are silently
+# eaten, split on, or executed when a path or name crosses into a .bat.
+# Measured with an echo-only .bat (audit 2026-08-07), every case rc=0:
+#   'D:\NA167 Wreck & Debris\exports' -> ARG1='D:\NA167 Wreck ', the rest RUN
+#   'D:\NA167^b\exports'              -> 'D:\NA167b\exports'  (caret eaten)
+#   'D:\dive\a=b\exports'             -> split; every later positional shifts
+#   'D:\dive\with,comma\final'        -> split
+# CLAUDE.md hard rule 8 names this trap for delimited DATA; nothing enforced
+# it for PATHS, which is exactly what a fresh user supplies ("NA167, dive 2",
+# "Wreck & Debris" are ordinary expedition folder names).
+#
+# ':' and '\' are absent deliberately - every argument here is a Windows
+# path. '%' and '!' ARE included: %VAR% expands at parse time and ! expands
+# under EnableDelayedExpansion, which several workflow scripts set.
+CMD_METACHARACTERS = frozenset('&^|<>()=,;%!"`')
+
+
+def assert_bat_safe(args, script_name: str = '') -> None:
+    """Refuse to hand cmd an argument it would silently corrupt.
+
+    Raises ValueError naming the argument, the offending characters and the
+    two legitimate ways across the boundary (rename, or pass by file/env
+    var). Called by BOTH run_batch_script and run_attach_script, so every
+    driver - finish_model, export_deliverables, run_models, merge_zones,
+    grow_zone and anything written later - is covered by one check.
+    """
+    for index, arg in enumerate(args, start=1):
+        bad = sorted(set(str(arg)) & CMD_METACHARACTERS)
+        if bad:
+            raise ValueError(
+                f'{script_name or "workflow"} argument {index} contains cmd '
+                f'metacharacter(s) {bad} that cmd splits, eats or EXECUTES '
+                f'silently (the process still returns 0): {arg!r}. '
+                'Rename the folder/component, or pass the value through a '
+                'file or an environment variable (CLAUDE.md hard rule 8).')
+
 
 def set_project_save_env(zone_images_root: str, label: str) -> str:
     """Arm the daily project-save schema for the workflow scripts.
@@ -537,6 +577,30 @@ class RealityScanCLI:
         script_path = os.path.join(SCRIPTS_DIR, script_name)
         if not os.path.isfile(script_path):
             raise FileNotFoundError(f'Workflow script not found: {script_path}')
+        assert_bat_safe(args, script_name)
+        # BOOT mode owns an instance's whole lifecycle: it -quits any
+        # instance answering that name and startRealityScan.bat's
+        # already-running branch then issues '-newScene -deleteAutosave'.
+        # '*' means "first available instance" and a GUI/Epic-Launcher
+        # RealityScan answers it - so booting against '*' destroys a
+        # multi-hour interactive reconstruction with no prompt (the ON2026
+        # near-miss class, HANDOFF 2026-08-07). Attach mode was hardened
+        # against exactly this; the boot path never was (audit 2026-08-07).
+        # It is reachable by typing '*' at the instance_name prompt or by
+        # exporting RS_INSTANCE=*.
+        bad_instance = set(self.instance_name) & set('*?<>:"/\\|')
+        if bad_instance or not self.instance_name.strip():
+            raise RuntimeError(
+                f'Refusing to BOOT RealityScan as instance '
+                f'{self.instance_name!r}: an instance name must be a plain '
+                f'token (no {sorted(bad_instance) or "empty name"}). "*" in '
+                'particular means "first available instance" and would let '
+                'this boot -quit and then -newScene -deleteAutosave a GUI '
+                'session\'s live scene. Set realityscan.instance_name (or '
+                'RS_INSTANCE) to a real name such as RS1; to FINISH a scene '
+                'another session created, use attach mode '
+                '(finish_model.py / RealityScanCLI.run_attach_script), '
+                'which never boots and never resets.')
 
         os.makedirs(log_dir, exist_ok=True)
         stamp = time.strftime('%Y-%m-%d_%H-%M-%S')
@@ -657,6 +721,11 @@ class RealityScanCLI:
         script_path = os.path.join(SCRIPTS_DIR, script_name)
         if not os.path.isfile(script_path):
             raise FileNotFoundError(f'Workflow script not found: {script_path}')
+        # Same cmd-metacharacter refusal as batch mode: attach passes the
+        # export directory, model name and source-model name straight
+        # through to ModelToFinal.bat. '*' is a LEGAL instance here (it is
+        # the whole point of attach mode) and rides separately from args.
+        assert_bat_safe(args, script_name)
 
         # Difference (a): REFUSE to start an instance. run_batch_script's
         # contract is "own the instance's whole lifecycle"; attach mode's

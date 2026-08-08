@@ -55,6 +55,15 @@ DEFAULT_SETTINGS_PATH = os.path.join(_REPO_ROOT, "rs_settings.json")
 #
 # Resolve these through realityscan_env() below - the single Python source
 # of truth - rather than reading the keys (or hardcoding values) in drivers.
+#
+# DELIBERATE OMISSION - gpu_devices: the section also carries a
+# 'gpu_devices' key (README documents it), but it is resolved inside
+# RealityScanCLI.run_batch_script (realityscan_cli.py), NOT here, because
+# GPU pinning is a BOOT-time property of the instance the CLI layer owns:
+# attach mode must never export it, and run_batch_script's own
+# gpu_devices= argument has to win over the stored value. Every driver
+# reaches RealityScan through that layer, so nothing loses the pin by
+# using realityscan_env() for the rest (audit 2026-08-07).
 
 REALITYSCAN_SECTION = "realityscan"
 DEFAULT_INSTANCE_NAME = "RS1"
@@ -85,9 +94,13 @@ def realityscan_env(store) -> dict:
     behaviour documented in startRealityScan.bat).
     """
     env = {
+        # `or DEFAULT_INSTANCE_NAME` on the STORED value too: a stored
+        # empty string used to be exported verbatim as RS_INSTANCE='',
+        # which every .bat then interpolates into an empty
+        # -delegateTo/-getStatus argument (audit 2026-08-07).
         "RS_INSTANCE": os.environ.get("RS_INSTANCE")
         or str(store.get(REALITYSCAN_SECTION, "instance_name",
-                         DEFAULT_INSTANCE_NAME)),
+                         DEFAULT_INSTANCE_NAME) or DEFAULT_INSTANCE_NAME),
         "RS_HEADLESS": os.environ.get("RS_HEADLESS")
         or headless_flag(store.get(REALITYSCAN_SECTION, "headless",
                                    DEFAULT_HEADLESS)),
@@ -110,7 +123,22 @@ class SettingsStore:
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                return {}
+            # The file is advertised as human-editable, so a section may
+            # come back as a scalar/null/list after a hand edit. get()/set()
+            # assume dicts, so such a section used to crash every driver at
+            # startup with AttributeError/TypeError - and the corrupt-file
+            # quarantine above never fired, because the JSON parses fine
+            # (audit 2026-08-07). Drop the bad sections loudly instead.
+            bad = sorted(k for k, v in data.items() if not isinstance(v, dict))
+            if bad:
+                print(f"WARNING: {self.path}: ignoring non-object settings "
+                      f"section(s) {bad} - each section must be a JSON "
+                      f"object. Fix or delete them to stop losing those "
+                      f"values.")
+                data = {k: v for k, v in data.items() if isinstance(v, dict)}
+            return data
         except (json.JSONDecodeError, OSError):
             # A corrupt settings file must never block a run; start fresh
             # but keep the broken file aside for inspection.
@@ -134,25 +162,60 @@ class SettingsStore:
                 os.remove(tmp_path)
             raise
 
+    # Defense in depth behind _load's normalisation: an in-process
+    # mutation (or a test double) can still put a non-dict in a section.
     def get(self, section: str, key: str, fallback=None):
-        return self._data.get(section, {}).get(key, fallback)
+        sec = self._data.get(section)
+        return sec.get(key, fallback) if isinstance(sec, dict) else fallback
 
     def set(self, section: str, key: str, value) -> None:
-        self._data.setdefault(section, {})[key] = value
+        if not isinstance(self._data.get(section), dict):
+            self._data[section] = {}
+        self._data[section][key] = value
         self._save()
+
+    @staticmethod
+    def _input_or_default(message: str, default):
+        """input() that never raises on an EOF stdin.
+
+        Unattended runs are the norm here (hidden consoles report
+        isatty()=True with an EOF stdin - Windows trap registry), and a
+        bare input() then aborts the driver with an EOFError traceback.
+        ``ask()`` has always guarded this; ``prompt``/``prompt_bool`` did
+        not, so geoall.py and organize_by_date.py could not run unattended
+        at all (audit 2026-08-07). Returns ``default`` on EOF; raises a
+        NAMED error when there is no default to fall back to.
+        """
+        try:
+            return input(message).strip()
+        except EOFError:
+            # Without this, prompt()'s `while not value` retry loop spins
+            # FOREVER on an EOF stdin (input() keeps returning '') - the
+            # named error is what turns an unattended hang into a message.
+            if default is None:
+                raise ValueError(
+                    f'Non-interactive run and no stored default for this '
+                    f'prompt: "{message.strip()}". Supply the value on the '
+                    f'command line, or run once interactively so it is '
+                    f'persisted in rs_settings.json.') from None
+            return ''
 
     def prompt(self, section: str, key: str, message: str, fallback=None):
         """Ask the user for a value, offering the stored value (or
-        ``fallback``) as the default. The answer is persisted immediately."""
+        ``fallback``) as the default. The answer is persisted immediately.
+
+        EOF-safe (see _input_or_default): unattended runs take the stored
+        default silently and fail with a named ValueError when none exists.
+        """
         default = self.get(section, key, fallback)
 
         if default is not None:
-            answer = input(f"{message} [{default}]: ").strip()
+            answer = self._input_or_default(f"{message} [{default}]: ", default)
             value = answer or default
         else:
-            value = input(f"{message}: ").strip()
+            value = self._input_or_default(f"{message}: ", None)
             while not value:
-                value = input(f"{message} (required): ").strip()
+                value = self._input_or_default(f"{message} (required): ", None)
 
         self.set(section, key, value)
         return value
@@ -190,7 +253,9 @@ class SettingsStore:
         suffix = " [y/n]" if default is None else (" [Y/n]" if default else " [y/N]")
 
         while True:
-            answer = input(f"{message}{suffix}: ").strip().lower()
+            answer = self._input_or_default(
+                f"{message}{suffix}: ",
+                None if default is None else default).lower()
             if not answer and default is not None:
                 value = bool(default)
                 break
