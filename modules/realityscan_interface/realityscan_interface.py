@@ -6,6 +6,7 @@ import time
 
 from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
+from .. import align_fingerprint
 from .. import camera_registry
 from .. import component_manifest
 from ..flight_logs import (ensure_frame_match, find_flight_log,
@@ -253,7 +254,36 @@ class RealityScanAlignment(RSModule):
         # unguarded destructive step in the align path (audit 2026-08-07),
         # so a tree carrying deliverables is RENAMED aside instead: same
         # clean-slate premise, no data loss, one os.rename and no copy cost.
+        # Input fingerprint for THIS run: whatever AlignZone.bat will
+        # actually apply (RS_ALIGN_PARAMS override, else the canonical
+        # template). Built before the supersede step so a retry can be
+        # told apart from a re-run: "same inputs, redoing" vs "inputs
+        # CHANGED, previous components were built differently"
+        # (PRODUCT_READINESS must-fix 2; persona-verified 2026-08-08 that
+        # the two were previously messaged identically).
+        current_fp = align_fingerprint.build_fingerprint(
+            flight_log_path or None,
+            flight_log_params_path or None,
+            os.environ.get('RS_ALIGN_PARAMS')
+            or os.path.join(METADATA_DIR, 'AlignmentParams.xml'),
+            min_component_size,
+            rs_executable=self.cli.find_executable())
+
         if os.path.isdir(output_folder) and os.listdir(output_folder):
+            prev_fp = align_fingerprint.read_fingerprint(output_folder)
+            changes = align_fingerprint.diff_fingerprints(prev_fp, current_fp)
+            if changes:
+                self.logger.warning(
+                    'RETRY WITH CHANGED INPUTS for %s - the previous '
+                    'components were built from DIFFERENT inputs:\n  - %s\n'
+                    'Results are not comparable run-to-run; never merge '
+                    'components built from different navigation or frames.',
+                    output_folder, '\n  - '.join(changes))
+            elif prev_fp:
+                self.logger.info(
+                    'Re-run with IDENTICAL inputs (nav, frame, settings '
+                    'unchanged) for %s - redoing the zone from scratch.',
+                    output_folder)
             keepers = [f for f in os.listdir(output_folder)
                        if f.endswith(COMPONENT_EXTENSIONS + SCENE_EXTENSIONS)]
             if keepers:
@@ -416,6 +446,14 @@ class RealityScanAlignment(RSModule):
         if scene_success:
             manifest_paths = self.capture_component_identities(
                 input_folder, output_folder, scene_name, flight_log_path)
+        # Fingerprint travels with the exports: nav-aware resume
+        # (align_fingerprint.matches_current) and merge-stage unanimity
+        # checks key off this file, not off mere file existence.
+        try:
+            align_fingerprint.write_fingerprint(output_folder, current_fp)
+        except OSError as exc:
+            self.logger.warning('Could not write %s: %s',
+                                align_fingerprint.FINGERPRINT_NAME, exc)
         # (The calibration-sidecar repair ran above, on every exit path -
         # capture_component_identities also regenerates each member's
         # sidecar as it walks the harvest, so nothing is lost by the move.)
