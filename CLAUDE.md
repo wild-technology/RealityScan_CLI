@@ -140,6 +140,41 @@ Exceptions that must NOT be renamed:
   `RS_INSTANCE` + `RS_GPU_DEVICES` (exported as `CUDA_VISIBLE_DEVICES`),
   one instance name per GPU set.
 
+## When an AI agent is DRIVING (owner said "run this against that dataset")
+
+MANDATORY — full contract in `docs/AGENT_OPERATIONS.md`; on conflict this
+section wins. Every rule traces to a recorded incident.
+
+1. **No writes before the charter.** Run the intake (docs/
+   RUN_CHARTER.template.md): ask the user — never infer — where the
+   ORIGINALS are, where the NAV is, where OUTPUTS go, and what is
+   PROTECTED. Owner signs off; then work.
+2. **Source data is read-only, forever.** This pipeline writes sidecars
+   into input folders — an agent aligns only from trees it created
+   (hardlinks/copies) or with explicit consent.
+3. **Protected paths** (charter list) are never touched, cleaned, or
+   reorganized. Deliverables are never overwritten — collisions are
+   stop-and-ask.
+4. **Agent working files live in ONE place**: `<results_root>/_agent/`.
+   Never in the repo, never beside source data. It is the only tree the
+   agent may delete freely.
+5. **Own instance, own processes.** Charter-named RS instance (never the
+   user's), own cache. Never kill/quit/delegate-to anything the agent
+   did not start; identify by PID+cmdline first.
+6. **Long runs are scheduler-owned** (schtasks + CRLF launcher, never a
+   harness shell — job objects killed 14.4 h once), with a written
+   budget declaration and liveness-tested monitors BEFORE launch.
+7. **Frames and fingerprints**: honor FRAME_WARNING markers and
+   align_inputs.json; never mix coordinate frames; components without a
+   current-nav fingerprint are not "done".
+8. **Every science argument explicit** — no rs_settings inheritance
+   unattended. **Owner gates (`confirmed: false`) are stops, never flags
+   to flip.**
+9. **Destructive ops need per-instance user approval**: anything outside
+   the agent workspace, force-pushes, killing user processes, app-global
+   RealityScan settings (they leak into the user's GUI), raising safety
+   ceilings.
+
 ## Hard rules
 
 1. Never add a second way to launch/monitor RealityScan — extend
