@@ -95,6 +95,33 @@ hash. Every fix ships with a test or an empirical verification transcript.
     answers override fresh auto-detection for a NEW dive
     (wrong-provenance risk, verified app.py:275).
 
+## MUST-FIX — added from the goal-verification decisions (2026-08-08)
+
+15. **Stop the staging rename** (owner directive, N2): RhodyProc
+    stereo_rename.py strips the left/right eye token from VOYIS original
+    filenames, manufacturing the basename collision the L_/R_ views then
+    solve. Original filenames are preserved end-to-end; pairing keys on
+    the eye token in the ORIGINAL name; disambiguation only on true
+    collision. (Cross-repo: RhodyProc + the colmap_studio bridge.)
+16. **Calibration registry update** (owner-directed): Zeuss 25 mm
+    rectilinear, Port/Starboard/Upper/Mid 15 mm fisheye, Cinema 17 mm
+    rectilinear — replaces the 2026-07-23 values (23/14 mm) in
+    cameras.json, camera_registry XMP content, CLAUDE.md, geoall
+    constants, wildscan OFFICIAL_CAMERAS, and the rig-mount tests, in
+    ONE change set.
+17. **Unknown-camera intake flow**: ask the user for what is known
+    (never require invented numbers — supersedes the wizard
+    invented-lever-arm finding); DIVISION is the default distortion
+    model across all camera types.
+18. **Video robustness**: h.264 AND h.265 across varied container
+    extensions; HEIC reader (pillow-heif) across all six extension
+    filters — all four data families are v1 scope.
+19. **Naming scheme implementation**: `{expedition}_{dive}_{product}`
+    with explicit `LOCAL`/zone tags in flight-log names (parser learns
+    the LOCAL tag); Expedition/Dive/[data] deliverable trees; ON2026
+    merged code `ON2026_RH0041_RH2042` (verify RH2042 vs RH0042 before
+    first use).
+
 ## SHOULD-FIX
 - Resolved-settings provenance banner at merge startup (CLI vs stored vs
   fallback per arg).

@@ -78,6 +78,49 @@ take; enumerate every rig/format assumption that breaks on a novel dive
 (patterns, extensions, mounts, frame conventions).
 
 ### Block B - owner Q&A (the decision session)
+
+ALL ANSWERED 2026-08-08 (owner session):
+- **Q1 RATIFIED** - the final-goal statement in section 1 is correct.
+- **Q2** - TWO first-class nav sources: the COLMAP bridge OR the existing
+  Expedition Data structure (ROVDataConcat-derived products via the
+  georeference path). The bridge becomes a product module (G2).
+- **Q3** - three-part accuracy claim ADOPTED (internal consistency p95 +
+  absolute-position basis + measured scale). Local-frame deliverables
+  ACCEPTABLE for ON2026, stated plainly; UTM georeferencing later via
+  the USBL fit.
+- **Q4** - Expedition/Dive/[data] organization; products named
+  `{expedition}_{dive}_{product}`; IMAGE FILENAMES NEVER OVERWRITTEN
+  (see N2). ON2026 merged code: `ON2026_RH0041_RH2042_...` (as typed;
+  flag: verify RH2042 vs RH0042 against dive logs before first use).
+- **Q5** - CANCEL CANCELS: kill tears down the process tree, interruption
+  recorded; `--detach` opts into finish-then-stop.
+- **Q6** - pre-flight checklist RATIFIED: the drafted 8 PLUS an
+  expected-duration/stage-cost line.
+- **Q7** - v1 scope: ALL FOUR families (ROV 4-camera, VOYIS stereo via
+  bridge, video-only, HEIC). Video must handle h.264 AND h.265 across
+  varied container extensions, robustly. Known-camera priors are
+  HARDCODED per owner: Zeuss = 25 mm rectilinear; Port/Starboard/Upper/
+  Mid = 15 mm fisheye; Cinema = 17 mm rectilinear (owner UPDATED the
+  2026-07-23 registry values of 23/14 mm - registry, CLAUDE.md, XMP
+  content, and dependent constants must be updated together). Unknown
+  camera: ASK the user for what is known; DIVISION is the default
+  distortion model across all camera types.
+- **Q8** - generic config-driven campaign driver IS v1 (charter intake in
+  code; per-campaign scripts retire).
+- **Q9** - metric shipping band ±1% (0.99-1.01) on exported geometry.
+- **N1** - explicit `LOCAL` tag in local-frame log names
+  (`{exp}_{dive}_LOCAL_flight_log.txt`); parser learns the tag; UTM logs
+  keep zone tags.
+- **N2** - VOYIS originals DO carry left/right in their filenames
+  (verified: `...image_left_processed_D....jpg`); the basename collision
+  was CREATED by our own staging (RhodyProc stereo_rename.py strips the
+  eye token). Owner directive: STOP the renaming - preserve original
+  filenames end-to-end; disambiguate only on TRUE collision, smartly;
+  derived views only where genuinely needed, mapping recorded in the
+  manifest. (ON2026-as-staged keeps its L_/R_ bridge views - originals
+  untouched - since its names were already stripped upstream.)
+- **Q10** - agent verifies ENU/NED from bundle-adjusted poses and fills
+  the registry (in progress; local frame = axis convention only).
 - **Q1 Goal ratification.** Is section 1's FINAL GOAL statement right?
   Anything missing (delivery targets like Nira/Cesium? multi-user?).
 - **Q2 Nav-source policy.** Is COLMAP the standing master-nav source for
