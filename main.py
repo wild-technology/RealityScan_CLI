@@ -133,7 +133,26 @@ def build_arg_parser(params) -> argparse.ArgumentParser:
     here is an argparse exit-2 "unrecognized arguments" before any stage
     runs (audit 2026-08-07).
     """
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "environment variables (persona audit 2026-08-08 - these were "
+            "undiscoverable from help):\n"
+            "  RS_MODULES         comma-separated module names to enable "
+            "non-interactively\n"
+            "                     (module-specific flags appear in --help "
+            "only for enabled\n"
+            "                     modules; bare --help enables all modules "
+            "to show everything)\n"
+            "  RS_NO_INTERACTIVE  1 = never prompt; missing required values "
+            "fail fast\n"
+            "  RS_ALIGN_PARAMS    alignment-settings XML override (changes "
+            "the science -\n"
+            "                     record it with the run)\n"
+            "  RS_CACHE_DIR       RealityScan cache location (a full cache "
+            "disk kills runs)\n"
+            "  RS_INSTANCE        RealityScan instance name (one "
+            "orchestrator per instance)\n"))
     for p in params.values():
         arg_type = _str_to_bool if p.get_type() is bool else p.get_type()
         # argparse %-expands help text at print_help() time, so a literal
