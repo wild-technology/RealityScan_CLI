@@ -149,7 +149,14 @@ row-driven, not key-driven.
   2. Always-generate: master + zone logs generated for BOTH nav
      sources (COLMAP bridge; ROVDataConcat/geoall) through ONE writer
      so header/columns/CRLF/paths cannot diverge (today three writers
-     disagree on header case and newlines).
+     disagree on header case and newlines). CONSTRAINT (2026-08-09):
+     both params templates set csvFLIgn=true, so RS IGNORES the header
+     row - the header exists for OUR pandas tooling only (the batcher
+     currently handles both 'filename;x;y;alt' and
+     'filename;X (East);Y (North);Alt' forms). Unification must
+     therefore land as ONE change-set: canonical writer + batcher
+     reader canonicalization + fixture tests over both legacy forms.
+     Column POSITIONS are the RS contract; never reorder them.
   3. Per-step loading: add flight-log import to the grow workflow;
      keep align + merge imports; document P4's answer once probed.
   4. Calibration via flight log (CONDITIONAL on ladder verdict):
