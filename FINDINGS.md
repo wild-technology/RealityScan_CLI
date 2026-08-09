@@ -29,6 +29,28 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [ON2026] 2026-08-09 - pause/flush/resume recovery recipe (owner-
+## directed cache flush before the hull merge)
+
+- Sanctioned flush works headless: boot a throwaway instance bound to
+  the target cache, -newScene, -save scratch, -clearCache, -quit
+  (Scripts/FlushCache.bat). Freed 26 GB from M:\rs_cache post-align
+  (plus 10 GB deleting the two finished TEST caches outright); cache
+  is small after aligns - the depth-map growth that killed three hull
+  models comes at MODEL time, so pre-model is the right flush point.
+- schtasks /end does NOT kill the driver python or its .bat/RS
+  children - enumerate and stop them explicitly (Win32_Process
+  CommandLine identifies which cmd/python belong to the run; leave
+  server.py and the watchdog alone).
+- After hard-killing a mid-operation RS instance, the NEXT boot cycle
+  produced an instance that answered as running but ignored -quit,
+  blocking run_batch_script's own shutdown path for 15 min before it
+  gave up; a stale RS1.lock (dead PID) additionally insta-failed the
+  first relaunch. RECOVERY RECIPE (validated): stop ALL RealityScan
+  PIDs + any lingering -waitCompleted clients, delete Errors/*.lock
+  and errors_/results_ markers for the instance, then relaunch - the
+  third attempt started clean on the first try.
+
 ## [ON2026] 2026-08-09 - calibration ladder VERDICT: the manufacturer
 ## prior CONTENT collapses registration; do not adopt
 
