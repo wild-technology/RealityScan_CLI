@@ -94,7 +94,7 @@
       "distortion_model": "division"
     },
     "voyis_left": {
-      "_provenance": "VERIFIED 2026-08-08: manufacturer resized-corrected calibration (owner-supplied), independently matched by COLMAP sparse/0's solved PINHOLE to the digit. Nominal 23 mm; fx=fy=1895.6747569500258 @2816^2. Runtime-enabled via the voyis families; sidecar CREATION gated by opt_in_env (RS_VOYIS_CALIB_SIDECARS) so registering the family does not flip production behavior - the calibration-prior A/B decides adoption (calib_verdict.json).",
+      "_provenance": "VERIFIED 2026-08-08: manufacturer resized-corrected calibration (owner-supplied), independently matched by COLMAP sparse/0's solved PINHOLE to the digit. Nominal 23 mm; fx=fy=1895.6747569500258 @2816^2. Runtime-enabled via the voyis families; sidecar CREATION gated by opt_in_env (RS_VOYIS_CALIB_SIDECARS) so registering the family does not flip production behavior - A/B VERDICT 2026-08-09: NOT ADOPTED - these values are correct manufacturer DATA but as RS approximate priors they collapse registration to 45% (clean ladder, confounds removed, 2x replicated; FINDINGS.md). Keep as reference; never auto-deliver.",
       "calibration_group": "5",
       "calibration_prior": "approximate",
       "focal_length_35mm": 24.234478,
@@ -106,7 +106,7 @@
       "opt_in_env": "RS_VOYIS_CALIB_SIDECARS"
     },
     "voyis_right": {
-      "_provenance": "VERIFIED 2026-08-08: manufacturer resized-corrected calibration (owner-supplied), independently matched by COLMAP sparse/0's solved PINHOLE to the digit. Nominal 23 mm; fx=fy=1895.6747569500258 @2816^2. Runtime-enabled via the voyis families; sidecar CREATION gated by opt_in_env (RS_VOYIS_CALIB_SIDECARS) so registering the family does not flip production behavior - the calibration-prior A/B decides adoption (calib_verdict.json).",
+      "_provenance": "VERIFIED 2026-08-08: manufacturer resized-corrected calibration (owner-supplied), independently matched by COLMAP sparse/0's solved PINHOLE to the digit. Nominal 23 mm; fx=fy=1895.6747569500258 @2816^2. Runtime-enabled via the voyis families; sidecar CREATION gated by opt_in_env (RS_VOYIS_CALIB_SIDECARS) so registering the family does not flip production behavior - A/B VERDICT 2026-08-09: NOT ADOPTED - these values are correct manufacturer DATA but as RS approximate priors they collapse registration to 45% (clean ladder, confounds removed, 2x replicated; FINDINGS.md). Keep as reference; never auto-deliver.",
       "calibration_group": "6",
       "calibration_prior": "approximate",
       "focal_length_35mm": 24.234478,

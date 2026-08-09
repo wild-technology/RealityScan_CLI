@@ -14,6 +14,24 @@ hash. Every fix ships with a test or an empirical verification transcript.
 
 ## DONE
 
+- 2026-08-09 calibration-prior question CLOSED by clean A/B/C ladder
+  (confounds removed): manufacturer approximate intrinsics COLLAPSE
+  ON2026 registration to 45% (2x replicated) — production stays
+  calibration-prior-free; VOYIS values retained in cameras.json as
+  reference data only. Explicit `-addImageWithCalibration` delivery
+  validated; `-setPriorCalibrationGroup` proven silently
+  non-functional from the CLI. FINDINGS 2026-08-09.
+- 2026-08-08/09 flight-log-first architecture (owner directive):
+  docs/FLIGHTLOG_ARCHITECTURE.md design of record; probes closed
+  (path rows match EXACT-PATH; params format GUID decorative on 2.2 —
+  no flightlogs.xml shipping dependency; re-import+`-update` re-places
+  aligned components onto current priors, so per-step reload is
+  verified). Landed: `batch_zone_layout='pool'` (canonical pool +
+  full-path zone logs + .imagelist, fixes the merge no-fuse defect at
+  root), `export_rs_flightlog --path-mode=absolute`, grow per-step
+  reload (`--flight_log`). Remaining: align-from-imagelist .bat step
+  (safe window), unified log writer across nav sources.
+
 - 2026-08-08 `8e38316` batch 1: local-frame align unblocked
   (frame-derived FlightLogParams selection + `--r_flight_log_params`,
   unit-tested); merge-scene camera ceiling enforced pre-launch

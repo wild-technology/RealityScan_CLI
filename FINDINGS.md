@@ -29,6 +29,41 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [ON2026] 2026-08-09 - calibration ladder VERDICT: the manufacturer
+## prior CONTENT collapses registration; do not adopt
+
+Clean A/B/C ladder on the zone_1 copy (RS2, own cache, explicit
+-addImageWithCalibration delivery - both 2026-08-08 confounds removed;
+one variable per rung; censuses in _agent\calib_ladder\ladder_verdict.json):
+
+- A control (no calibration input): 3,528/3,626 = 97.3%, 1 comp,
+  residual median 4.54 cm, p95 10.96 cm.
+- B groups-only XMPs (CalibrationGroup/DistortionGroup 5/6, NO values):
+  3,542 = 97.7%, 1 comp, median 1.80 cm, p95 6.10 cm. The explicit
+  delivery mechanism is EXONERATED (it carried all 3,626 images to a
+  best-in-ladder solve). Residual halving is suggestive but n=1, and
+  the exported group census finished as ONE group in both A ("0") and
+  B ("7") - flight-log import auto-grouping (ifKGrp) appears to stomp
+  prior groups, so B's mechanism-of-action is unclear. Optional
+  replication queued before believing the residual gain.
+- C full manufacturer priors (focal35 24.2345, PPU/PPV, division,
+  DistortionCoeficients "0 0 0 0 0 0", approximate): 1,645 = 45.4% -
+  COLLAPSE, reproducing the original failed sidecar cell (1,623)
+  almost exactly. Solved focal median steered to 24.213 with wild
+  outliers (3.6-92.4).
+
+CONCLUSION: the 2026-08-08 collapse was caused by the PRIOR VALUES
+themselves, not sidecar hygiene and not cache concurrency. The
+owner-specified manufacturer resized-corrected intrinsics, delivered
+as approximate priors, are HARMFUL to ON2026 staged-imagery
+registration (2x replicated, two delivery mechanisms). Mirrors
+NA167 #4 (Zeuss prior content 96.3->89.6) at far greater severity.
+DECISION: production stays calibration-prior-free; P5 (flight-log
+calibration columns) downgraded - no reason to ship value-carrying
+columns proven harmful. Suspect ranking for the harm, untested:
+zero-pinned distortion coefficients under approximate prior >
+PPU/PPV > focal (solved-free focals already sit near 24.17).
+
 ## [ON2026] 2026-08-08 - flight-log probes P1/P3/P4 (6-image fixture,
 ## RSPROBE + M:\rs_cache_probe; steps5/6.log + censuses under
 ## _agent\calib_ladder\probe\out)

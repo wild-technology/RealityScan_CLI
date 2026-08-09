@@ -174,8 +174,16 @@ row-driven, not key-driven.
     new priors without re-align. Per-step flight-log loading is now a
     verified refresh mechanism, not just hygiene. §1b's caveat is
     resolved; grow gains an import+update step in the safe window.
-  - P5 (calibration columns / by-focal grouping) remains OPEN, gated
-    on the calibration-ladder verdict.
+  - P5 CLOSED-NEGATIVE (2026-08-09): the calibration ladder's C cell
+    (manufacturer approximate intrinsics) COLLAPSED registration to
+    45.4% with all confounds removed, replicating the original failed
+    cell - the prior CONTENT is harmful on this imagery. Calibration
+    value columns are NOT added to generated flight logs. Cell B
+    (groups-only) matched-plus control registration with halved
+    residuals; its mechanism is unclear (final group census identical
+    to control) and its delivery is XMP-input (retired) - optional
+    replication queued before pursuing. Production: no calibration
+    priors, which is already the flight-log-only posture.
 
 ## 6. Honest boundaries
 
