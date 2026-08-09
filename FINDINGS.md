@@ -29,6 +29,34 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [ON2026] 2026-08-08 - flight-log probes P1/P3/P4 (6-image fixture,
+## RSPROBE + M:\rs_cache_probe; steps5/6.log + censuses under
+## _agent\calib_ladder\probe\out)
+
+- **P3 - row matching is EXACT-PATH when a path is given, basename when
+  bare**: a full-path log pointing at same-basename COPIES in a
+  different folder FAILED the import (loud, per-row); the same log with
+  the scene's true paths imported OK; a bare-basename log imported OK.
+  Full-path rows therefore bind deterministically to the ONE canonical
+  file - the semantics the pool zone layout requires - and there is NO
+  silent basename fallback for path rows.
+- **P1/P1b - the params' gpsLogFileFormat GUID is DECORATIVE on 2.2**:
+  imports under a params file naming a RANDOM GUID both succeeded AND
+  demonstrably applied (align landed on the +200/+300 priors of the
+  log imported under the random GUID). The custom {B438A617} registry
+  entry is NOT load-bearing on RS 2.2 - our 13-col file parses
+  registry-independently. Shipping consequence: no flightlogs.xml
+  patching needed on customer installs; the REST of the params (CRS,
+  YPR order, separator, ignore-first-line) still matters.
+- **P4 - re-importing a flight log onto an ALREADY-ALIGNED scene works
+  and -update re-places the components to the NEW priors without
+  re-aligning**: export-before sat at the first log's positions
+  (10/20), import of a +50-shifted log + -update moved every camera to
+  the shifted priors (60/70). The owner's per-step-reload assumption
+  is VERIFIED: importing the flight log at each workflow step
+  genuinely re-pins georeferencing on live components (rigid update;
+  intra-component geometry untouched).
+
 ## [ON2026] 2026-08-08 - flight-log deep research (4-agent doc/binary
 ## sweep; full detail in docs/FLIGHTLOG_ARCHITECTURE.md)
 

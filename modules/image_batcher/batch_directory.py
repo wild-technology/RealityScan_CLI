@@ -175,6 +175,28 @@ class BatchDirectory(RSModule):
             prompt_user=False
         )
 
+        additional_params['batch_zone_layout'] = Parameter(
+            name='Zone Layout',
+            cli_short='b_zl',
+            cli_long='b_zone_layout',
+            type=str,
+            default_value='copy',
+            description=('copy (legacy): zones hold physical per-zone COPIES of '
+                         'their images - overlap donation duplicates files, so '
+                         'the same image is a DIFFERENT camera in each zone and '
+                         'overlapping-zone components share nothing at merge '
+                         'time (the known merge no-fuse defect). '
+                         'pool: zones hold NO images - each zone gets an '
+                         '.imagelist of COMPLETE canonical source paths plus a '
+                         'zone flight log whose filename column carries those '
+                         'same full paths, so every zone references the ONE '
+                         'on-disk file and overlap images are genuinely shared '
+                         'cameras (owner directive 2026-08-08, '
+                         'docs/FLIGHTLOG_ARCHITECTURE.md). pool requires the '
+                         'align stage to add images from the .imagelist.'),
+            prompt_user=False
+        )
+
         return {**super().get_parameters(), **additional_params}
 
     FINGERPRINT_NAME = 'batch_inputs.json'
@@ -210,7 +232,8 @@ class BatchDirectory(RSModule):
         keys = ('batch_target_images_per_zone', 'batch_min_zone_size',
                 'batch_max_zone_size', 'batch_initial_overlap_percent',
                 'batch_density_weight', 'batch_kde_bandwidth',
-                'batch_overlap_max_distance_m', 'batch_use_z')
+                'batch_overlap_max_distance_m', 'batch_use_z',
+                'batch_zone_layout')
         input_dir = self.__get_input_dir()
         return {
             'flight_log': os.path.basename(flight_log_path or ''),
@@ -930,6 +953,32 @@ class BatchDirectory(RSModule):
                 flight_log_df = flight_log_df.rename(columns={'Name': 'filename'})
             flight_log_df.set_index('filename', inplace=True)
 
+        layout = 'copy'
+        if 'batch_zone_layout' in (self.params or {}):
+            layout = str(self.params['batch_zone_layout'].get_value()
+                         or 'copy').strip().lower()
+        if layout not in ('copy', 'pool'):
+            raise ValueError(f"batch_zone_layout must be 'copy' or 'pool', "
+                             f"got {layout!r}")
+        if layout == 'pool':
+            prior_param = (self.params or {}).get('batch_xmp_priors')
+            if prior_param is not None and prior_param.get_value():
+                # No zone tree exists to hold sidecars, and the owner
+                # directive that created pool mode also retires them.
+                raise ValueError('batch_xmp_priors is incompatible with '
+                                 "batch_zone_layout='pool' (no zone image "
+                                 'tree; XMP sidecars are retired - '
+                                 'docs/FLIGHTLOG_ARCHITECTURE.md)')
+        elif flight_log_df is not None and any(
+                os.path.isabs(str(n)) for n in flight_log_df.index[:50]):
+            # A full-path master log zoned into COPY mode would write zone
+            # logs whose rows name the POOL files while the scenes add the
+            # zone COPIES - silently reintroducing the split-identity
+            # defect pool mode exists to fix. Refuse loudly.
+            raise ValueError("master flight log carries absolute image "
+                             "paths - use batch_zone_layout='pool' "
+                             "(copy mode would re-split image identity)")
+
         bar = self._initialize_loading_bar(len(zones), 'Creating Batch Folders')
 
         # Index the input tree once for all zones
@@ -955,22 +1004,61 @@ class BatchDirectory(RSModule):
             os.makedirs(batch_folder_dir, exist_ok=True)
 
             unique_zone_files = list(dict.fromkeys(zone_files))
-            zone_copied, zone_missing = self.__copy_files(
-                input_dir, batch_folder_dir, unique_zone_files, file_index)
+            if layout == 'pool':
+                # No physical zone tree: resolve every zone member to its
+                # ONE canonical on-disk file, write the .imagelist the
+                # align stage adds from, and remember name->path for the
+                # zone flight log below. Rows that resolve nowhere are
+                # counted missing AND dropped from the log - a log row
+                # naming an absent image fails the RS import (err:18002).
+                by_name = file_index[0]
+                path_of = {}
+                zone_missing = 0
+                for file in unique_zone_files:
+                    if os.path.isabs(str(file)):
+                        p = file if os.path.isfile(file) else None
+                    else:
+                        p = by_name.get(str(file).lower())
+                    if p is None:
+                        zone_missing += 1
+                        if self._missing_example is None:
+                            self._missing_example = file
+                        self.logger.warning(
+                            f'File not found for pool zone: {file}')
+                        continue
+                    path_of[file] = os.path.abspath(p)
+                listfile = os.path.join(batch_folder_dir,
+                                        f'{batch_folder_name}.imagelist')
+                with open(listfile, 'w', encoding='utf-8', newline='') as fh:
+                    fh.write('\r\n'.join(path_of.values()) + '\r\n')
+                zone_copied = len(path_of)
+            else:
+                zone_copied, zone_missing = self.__copy_files(
+                    input_dir, batch_folder_dir, unique_zone_files, file_index)
             total_copied += zone_copied
             total_missing += zone_missing
 
             # Create flight log per zone
             if flight_log_df is not None:
                 # Maintain full column order
+                members = (list(path_of) if layout == 'pool'
+                           else unique_zone_files)
                 zone_flight_log_df = flight_log_df.loc[
-                    flight_log_df.index.isin(unique_zone_files)
+                    flight_log_df.index.isin(members)
                 ].copy()
 
                 # Keep original columns even if some missing
                 missing = [col for col in flight_log_df.columns if col not in zone_flight_log_df.columns]
                 for col in missing:
                     zone_flight_log_df[col] = ""
+
+                if layout == 'pool':
+                    # Rows carry the COMPLETE canonical path (owner
+                    # directive 2026-08-08): every zone's rows name the
+                    # same on-disk file, so overlap images are shared
+                    # cameras and merges can fuse.
+                    zone_flight_log_df.index = [
+                        path_of[n] for n in zone_flight_log_df.index]
 
                 # Write out zone-specific flight log
                 batch_flight_log_name = f'flight_log{self.utm_zone_suffix}_UTM.txt'
