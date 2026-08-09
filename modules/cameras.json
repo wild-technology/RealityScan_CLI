@@ -94,22 +94,28 @@
       "distortion_model": "division"
     },
     "voyis_left": {
-      "_provenance": "UNVERIFIED - ON2026 Voyis stereo left eye. Group 5 extends the rig sequence (1-4 taken). Focal and distortion model unknown here; ON2026 priors are COLMAP-derived (external colmap_studio fact base). Not referenced by any family, so excluded from the runtime CAMERAS table until verified.",
+      "_provenance": "VERIFIED 2026-08-08: manufacturer resized-corrected calibration (owner-supplied), independently matched by COLMAP sparse/0's solved PINHOLE to the digit. Nominal 23 mm; fx=fy=1895.6747569500258 @2816^2. Runtime-enabled via the voyis families; sidecar CREATION gated by opt_in_env (RS_VOYIS_CALIB_SIDECARS) so registering the family does not flip production behavior - the calibration-prior A/B decides adoption (calib_verdict.json).",
       "calibration_group": "5",
-      "calibration_prior": "Approximate",
-      "focal_length_35mm": null,
+      "calibration_prior": "approximate",
+      "focal_length_35mm": 24.234478,
       "lens_distortion_group": "5",
-      "lens_distortion_prior": "Approximate",
-      "distortion_model": null
+      "lens_distortion_prior": "approximate",
+      "distortion_model": "division",
+      "principal_point_u": 0.01313138,
+      "principal_point_v": -0.00757196,
+      "opt_in_env": "RS_VOYIS_CALIB_SIDECARS"
     },
     "voyis_right": {
-      "_provenance": "UNVERIFIED - ON2026 Voyis stereo right eye. Group 6 extends the rig sequence (1-4 taken). Focal and distortion model unknown here; ON2026 priors are COLMAP-derived (external colmap_studio fact base). Not referenced by any family, so excluded from the runtime CAMERAS table until verified.",
+      "_provenance": "VERIFIED 2026-08-08: manufacturer resized-corrected calibration (owner-supplied), independently matched by COLMAP sparse/0's solved PINHOLE to the digit. Nominal 23 mm; fx=fy=1895.6747569500258 @2816^2. Runtime-enabled via the voyis families; sidecar CREATION gated by opt_in_env (RS_VOYIS_CALIB_SIDECARS) so registering the family does not flip production behavior - the calibration-prior A/B decides adoption (calib_verdict.json).",
       "calibration_group": "6",
-      "calibration_prior": "Approximate",
-      "focal_length_35mm": null,
+      "calibration_prior": "approximate",
+      "focal_length_35mm": 24.234478,
       "lens_distortion_group": "6",
-      "lens_distortion_prior": "Approximate",
-      "distortion_model": null
+      "lens_distortion_prior": "approximate",
+      "distortion_model": "division",
+      "principal_point_u": 0.01313138,
+      "principal_point_v": -0.00757196,
+      "opt_in_env": "RS_VOYIS_CALIB_SIDECARS"
     }
   },
   "families": [
@@ -227,6 +233,50 @@
       "timestamp_formats": [
         "%Y%m%d%H%M%S"
       ]
+    },
+    {
+      "era": "voyis",
+      "mount": null,
+      "timestamp_formats": [
+        "%Y-%m-%d_%H-%M-%S"
+      ],
+      "_comment": "VOYIS stereo eye. Staged names carry the L_/R_ prefix (colmap-studio bridge); ORIGINAL names carry image_left_/image_right_ tokens (never renamed going forward - owner directive 2026-08-08, must-fix 15). Mount null by design: this pathway's pose priors are per-camera from COLMAP, never from vehicle nav + lever arms.",
+      "family": "voyis_left_staged",
+      "pattern": "^l_",
+      "camera": "voyis_left"
+    },
+    {
+      "era": "voyis",
+      "mount": null,
+      "timestamp_formats": [
+        "%Y-%m-%d_%H-%M-%S"
+      ],
+      "_comment": "VOYIS stereo eye. Staged names carry the L_/R_ prefix (colmap-studio bridge); ORIGINAL names carry image_left_/image_right_ tokens (never renamed going forward - owner directive 2026-08-08, must-fix 15). Mount null by design: this pathway's pose priors are per-camera from COLMAP, never from vehicle nav + lever arms.",
+      "family": "voyis_right_staged",
+      "pattern": "^r_",
+      "camera": "voyis_right"
+    },
+    {
+      "era": "voyis",
+      "mount": null,
+      "timestamp_formats": [
+        "%Y-%m-%d_%H-%M-%S"
+      ],
+      "_comment": "VOYIS stereo eye. Staged names carry the L_/R_ prefix (colmap-studio bridge); ORIGINAL names carry image_left_/image_right_ tokens (never renamed going forward - owner directive 2026-08-08, must-fix 15). Mount null by design: this pathway's pose priors are per-camera from COLMAP, never from vehicle nav + lever arms.",
+      "family": "voyis_left_original",
+      "pattern": "(^|[_])image_left_",
+      "camera": "voyis_left"
+    },
+    {
+      "era": "voyis",
+      "mount": null,
+      "timestamp_formats": [
+        "%Y-%m-%d_%H-%M-%S"
+      ],
+      "_comment": "VOYIS stereo eye. Staged names carry the L_/R_ prefix (colmap-studio bridge); ORIGINAL names carry image_left_/image_right_ tokens (never renamed going forward - owner directive 2026-08-08, must-fix 15). Mount null by design: this pathway's pose priors are per-camera from COLMAP, never from vehicle nav + lever arms.",
+      "family": "voyis_right_original",
+      "pattern": "(^|[_])image_right_",
+      "camera": "voyis_right"
     }
   ],
   "rigs": {

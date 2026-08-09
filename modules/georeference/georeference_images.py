@@ -51,6 +51,14 @@ MOUNTS: dict[str, dict | None] = {
     # must SAY SO rather than invent a zero lever arm and a 0 deg tilt.
     # Inventing rig numbers is what produced the Port-1 m incident.
     'wca_starboard': None,
+    # VOYIS stereo eyes take poses from the COLMAP bridge (per-camera
+    # position+orientation in the flight log), so no vehicle-nav lever arm
+    # exists or is wanted. Null = WARN if the ROV-nav path is ever pointed
+    # at these families - that would be a pipeline-selection error.
+    'voyis_left_staged': None,
+    'voyis_right_staged': None,
+    'voyis_left_original': None,
+    'voyis_right_original': None,
 }
 
 

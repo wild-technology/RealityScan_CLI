@@ -375,8 +375,14 @@ class RealityScanAlignment(RSModule):
 
         files_before = set(os.listdir(output_folder))
 
+        # RS_ALIGN_SCRIPT: test-cell override (calibration ladder
+        # 2026-08-08). A variant .bat with the SAME contract can be
+        # substituted without editing AlignZone.bat, which a live
+        # production run may hold open (cmd reads .bat by byte offset;
+        # a mid-run edit corrupts execution). Unset = production script.
+        align_script = os.environ.get('RS_ALIGN_SCRIPT') or 'AlignZone.bat'
         result = self.cli.run_batch_script(
-            'AlignZone.bat',
+            align_script,
             [input_folder, output_folder, flight_log_path, flight_log_params_path,
              scene_name, str(min_component_size)],
             log_dir, display_output)

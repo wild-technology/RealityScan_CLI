@@ -29,6 +29,41 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [ON2026] 2026-08-08 - sidecar AUTO-IMPORT retired as a delivery
+## mechanism; explicit CLI commands exist for everything sidecars did
+
+Owner field finding (2026-08-08, GUI + prior campaigns): same-name XMP
+sidecar auto-pairing is UNRELIABLE in practice, while the flight-log
+workflow - hard-coded file paths explicitly imported at each step -
+has been consistently reliable. Our own log agrees: NA167 #3 (sidecars
+silently never loaded, wrong extension), H2023 harvest-gap (17.5% of
+images silently sidecar-less), and the 2026-08-08 hygiene collision
+below are all failures of the IMPLICIT pairing pathway, not of the
+calibration content.
+
+Doc mining (RS 2.2 Help, appbasics/allcommands.htm + tools/xmpalign.htm)
+found explicit commands covering everything sidecars delivered:
+- `-addImageWithCalibration <imagePath> <xmpPath>` - import an image
+  WITH its calibration XMP by whole paths; the files need not share a
+  name or a folder (xmpalign.htm says so explicitly). This is the
+  hard-coded-paths form of calibration priors.
+- `-selectImage <regexp>` + `-setPriorCalibrationGroup <n>` /
+  `-setPriorLensGroup <n>` - per-eye grouping with NO files at all
+  (-1 = ungroup). Also `-setConstantCalibrationGroups`,
+  `-setCalibrationGroupByExif`, `-removeCalibrationGroups`.
+- `-loadColmap <file> [params.xml]` - RS imports a COLMAP project
+  DIRECTLY (any of the three text files, optional transform config).
+  Untested; candidate to replace the whole flight-log bridge one day -
+  needs its own test-plan cell before any production use.
+- `-importTrajectory` is the documented name of flight-log import in
+  2.2 (`-importFlightLog` still works as the legacy alias we use).
+
+DECISION: calibration priors, when adopted, ride explicit commands
+(groups via selectImage+setPrior*, values via addImageWithCalibration
+from a SEPARATE xmp directory + manifest), never same-name sidecar
+auto-import. camera_registry XMP GENERATION is unchanged - the content
+is reused; only the delivery changes. [ON2026] (2026-08-08)
+
 ## [ON2026] 2026-08-08 - calibration-sidecar hygiene collision (test cell)
 
 Per-eye APPROXIMATE calibration sidecars (manufacturer resized-corrected

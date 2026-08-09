@@ -256,6 +256,9 @@ def test_cameras_json_cameras_match_runtime_registry():
             spec['lens_distortion_group'],
             spec['lens_distortion_prior'],
             spec['distortion_model'],
+            principal_point_u=spec.get('principal_point_u'),
+            principal_point_v=spec.get('principal_point_v'),
+            opt_in_env=spec.get('opt_in_env'),
         ), f'cameras.json diverges at cameras[{key!r}]'
 
 
@@ -303,16 +306,43 @@ def test_cameras_json_defaults_match_the_shared_accuracy_table():
     assert geoall.get_camera_pitch_accuracy('mystery_cam.jpg') is None
 
 
-def test_cameras_json_voyis_entries_are_data_only():
-    """The UNVERIFIED voyis eyes must stay out of the runtime CAMERAS table
-    until a family references them (RealityScan has no stereo-rig support;
-    the rigs section is DATA-ONLY)."""
+def test_cameras_json_voyis_entries_registered_and_gated():
+    """VOYIS eyes are VERIFIED (2026-08-08: manufacturer resized-corrected
+    calibration, matched by COLMAP's solve) and referenced by families -
+    but sidecar CREATION is env-gated so registering the family cannot
+    flip production behavior; the calibration-prior A/B decides."""
     data = _cameras_json()
     assert data['cameras']['voyis_left']['calibration_group'] == '5'
     assert data['cameras']['voyis_right']['calibration_group'] == '6'
-    assert 'voyis_left' not in camera_registry.CAMERAS
-    assert 'voyis_right' not in camera_registry.CAMERAS
-    rig = data['rigs']['on2026_voyis']
+    left = camera_registry.CAMERAS['voyis_left']
+    right = camera_registry.CAMERAS['voyis_right']
+    assert left.opt_in_env == 'RS_VOYIS_CALIB_SIDECARS'
+    assert abs(left.focal_length_35mm - 24.234478) < 1e-6
+    assert left.principal_point_u is not None
+    assert camera_registry.identify('L_x.jpg').key == 'voyis_left'
+    assert camera_registry.identify('R_x.jpg').key == 'voyis_right'
+    assert camera_registry.identify(
+        'a_image_right_processed_D.jpg').key == 'voyis_right'
+    xmp = camera_registry.calibration_xmp(left)
+    assert 'xcr:PrincipalPointU=' in xmp and 'Position' not in xmp
+    assert 'xcr:CalibrationGroup="5"' in xmp
+    assert 'xcr:CalibrationGroup="6"' in camera_registry.calibration_xmp(right)
+
+
+def test_voyis_sidecar_creation_is_env_gated(tmp_path, monkeypatch):
+    d = tmp_path / "z"
+    d.mkdir()
+    (d / "L_a.jpg").write_bytes(b"j")
+    monkeypatch.delenv('RS_VOYIS_CALIB_SIDECARS', raising=False)
+    created, unknown = camera_registry.ensure_calibration_sidecars(str(d))
+    assert created == 0 and not (d / "L_a.xmp").exists()
+    monkeypatch.setenv('RS_VOYIS_CALIB_SIDECARS', '1')
+    created, unknown = camera_registry.ensure_calibration_sidecars(str(d))
+    assert created == 1 and (d / "L_a.xmp").exists()
+
+
+def test_cameras_json_on2026_rig_entry():
+    rig = _cameras_json()['rigs']['on2026_voyis']
     assert rig['frame'] == 'local_euclidean'
     assert rig['axes'] is None, 'ENU-vs-NED verification still pending'
     # Baseline/intrinsics FILLED 2026-08-08: owner-supplied manufacturer

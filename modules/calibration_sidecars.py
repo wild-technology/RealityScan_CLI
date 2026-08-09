@@ -1,7 +1,15 @@
-"""Per-eye APPROXIMATE calibration sidecars for stereo-rig campaigns
+"""Per-eye APPROXIMATE calibration XMPs for stereo-rig campaigns
 (owner directive 2026-08-08: when using COLMAP output, calibration groups
 are set PER-CAMERA and the manufacturer resized-corrected calibration is
 supplied as an Approximate prior).
+
+DELIVERY (owner finding 2026-08-08): same-name sidecar auto-import is
+UNRELIABLE - do not write these next to images and trust the pairing.
+Write them into a separate directory and feed each file explicitly with
+`-addImageWithCalibration <imagePath> <xmpPath>` (RS 2.2 allcommands),
+the hard-coded-paths pattern the flight-log workflow uses. Grouping
+alone needs no files: -selectImage + -setPriorCalibrationGroup/
+-setPriorLensGroup. See FINDINGS.md 2026-08-08.
 
 Writes calibration-ONLY XMPs (no pose entries - pose priors come from the
 flight log; exported pose sidecars auto-import as exact priors, bug B7)

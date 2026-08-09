@@ -52,6 +52,16 @@ class Camera:
     lens_distortion_prior: str
     distortion_model: str    # per-image XMP model ('division' fisheye,
                              # 'brown3' rectilinear)
+    # Optional full-intrinsics prior (manufacturer-verified rigs, e.g.
+    # VOYIS): normalized principal-point offsets. When present,
+    # calibration_xmp emits the RS-native attribute form incl. PPU/PPV.
+    principal_point_u: float | None = None
+    principal_point_v: float | None = None
+    # When set, ensure_calibration_sidecars CREATES sidecars for this
+    # camera only if the named env var is truthy - registering a family
+    # must never flip production behavior by side effect; the
+    # calibration-prior A/B decides adoption (2026-08-08).
+    opt_in_env: str | None = None
 
 
 def _load_registry() -> dict:
@@ -86,6 +96,9 @@ CAMERAS: dict[str, Camera] = {
         spec['lens_distortion_group'],
         spec['lens_distortion_prior'],
         spec['distortion_model'],
+        principal_point_u=spec.get('principal_point_u'),
+        principal_point_v=spec.get('principal_point_v'),
+        opt_in_env=spec.get('opt_in_env'),
     )
     for key, spec in _REGISTRY['cameras'].items()
     if key in FAMILY_CAMERA.values()
@@ -226,6 +239,8 @@ def calibration_xmp(camera: Camera) -> str:
     priors measurably reduced registration on NA167. Calibration groups
     are what separate the EXIF-identical WCA cameras.
     """
+    if camera.principal_point_u is not None:
+        return _calibration_xmp_full_intrinsics(camera)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
@@ -247,8 +262,41 @@ def calibration_xmp(camera: Camera) -> str:
     return '\n'.join(lines)
 
 
+def _calibration_xmp_full_intrinsics(camera: Camera) -> str:
+    """RS-native attribute-form calibration sidecar for cameras carrying a
+    full manufacturer-verified intrinsics prior (principal point present).
+    Mirrors the form RealityScan itself exports (verified on ON2026
+    zone_12 sidecars); no pose entries (B7)."""
+    return (
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
+        '  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+        '    <rdf:Description xcr:Version="4"\n'
+        f'       xcr:CalibrationPrior="{camera.calibration_prior}"'
+        f' xcr:CalibrationGroup="{camera.calibration_group}"\n'
+        f'       xcr:DistortionGroup="{camera.lens_distortion_group}"'
+        f' xcr:DistortionModel="{camera.distortion_model}"\n'
+        '       xcr:DistortionCoeficients="0 0 0 0 0 0"\n'
+        f'       xcr:FocalLength35mm="{camera.focal_length_35mm:.10f}"'
+        ' xcr:Skew="0"\n'
+        f'       xcr:AspectRatio="1"'
+        f' xcr:PrincipalPointU="{camera.principal_point_u:.10f}"\n'
+        f'       xcr:PrincipalPointV="{camera.principal_point_v:.10f}"\n'
+        '       xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.1#">\n'
+        '    </rdf:Description>\n'
+        '  </rdf:RDF>\n'
+        '</x:xmpmeta>\n')
+
+
 def ensure_calibration_sidecars(image_root: str) -> tuple[int, int]:
     """Recreate a calibration-only XMP for every image that has none.
+
+    SCOPE (2026-08-08): this same-name auto-import pathway is the WCA
+    (H2023) production mechanism and stays for that pipeline. For the
+    COLMAP-bridge stereo path (VOYIS) the owner found sidecar
+    auto-import unreliable in the field - those families are env-gated
+    below, and calibration priors travel via explicit CLI commands
+    instead (-addImageWithCalibration / -setPriorCalibrationGroup;
+    FINDINGS.md 2026-08-08).
 
     REQUIRED after any workflow that runs the identity-harvest loop:
     the harvest MOVES pose-bearing sidecars out of the image tree into
@@ -278,6 +326,11 @@ def ensure_calibration_sidecars(image_root: str) -> tuple[int, int]:
             camera = identify(filename)
             if camera is None:
                 skipped += 1
+                continue
+            if camera.opt_in_env and not os.environ.get(camera.opt_in_env):
+                # Registered family, gated creation: adoption of
+                # calibration priors is an A/B decision, never a side
+                # effect of registering the family (2026-08-08).
                 continue
             with open(os.path.join(root, sidecar), 'w', encoding='utf-8') as f:
                 f.write(calibration_xmp(camera))
