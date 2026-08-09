@@ -29,6 +29,25 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [ON2026] 2026-08-08 - calibration-sidecar hygiene collision (test cell)
+
+Per-eye APPROXIMATE calibration sidecars (manufacturer resized-corrected
+values; groups L=0/R=1) on a zone_1 copy collapsed registration to 44.8%
+(1,623/3,626) with meter-scale prior residuals - but NOT because
+calibration priors are wrong: camera_registry's sidecar hygiene
+(sanitize/harvest + ensure_calibration_sidecars) assumes it owns every
+image-adjacent .xmp, swept the hand-placed calibration files into the
+identity harvest, and could not regenerate them (VOYIS is not a registry
+family): '1623 image(s) of unknown camera type left without a
+calibration sidecar'. While engaged, the priors steered solved focals to
+within 0.005-0.013 of the manufacturer 24.2345 (closer than
+self-calibration). Discovered by the owner-directed parallel test cell;
+verdict + numbers in M:\ON2026_run2\_agent\calib_verdict.json.
+FOLLOW-UP: register the VOYIS family (calibration content from
+modules/cameras.json on2026_voyis) so hygiene regenerates rather than
+destroys, then re-test on a quiet instance. Production run2 stays
+sidecar-free (95-99% registration, consistent).
+
 ## RealityScan 2.2 CLI behavior
 
 - **addFolder does NOT recurse by default in this build** — zone_1/zone_2
