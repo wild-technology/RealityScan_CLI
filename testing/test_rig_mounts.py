@@ -314,10 +314,18 @@ def test_cameras_json_voyis_entries_are_data_only():
     assert 'voyis_right' not in camera_registry.CAMERAS
     rig = data['rigs']['on2026_voyis']
     assert rig['frame'] == 'local_euclidean'
-    assert rig['axes'] is None, 'ENU-vs-NED is an OPEN owner decision'
-    assert rig['stereo_baseline_m'] is None, 'unmeasured on ON2026 - keep null'
-    assert (rig['position_accuracy_m'], rig['orientation_accuracy_deg']) == \
-        (0.02, 90.0)
+    assert rig['axes'] is None, 'ENU-vs-NED verification still pending'
+    # Baseline/intrinsics FILLED 2026-08-08: owner-supplied manufacturer
+    # resized-corrected calibration, independently matched by the COLMAP
+    # rig solve and flight-log L-R distances (0.16970).
+    assert abs(rig['stereo_baseline_m'] - 0.16969684810099406) < 1e-12
+    assert rig['resolution'] == [2816, 2816]
+    assert rig['calibration_prior'] == 'approximate'
+    assert rig['calibration_groups'] == 'per-eye'
+    # ori floor 10.0 = the 2026-08-08 A/B verdict under TRUE roll (90 was
+    # the fabricated-roll-era conservative floor)
+    assert rig['position_accuracy_m'] == 0.02
+    assert rig['orientation_accuracy_deg'] == 10.0
 
 
 if __name__ == '__main__':

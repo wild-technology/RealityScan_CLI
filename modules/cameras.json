@@ -38,8 +38,15 @@
       "exists to refuse (audit 2026-08-07). Pitch and Pitch Accuracy are",
       "written EMPTY for those rows; yaw/roll still come from the nav."
     ],
-    "position_accuracy_m": {"x": 10.0, "y": 10.0, "alt": 1.0},
-    "orientation_accuracy_deg": {"yaw": 15.0, "roll": 15.0},
+    "position_accuracy_m": {
+      "x": 10.0,
+      "y": 10.0,
+      "alt": 1.0
+    },
+    "orientation_accuracy_deg": {
+      "yaw": 15.0,
+      "roll": 15.0
+    },
     "unknown_mount_pitch_accuracy_deg": null
   },
   "cameras": {
@@ -112,16 +119,34 @@
       "pattern": "^p\\d+c",
       "camera": "port",
       "era": "wca",
-      "mount": {"fwd": 1.0, "lat": 0.0, "down": 1.0, "pitch": 0.0, "p_acc": 15.0},
-      "timestamp_formats": ["%Y%m%d%H%M%S", "%Y%m%dT%H%M%SZ"]
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 1.0,
+        "pitch": 0.0,
+        "p_acc": 15.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
+      ]
     },
     {
       "family": "wca_cinema",
       "pattern": "^c\\d+c",
       "camera": "cinema",
       "era": "wca",
-      "mount": {"fwd": 1.0, "lat": 0.0, "down": 0.0, "pitch": 45.0, "p_acc": 15.0},
-      "timestamp_formats": ["%Y%m%d%H%M%S", "%Y%m%dT%H%M%SZ"]
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 0.0,
+        "pitch": 45.0,
+        "p_acc": 15.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
+      ]
     },
     {
       "_comment": "Starboard's mount has NEVER been measured. The owner excludes Starboard from photogrammetry, so this should not be reached - and if it is, the run must SAY SO rather than invent a zero lever arm and a 0 deg tilt. Inventing rig numbers is what produced the Port-1 m incident.",
@@ -130,31 +155,61 @@
       "camera": "starboard",
       "era": "wca",
       "mount": null,
-      "timestamp_formats": ["%Y%m%d%H%M%S", "%Y%m%dT%H%M%SZ"]
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
+      ]
     },
     {
       "family": "legacy_camupper",
       "pattern": "^camupper",
       "camera": "starboard",
       "era": "legacy",
-      "mount": {"fwd": 1.0, "lat": 0.0, "down": 0.0, "pitch": 70.0, "p_acc": 10.0},
-      "timestamp_formats": ["%Y%m%d%H%M%S", "%Y%m%dT%H%M%SZ"]
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 0.0,
+        "pitch": 70.0,
+        "p_acc": 10.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
+      ]
     },
     {
       "family": "legacy_cammid",
       "pattern": "^cammid",
       "camera": "port",
       "era": "legacy",
-      "mount": {"fwd": 1.0, "lat": 0.0, "down": 1.0, "pitch": 20.0, "p_acc": 10.0},
-      "timestamp_formats": ["%Y%m%d%H%M%S", "%Y%m%dT%H%M%SZ"]
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 1.0,
+        "pitch": 20.0,
+        "p_acc": 10.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
+      ]
     },
     {
       "family": "legacy_camlower",
       "pattern": "^camlower",
       "camera": "cinema",
       "era": "legacy",
-      "mount": {"fwd": 1.0, "lat": 0.0, "down": 1.0, "pitch": 10.0, "p_acc": 5.0},
-      "timestamp_formats": ["%Y%m%d%H%M%S", "%Y%m%dT%H%M%SZ"]
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 1.0,
+        "pitch": 10.0,
+        "p_acc": 5.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
+      ]
     },
     {
       "_comment": "Zeuss appears under 'zeuss'/'HERC' names across both eras, hence era 'all' and a delimiter-bounded token instead of an anchored prefix.",
@@ -162,8 +217,16 @@
       "pattern": "(^|[_\\-.])(zeuss|herc)([_\\-.]|$)",
       "camera": "zeuss",
       "era": "all",
-      "mount": {"fwd": 0.5, "lat": 0.0, "down": 0.5, "pitch": 30.0, "p_acc": 30.0},
-      "timestamp_formats": ["%Y%m%d%H%M%S"]
+      "mount": {
+        "fwd": 0.5,
+        "lat": 0.0,
+        "down": 0.5,
+        "pitch": 30.0,
+        "p_acc": 30.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S"
+      ]
     }
   ],
   "rigs": {
@@ -179,15 +242,49 @@
       "axes": null,
       "_axes_comment": "OPEN owner decision (HANDOFF 2026-08-07 blocking question #2): is the ON2026 local Euclidean frame ENU or NED? Decides whether YPR needs converting. Settle it against the bundle-adjusted poses already in ON2026_final.rsproj before filling this in.",
       "eyes": {
-        "L": {"camera": "voyis_left", "pattern": "^image_left_"},
-        "R": {"camera": "voyis_right", "pattern": "^image_right_"}
+        "L": {
+          "camera": "voyis_left",
+          "pattern": "^image_left_"
+        },
+        "R": {
+          "camera": "voyis_right",
+          "pattern": "^image_right_"
+        }
       },
       "_eyes_comment": "Per-eye filename patterns from the Voyis rectified-pair naming (image_left_/image_right_, same timestamp - COLMAP fact F-20260722-01). ON2026 rendered names UNVERIFIED against M: - verify before any consumer keys off these.",
       "position_accuracy_m": 0.02,
-      "orientation_accuracy_deg": 90.0,
-      "_accuracy_comment": "0.02 m / 90 deg is the production winner of the colmap_studio accuracy matrix (C-20260730-05/09; FINDINGS [ON2026] 2026-08-07): 0.02 m validated at 6.3 mm median prior residual, and tight 10 deg orientation priors were actively WORSE. Both are constant CLI defaults of export_rs_flightlog.py (--pos-acc / --ori-acc), not per-sample sigmas.",
-      "stereo_baseline_m": null,
-      "_stereo_baseline_comment": "DATA-ONLY and null until measured empirically on ON2026 imagery (median distance between per-frame left/right projection centers, per F-20260723-05; the 0.170 m figure on record is the RH0041/LilyJean rig). RealityScan cannot consume a baseline anyway - no stereo-rig support."
+      "orientation_accuracy_deg": 10.0,
+      "_accuracy_comment": "0.02 m position (validated 6.3 mm median prior residual). Orientation floor 10.0 deg ADOPTED 2026-08-08 by the owner-authorized A/B under TRUE roll (beat 90 on every metric: 3503v3498 registered, p95 4.49v4.57 cm, 18% faster); 90 was the fabricated-roll-era conservative floor.",
+      "stereo_baseline_m": 0.16969684810099406,
+      "_stereo_baseline_comment": "Manufacturer resized-corrected value, owner-supplied 2026-08-08; independently measured on ON2026: COLMAP rig solve 0.16970 (0.00% dev), flight-log L-R distance 0.16970 at p5=p50=p95.",
+      "resolution": [
+        2816,
+        2816
+      ],
+      "intrinsics": [
+        [
+          1895.6747569500258,
+          0,
+          1444.9779663085938
+        ],
+        [
+          0,
+          1895.6747569500258,
+          1386.6773681640625
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "focal_nominal_mm": 23,
+      "focal_35mm": 24.234478,
+      "principal_point_u": 0.01313138,
+      "principal_point_v": -0.00757196,
+      "calibration_prior": "approximate",
+      "calibration_groups": "per-eye",
+      "_calibration_comment": "Owner directive 2026-08-08: when using COLMAP output, calibration groups are PER-CAMERA (per eye) and the manufacturer resized-corrected calibration is given as an APPROXIMATE prior (nominal 23 mm; pixel intrinsics authoritative). These pixel values equal COLMAP sparse/0's solved PINHOLE exactly - COLMAP recovered the factory calibration."
     }
   }
 }
