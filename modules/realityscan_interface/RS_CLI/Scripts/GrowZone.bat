@@ -148,6 +148,21 @@ call :run -load "%scene_path%" || goto :fail
 :: (exports silently empty under -silent - FINDINGS.md); start clean.
 call :run -deselectAllImages || goto :fail
 
+:: Per-step flight-log reload (owner directive 2026-08-08, FLIGHTLOG_
+:: ARCHITECTURE 1b): P4-verified - importing a flight log onto an
+:: ALIGNED scene and running -update re-places the components onto the
+:: CURRENT priors without a re-align. Env-gated: legacy callers that do
+:: not set RS_GROW_FLIGHT_LOG are byte-identical in behavior. The
+:: import leaves matched images ACTIVELY SELECTED (FINDINGS 2026-07-23),
+:: so deselect afterwards.
+if defined RS_GROW_FLIGHT_LOG if not "%RS_GROW_FLIGHT_LOG%" == "" (
+    if not exist "%RS_GROW_FLIGHT_LOG%" ( echo ERROR: RS_GROW_FLIGHT_LOG not found: %RS_GROW_FLIGHT_LOG% & goto :fail )
+    echo Re-importing flight log at step start [%RS_GROW_FLIGHT_LOG%]
+    call :run -importFlightLog "%RS_GROW_FLIGHT_LOG%" "%RS_GROW_FLIGHT_LOG_PARAMS%" || goto :fail
+    call :run -update || goto :fail
+    call :run -deselectAllImages || goto :fail
+)
+
 set "did_lock="
 if /i "%mode%" == "global" goto :mode_global
 if /i "%mode%" == "component" goto :mode_component

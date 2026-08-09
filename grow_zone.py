@@ -343,6 +343,15 @@ def main() -> int:
     parser.add_argument('--selection_cmds', choices=('editsel', 'legacy'), default=None,
                         help='editsel: -editInputSelection inpEnabled/aligFeaturesMode '
                              '(default); legacy: -enableAlignment/-setFeatureSource')
+    parser.add_argument('--flight_log', default=None,
+                        help='zone flight log to RE-IMPORT at every grow step '
+                             '(owner directive 2026-08-08: the flight log is '
+                             'loaded at each alignment step; P4-verified to '
+                             're-place aligned components onto current priors '
+                             'via -update without a re-align)')
+    parser.add_argument('--flight_log_params', default=None,
+                        help='flight-log params XML for --flight_log '
+                             '(default: the local-frame template)')
     parser.add_argument('--lock_anchor', action='store_true',
                         help='lock the grown component poses (inpPose=3) during its '
                              'align - EXPERIMENTAL, off until U18 verifies it')
@@ -397,6 +406,19 @@ def main() -> int:
     # Selection-command strategy + experimental lock anchor, consumed by
     # GrowZone.bat via the environment.
     os.environ['RS_GROW_SELECT_CMDS'] = args.selection_cmds or 'editsel'
+    # Per-step flight-log reload (FLIGHTLOG_ARCHITECTURE 1b). Env-gated
+    # in GrowZone.bat: unset = legacy behavior, byte-identical.
+    if args.flight_log:
+        if not os.path.isfile(args.flight_log):
+            logger.error('--flight_log not found: %s', args.flight_log)
+            return 1
+        os.environ['RS_GROW_FLIGHT_LOG'] = os.path.abspath(args.flight_log)
+        params = args.flight_log_params or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'modules',
+            'realityscan_interface', 'RS_CLI', 'Metadata',
+            'FlightLogParamsLocal.xml')
+        os.environ['RS_GROW_FLIGHT_LOG_PARAMS'] = os.path.abspath(params)
+        logger.info('per-step flight-log reload: %s', args.flight_log)
     if args.lock_anchor:
         os.environ['RS_GROW_LOCK_ANCHOR'] = '1'
         logger.warning('lock-anchor mode is ON (inpPose=3) - unverified '
