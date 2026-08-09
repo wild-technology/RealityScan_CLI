@@ -17,8 +17,15 @@ if errorlevel 1 exit /b 1
 
 call :run -newScene || goto :fail
 call :run -save "%~1" || goto :fail
-echo Clearing application cache
+:: appAutoClearCache is a RETENTION policy (default 7 days) and
+:: -clearCache HONORS it: on a 2-day-old campaign the first flush
+:: freed 26 GB and left 918 GB (measured 2026-08-09). 0 = clear ALL;
+:: restored to the documented default afterwards so instance exits do
+:: not silently wipe warm caches from then on.
+%RealityScan% -delegateTo %RS_INSTANCE% -set "appAutoClearCache=0"
+echo Clearing application cache (retention 0 = everything)
 call :run -clearCache || goto :fail
+%RealityScan% -delegateTo %RS_INSTANCE% -set "appAutoClearCache=7"
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 echo Cache flush complete
 exit /b 0
