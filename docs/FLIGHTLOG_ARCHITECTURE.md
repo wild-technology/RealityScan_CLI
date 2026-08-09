@@ -162,6 +162,21 @@ row-driven, not key-driven.
      P3 full-path + duplicate-basename matching → P4 re-import onto
      aligned scene → P5 calibration columns + grouping modes.
 
+## 5b. Probe results (2026-08-08, same evening — FINDINGS.md has detail)
+
+  - P3 CLOSED: path rows match EXACT-PATH (no basename fallback, loud
+    per-row failure on mismatch); bare rows match basename. Pool
+    layout's semantics are confirmed safe.
+  - P1 CLOSED: the params' gpsLogFileFormat GUID is decorative on 2.2
+    (random-GUID import applies priors); no flightlogs.xml patching
+    needed on customer installs.
+  - P4 CLOSED: re-import + `-update` re-places ALIGNED components onto
+    new priors without re-align. Per-step flight-log loading is now a
+    verified refresh mechanism, not just hygiene. §1b's caveat is
+    resolved; grow gains an import+update step in the safe window.
+  - P5 (calibration columns / by-focal grouping) remains OPEN, gated
+    on the calibration-ladder verdict.
+
 ## 6. Honest boundaries
 
   - The identity census stays XMP-based for now (measurement channel,
