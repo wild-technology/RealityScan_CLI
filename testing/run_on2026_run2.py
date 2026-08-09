@@ -64,7 +64,14 @@ SRC_IMAGES = r"M:\ON2026 COLMAP processing\images"
 
 MIN_COMPONENT = 10          # flag-pole pockets (owner: pair 10-15; low end)
 MERGE_MIN_SIZE = 10
-CEILING = 34_000            # C-20260802-01
+# OWNER DECISION 2026-08-09 ~08:00: raised from 34,000 (C-20260802-01)
+# to pass the hull at 36,441 camera SLOTS - 6,205 of which are
+# copy-layout overlap duplicates (30,236 unique images; the pool zone
+# layout is the structural fix, queued for the next campaign). Risk
+# accepted knowingly: projected ~280 GB peak commit vs the measured
+# 319.5 GB commit limit (OOM landed exactly at that limit at 43,847
+# cams) - roughly 5% margin; a commit-charge monitor alerts at 290 GB.
+CEILING = 37_000
 LOSS_TOLERANCE = "0.015"    # measured ON2026 shed 1.06% + headroom; explicit
 MIN_FREE_GB = 150.0
 NO_WINDOW = 0x08000000
