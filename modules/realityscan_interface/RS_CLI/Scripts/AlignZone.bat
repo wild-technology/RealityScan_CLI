@@ -46,6 +46,15 @@ set "min_component_size=%~6"
 if "%min_component_size%" == "" set "min_component_size=50"
 
 if not exist "%input_dir%" ( echo ERROR: input directory not found: %input_dir% & exit /b 1 )
+
+:: POOL layout (owner directive 2026-08-08/09, FLIGHTLOG_ARCHITECTURE):
+:: RS_ALIGN_POOL_DIR set = the zone holds NO images, only a .imagelist
+:: of canonical pool paths + a full-path flight log. Images are added
+:: from the list, and the identity harvest sweeps the POOL (exportXMP
+:: writes sidecars beside the source images). Unset = byte-identical
+:: legacy behavior.
+set "harvest_dir=%input_dir%"
+if defined RS_ALIGN_POOL_DIR if not "%RS_ALIGN_POOL_DIR%" == "" set "harvest_dir=%RS_ALIGN_POOL_DIR%"
 if not exist "%AlignmentParams%" ( echo ERROR: AlignmentParams.xml not found: %AlignmentParams% & exit /b 1 )
 if not exist "%output_dir%" mkdir "%output_dir%"
 
@@ -63,6 +72,7 @@ if errorlevel 1 exit /b 1
 echo Creating new scene
 call :run -newScene || goto :fail
 
+if defined RS_ALIGN_POOL_DIR if not "%RS_ALIGN_POOL_DIR%" == "" goto :addViaList
 echo Adding images to project
 :: Subfolder recursion is NOT the default in this 2.2 build: without
 :: appIncSubdirs a zone tree whose images live in per-camera or
@@ -71,6 +81,15 @@ echo Adding images to project
 :: -set, FIFO-ordered before the queued addFolder, no wait needed.
 %RealityScan% -delegateTo %RS_INSTANCE% -set "appIncSubdirs=true"
 call :run -addFolder "%input_dir%" || goto :fail
+goto :imagesAdded
+
+:addViaList
+set "zone_list="
+for %%F in ("%input_dir%\*.imagelist") do set "zone_list=%%~fF"
+if not defined zone_list ( echo ERROR: pool mode but no .imagelist in %input_dir% & goto :fail )
+echo Adding images from %zone_list% (pool: %RS_ALIGN_POOL_DIR%)
+call :run -add "%zone_list%" || goto :fail
+:imagesAdded
 
 if not "%flight_log_dir%" == "" (
     echo Importing flight log
@@ -151,7 +170,7 @@ call :run -exportXMP || goto :fail
 :: stems(identity_r<K>) minus stems(r<K+1>), so an under-harvest shifts
 :: members BETWEEN components - and the merge camera-count attribution
 :: is built on those numbers (audit 2026-08-07).
-powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Get-ChildItem -LiteralPath '%input_dir%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%comp_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Get-ChildItem -LiteralPath '%harvest_dir%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%comp_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
 if errorlevel 1 ( echo ERROR: identity harvest move failed & goto :fail )
 set "have_poses="
 for %%F in ("%output_dir%\identity_r%comp_index%\*.xmp") do set have_poses=1

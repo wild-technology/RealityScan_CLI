@@ -310,8 +310,14 @@ class RealityScanAlignment(RSModule):
         # user-supplied folder of their own priors, which the goal
         # explicitly supports ("run against user-given folders"). Say so
         # once, loudly, before anything moves (audit 2026-08-07).
+        # Pool layout (RS_ALIGN_POOL_DIR): the zone folder holds only an
+        # .imagelist + flight log; exportXMP drops sidecars beside the
+        # POOL images, so every sidecar sweep (pre-align warning, the
+        # .bat harvest, sanitize, regeneration) targets the pool root
+        # instead of the zone folder. Unset = legacy behavior.
+        hygiene_root = os.environ.get('RS_ALIGN_POOL_DIR') or input_folder
         pose_sidecars = 0
-        for root, _dirs, files in os.walk(input_folder):
+        for root, _dirs, files in os.walk(hygiene_root):
             for name in files:
                 if not name.lower().endswith('.xmp'):
                     continue
@@ -330,7 +336,7 @@ class RealityScanAlignment(RSModule):
                 '- leftover pose sidecars auto-import as exact-pose priors on '
                 'any later add (bug B7). Copy the folder first if those '
                 'sidecars are yours.',
-                input_folder, pose_sidecars,
+                hygiene_root, pose_sidecars,
                 os.path.join(output_folder, 'identity_r0'))
 
         if flight_log_path is None or not os.path.isfile(flight_log_path):
@@ -393,7 +399,7 @@ class RealityScanAlignment(RSModule):
         # which would poison the next attempt as auto-imported priors
         # (B7). The registration census now comes from the manifests
         # (harvested sidecars), not from this sweep.
-        leftover, restored, removed = camera_registry.sanitize_and_census(input_folder)
+        leftover, restored, removed = camera_registry.sanitize_and_census(hygiene_root)
         if leftover:
             self.logger.warning(
                 '%d pose sidecars were left beside the images (partial '
@@ -412,11 +418,11 @@ class RealityScanAlignment(RSModule):
         # records as fixed (audit 2026-08-07). Idempotent: (0, 0) on a
         # complete tree.
         created, no_camera = camera_registry.ensure_calibration_sidecars(
-            input_folder)
+            hygiene_root)
         if created:
             self.logger.info(
                 'Restored %d calibration sidecar(s) displaced by the identity '
-                'harvest in %s', created, input_folder)
+                'harvest in %s', created, hygiene_root)
 
         if not result.success:
             self.logger.error(f"RealityScan workflow failed for {input_folder}: "
