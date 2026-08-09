@@ -29,6 +29,99 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [ON2026] 2026-08-08 - flight-log deep research (4-agent doc/binary
+## sweep; full detail in docs/FLIGHTLOG_ARCHITECTURE.md)
+
+- **Flight-log rows CAN carry prior calibration** - FocalLength,
+  PrincipalU/V, Skew, AspectRatio, RadialDistortion1-4,
+  TangentialDistortion1-2 are documented trajectory variables
+  (defineimportformat.htm); the 2.2 exe additionally understands
+  F35MM/FPIX/FNORM unit variants and header aliases (K1-K4, T1/T2,
+  IMG/NAME/IMAGE). No per-row calibration-GROUP column; grouping is
+  the import dialog's none/one-group/by-focal-length option (ifKGrp).
+- **The Image column is documented as full-path-legal** ("Image name
+  including the whole path and the format extension"); basename
+  matching semantics are UNDOCUMENTED (probe needed). Unmatched rows
+  warn "image '$(name)' not found in the current scene" - rows match
+  images already IN the scene; a flight log never adds images.
+- **{B438A617-...}, our 13-col format, is NOT a factory format** - it
+  lives only in the hand-patched RS 2.0 flightlogs.xml + repo copy;
+  absent from stock 2.2/2.1 registries, this box's user registry,
+  ProgramData, and AppData - yet production 2.2 imports our logs
+  correctly (accuracy columns demonstrably consumed: the ori A/B
+  changed solves). Most plausible: header-alias parsing. SHIPPING
+  RISK until probed on a clean install; flightlogs.xml is documented
+  user-editable as the sanctioned custom-format channel.
+- **ifUsePosAcc/ifUseOriAcc exist in NO 2.x binary** (and ifKmode only
+  in 2.0) - our params template carries dead keys; per-row accuracies
+  work anyway. ifKGrp/csvFLSep/csvFLIgn etc. are undocumented
+  everywhere; meanings recovered from the exe's ImportFlightLogCommand
+  key cluster (csvFLSep=separator, csvFLIgn=ignore-first-line,
+  ifKGrp=calibration auto-grouping).
+- **The two flight-log help pages CONTRADICT each other on Euler
+  axes** (defineimportformat.htm says yaw-around-Y; flightlogimport.htm
+  says NED roll=X/pitch=Y/yaw=Z, ZYX right-to-left). Trust only the
+  empirical roll validation (C-20260803-01), never these pages.
+- **Cross-zone merge no-fuse ROOT CAUSE confirmed**: merge fusion
+  requires the SAME image path in both components; Batch Directory's
+  overlap COPIES make per-zone paths distinct, so overlapping
+  components share zero cameras and -mergeComponents "succeeds"
+  without fusing. Fix direction: canonical image pool + full-path
+  flight-log rows (owner directive 2026-08-08).
+- **appGroupCalibrationByExif documented (bool, default false)**; the
+  exe also carries AppForceEqualCalibration and AppPreferExif
+  (= the "Prefer Exif over XMP" GUI toggle, inferred) - import-time
+  state that same-name sidecar auto-import silently depends on.
+- **Cache keys documented**: appAutoClearCache (default 7 days,
+  clears on exit), appCacheImageMetadata (crmeta.db beside images),
+  appCopyImportedComponentsToCache; NOTHING documents cache
+  invalidation on changed inputs. No stale-cache correctness incident
+  on record (the 2026-08-08 confound was cross-instance cache
+  CONCURRENCY; the hull-model killer was cache-disk exhaustion).
+
+## [ON2026] 2026-08-08 - calibration-CLI probe results (6-image fixture,
+## RSPROBE instance; steps + censuses in _agent\calib_ladder\probe)
+
+- **`-setPriorCalibrationGroup` / `-setPriorLensGroup` are silently
+  NON-FUNCTIONAL from the delegated CLI** - every delegated invocation
+  returns success, but after -align the exported cameras show
+  CalibrationGroup="-1" and six DISTINCT solved focals (per-image
+  self-calibration), under BOTH selection forms: full-path
+  -selectImage + union (the form GrowZone.bat uses live) and regex
+  -selectImage. The solved-focal-equality oracle is what proved it -
+  exit codes and the errors channel said nothing. Cell B of the
+  calibration ladder failed on this (0x8000FFFF on the setPrior after
+  a regex+union select; with union dropped every command "passed" and
+  still nothing stuck).
+- **`-selectImage <regexp> union` is additionally hazardous**: with a
+  regex argument the union-mode call left the selection in a state
+  where the NEXT command errored 0x8000FFFF (probe V1), while the
+  mode-less regex form "succeeded". Path+union (GrowZone) remains fine.
+- **`-addImageWithCalibration <img> <xmp>` WORKS end-to-end** (probe 4:
+  registry XMPs, groups 5/6, approximate 24.2345): exported cameras
+  echo CalibrationGroup 5/6, solved focals are IDENTICAL within each
+  eye (24.1982 L / 24.1966 R) and deviate ~0.036 mm from the prior -
+  i.e. per-eye grouping engaged AND the approximate prior was honored,
+  not fixed. Batched via -execRSCMD (one command per line, plain
+  paths); RealityScan.log shows per-add "Added 1 images." lines.
+- **Exported XMPs write CalibrationPrior="exact" regardless of the
+  input prior** - the export field reflects export mode (B7 semantics),
+  NOT the prior that drove the solve. Never census prior MODE from
+  exports; census GROUP ECHO and solved-focal equality instead.
+- **`-exportXMP` is silently gated by the minimum component size** -
+  a 6-image scene that fragmented 3+3 exported NOTHING (all commands
+  "OK") until -setMinComponentSize 2; same silent-nothing class as the
+  selection-export trap. Any XMP census loop must pin min component
+  size first.
+- **`-exportGlobalSettings` emits a binary .rsconfig** (TBES header),
+  not readable XML - useless for key discovery. The documented -set
+  key table (tutorials/setkeyvaluetable.htm) is the readable source;
+  it lists `appGroupCalibrationByExif` (add-time auto-grouping) and
+  the GUI shows "Prefer Exif over XMP" (import-time precedence) -
+  both are add/import-time state that same-name sidecar auto-import
+  silently depends on, consistent with the owner's field
+  unreliability report.
+
 ## [ON2026] 2026-08-08 - sidecar AUTO-IMPORT retired as a delivery
 ## mechanism; explicit CLI commands exist for everything sidecars did
 

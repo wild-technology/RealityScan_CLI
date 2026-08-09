@@ -167,14 +167,34 @@ def purge_tree_xmps():
     return n
 
 
-def build_cellc_inputs():
-    """Registry XMPs in a SEPARATE directory + the .rscmd command file
+# Grouping-only XMP: CalibrationGroup/DistortionGroup and nothing else.
+# Cell B isolates the per-eye-grouping variable from the prior VALUES;
+# both cells use the SAME validated delivery (-addImageWithCalibration,
+# probe 4 - the setPrior* commands are silently non-functional from the
+# CLI, FINDINGS 2026-08-08).
+GROUPS_ONLY_XMP = (
+    '<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
+    '  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+    '    <rdf:Description xcr:Version="4"\n'
+    '       xcr:CalibrationGroup="{group}" xcr:DistortionGroup="{group}"\n'
+    '       xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.1#">\n'
+    '    </rdf:Description>\n'
+    '  </rdf:RDF>\n'
+    '</x:xmpmeta>\n')
+
+
+def build_xmp_inputs(kind):
+    """Registry XMPs in a SEPARATE directory + a .rscmd command file
     (one -addImageWithCalibration per image, whole paths, unquoted -
-    no path here contains spaces, asserted below)."""
-    xmp_dir = os.path.join(LADDER, "xmp")
+    no path here contains spaces, asserted below).
+
+    kind 'groups': CalibrationGroup/DistortionGroup only (cell B).
+    kind 'full':   complete approximate manufacturer priors (cell C).
+    """
+    xmp_dir = os.path.join(LADDER, f"xmp_{kind}")
     os.makedirs(xmp_dir, exist_ok=True)
-    rscmd = os.path.join(LADDER, "add_with_calibration.rscmd")
-    lines = ["# built by run_calib_ladder.py - one explicit"
+    rscmd = os.path.join(LADDER, f"add_with_calibration_{kind}.rscmd")
+    lines = [f"# built by run_calib_ladder.py ({kind}) - one explicit"
              " image+calibration add per line"]
     n_l = n_r = 0
     for img in sorted(glob.glob(os.path.join(IMAGES, "*.jpg"))):
@@ -184,9 +204,13 @@ def build_cellc_inputs():
             abort(f"unidentified image in the calib tree: {base}")
         if " " in img:
             abort(f"space in image path (rscmd quoting hazard): {img}")
+        if kind == "full":
+            content = camera_registry.calibration_xmp(cam)
+        else:
+            content = GROUPS_ONLY_XMP.format(group=cam.calibration_group)
         xmp_path = os.path.join(xmp_dir, os.path.splitext(base)[0] + ".xmp")
         with open(xmp_path, "w", encoding="utf-8") as f:
-            f.write(camera_registry.calibration_xmp(cam))
+            f.write(content)
         lines.append(f"-addImageWithCalibration {img} {xmp_path}")
         if cam.key == "voyis_left":
             n_l += 1
@@ -195,8 +219,8 @@ def build_cellc_inputs():
     with open(rscmd, "w", encoding="utf-8", newline="\r\n") as f:
         f.write("\n".join(lines) + "\n")
     if n_l + n_r != EXPECTED_IMAGES:
-        abort(f"cell C build: {n_l}+{n_r} != {EXPECTED_IMAGES}")
-    log(f"cell C inputs: {n_l} L + {n_r} R xmps in {xmp_dir}")
+        abort(f"{kind} build: {n_l}+{n_r} != {EXPECTED_IMAGES}")
+    log(f"{kind} inputs: {n_l} L + {n_r} R xmps in {xmp_dir}")
     return rscmd
 
 
@@ -262,10 +286,12 @@ def main():
 
     verdict = {"oracle_production_zone1_20k": ORACLE, "cells": {}}
     verdict["cells"]["A_control"] = run_cell("A", {"RS_CALIB_MODE": ""})
-    verdict["cells"]["B_groups"] = run_cell("B", {"RS_CALIB_MODE": "groups"})
-    rscmd = build_cellc_inputs()
-    verdict["cells"]["C_xmp"] = run_cell(
-        "C", {"RS_CALIB_MODE": "xmp", "RS_CALIB_XMP_RSCMD": rscmd})
+    rscmd_g = build_xmp_inputs("groups")
+    verdict["cells"]["B_groups_xmp"] = run_cell(
+        "B", {"RS_CALIB_MODE": "xmp", "RS_CALIB_XMP_RSCMD": rscmd_g})
+    rscmd_f = build_xmp_inputs("full")
+    verdict["cells"]["C_full_xmp"] = run_cell(
+        "C", {"RS_CALIB_MODE": "xmp", "RS_CALIB_XMP_RSCMD": rscmd_f})
 
     with open(os.path.join(LADDER, "ladder_verdict.json"), "w",
               encoding="utf-8") as f:

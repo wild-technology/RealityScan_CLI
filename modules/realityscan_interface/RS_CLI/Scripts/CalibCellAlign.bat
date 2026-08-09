@@ -12,17 +12,19 @@ setlocal
 :: (FINDINGS.md "sidecar AUTO-IMPORT retired"). Hooks:
 ::
 ::   RS_CALIB_MODE  ""/unset : control cell - behaves as AlignZone.bat
-::                  groups   : per-eye PRIOR calibration+lens groups via
-::                             -selectImage regex + -setPriorCalibrationGroup
-::                             / -setPriorLensGroup (no files involved)
+::                  groups   : RETIRED 2026-08-08 - hard error. The
+::                             -setPriorCalibrationGroup/-setPriorLensGroup
+::                             commands return success but do NOT stick
+::                             (proven by solved-focal-equality census;
+::                             FINDINGS.md "calibration-CLI probe").
+::                             Group-only cells use xmp mode with
+::                             groups-only XMPs instead.
 ::                  xmp      : add every image WITH its calibration XMP
 ::                             (-addImageWithCalibration, whole paths,
 ::                             xmps in a SEPARATE directory) by executing
 ::                             the .rscmd file RS_CALIB_XMP_RSCMD built
 ::                             by testing/run_calib_ladder.py
 ::
-::   RS_CALIB_LEFT_RE / RS_CALIB_RIGHT_RE   selectImage regexes
-::   RS_CALIB_LEFT_GRP / RS_CALIB_RIGHT_GRP group numbers (voyis: 5 / 6)
 ::
 :: Arguments (same as AlignZone.bat):
 ::   %1 zone input dir  %2 component output dir  %3 flight log ("" ok)
@@ -35,10 +37,6 @@ set "AlignmentParams=%Metadata%\AlignmentParams.xml"
 if defined RS_ALIGN_PARAMS if not "%RS_ALIGN_PARAMS%" == "" set "AlignmentParams=%RS_ALIGN_PARAMS%"
 
 if not defined RS_CALIB_MODE set "RS_CALIB_MODE="
-if not defined RS_CALIB_LEFT_GRP set "RS_CALIB_LEFT_GRP=5"
-if not defined RS_CALIB_RIGHT_GRP set "RS_CALIB_RIGHT_GRP=6"
-if not defined RS_CALIB_LEFT_RE set "RS_CALIB_LEFT_RE=[Ll]_2026-"
-if not defined RS_CALIB_RIGHT_RE set "RS_CALIB_RIGHT_RE=[Rr]_2026-"
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
@@ -92,21 +90,11 @@ call :run -importFlightLog "%flight_log_dir%" "%flight_log_params_dir%" || goto 
 :flightLogDone
 
 if /I not "%RS_CALIB_MODE%" == "groups" goto :groupsDone
-:: Per-eye grouping through EXPLICIT selection commands - no files, no
-:: sidecar pairing. The post-align detector for this cell is the group
-:: census over the harvested identity XMPs (run_calib_ladder.py): a
-:: regex that matched nothing shows up there as an ungrouped census,
-:: never as a silent pass.
-echo Applying per-eye prior calibration/lens groups (L=%RS_CALIB_LEFT_GRP% R=%RS_CALIB_RIGHT_GRP%)
-call :run -deselectAllImages || goto :fail
-call :run -selectImage "%RS_CALIB_LEFT_RE%" union || goto :fail
-call :run -setPriorCalibrationGroup %RS_CALIB_LEFT_GRP% || goto :fail
-call :run -setPriorLensGroup %RS_CALIB_LEFT_GRP% || goto :fail
-call :run -deselectAllImages || goto :fail
-call :run -selectImage "%RS_CALIB_RIGHT_RE%" union || goto :fail
-call :run -setPriorCalibrationGroup %RS_CALIB_RIGHT_GRP% || goto :fail
-call :run -setPriorLensGroup %RS_CALIB_RIGHT_GRP% || goto :fail
-call :run -deselectAllImages || goto :fail
+echo ERROR: RS_CALIB_MODE=groups is RETIRED - -setPriorCalibrationGroup
+echo   silently does not stick from the delegated CLI (FINDINGS.md
+echo   2026-08-08, calibration-CLI probe). Use xmp mode with groups-only
+echo   XMPs for a grouping-only cell.
+goto :fail
 :groupsDone
 
 echo Applying alignment settings from AlignmentParams.xml
