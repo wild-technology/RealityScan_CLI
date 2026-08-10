@@ -307,10 +307,14 @@ def union_model(fdir):
     os.makedirs(outdir, exist_ok=True)
     model_name = f"{final_name}_HighPoly"
     clear_markers()
+    # Depth-map downscale 2: the union scene is even larger than the
+    # hull, whose FULL-RES mesh exhausted the disk (2026-08-10). See
+    # run_on2026_run2.stage_models for the full rationale.
     run_cmd("mesh wreck", [
         os.path.join(SCRIPTS, "ComputeModel.bat"),
         scene, "", model_name,
-    ], os.path.join(LOGS, "mesh_wreck.log"))
+    ], os.path.join(LOGS, "mesh_wreck.log"),
+        extra_env={"RS_MESH_DOWNSCALE": "2"})
     run_cmd("finish wreck", [
         sys.executable, os.path.join(REPO, "finish_model.py"),
         "--instance", "RS1", "--outdir", outdir, "--name", final_name,

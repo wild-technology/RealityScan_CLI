@@ -48,6 +48,16 @@ if "%component_name%" == "" (
     call :run -selectComponent "%component_name%" || goto :fail
 )
 
+:: RS_MESH_DOWNSCALE (env, optional): depth-map downscale factor for
+:: THIS mesh. 2 quarters the depth-map cache footprint (the full-res
+:: hull mesh needs ~1.4+ TB and exhausted M: on 2026-08-10, the
+:: historical 0x80070070 killer); texture resolution is unaffected.
+:: Unset = RealityScan's current setting (full res).
+if defined RS_MESH_DOWNSCALE if not "%RS_MESH_DOWNSCALE%" == "" (
+    echo Setting depth-map downscale %RS_MESH_DOWNSCALE%
+    call :run -setDownscaleForDepthMaps %RS_MESH_DOWNSCALE% || goto :fail
+)
+
 echo Calculating high model
 call :run -calculateHighModel || goto :fail
 call :run -renameSelectedModel "%model_name%" || goto :fail
