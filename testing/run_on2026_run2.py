@@ -458,7 +458,7 @@ def stage_models(merge_results):
         # this box fits full res). ds2 ~= quarter footprint; texture
         # stays 4x8k from full-res images. A full-res re-mesh later is
         # purely additive - the merged component persists.
-        mesh_env = {"RS_MESH_DOWNSCALE": "2"} if feat == "hull" else None
+        mesh_env = {"RS_MESH_DETAIL": "normal"} if feat == "hull" else None
         run_cmd(f"mesh {feat}", [
             os.path.join(SCRIPTS, "ComputeModel.bat"),
             scene, comp, model_name,

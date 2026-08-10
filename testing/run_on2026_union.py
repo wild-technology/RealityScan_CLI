@@ -314,7 +314,7 @@ def union_model(fdir):
         os.path.join(SCRIPTS, "ComputeModel.bat"),
         scene, "", model_name,
     ], os.path.join(LOGS, "mesh_wreck.log"),
-        extra_env={"RS_MESH_DOWNSCALE": "2"})
+        extra_env={"RS_MESH_DETAIL": "normal"})
     run_cmd("finish wreck", [
         sys.executable, os.path.join(REPO, "finish_model.py"),
         "--instance", "RS1", "--outdir", outdir, "--name", final_name,
