@@ -424,8 +424,12 @@ def find_scene_and_component(feat, merge_result):
         rsalign = merge_result["rsalign"]
         zone_dir = os.path.dirname(rsalign)
         scenes = glob.glob(os.path.join(zone_dir, "*.rsproj"))
-        comp = os.path.basename(rsalign)[:-len(".rsalign")]
-        return (scenes[0] if scenes else None), comp
+        # The zone scene was saved BEFORE the identity loop's in-memory
+        # rename, so the component inside the .rsproj does NOT carry the
+        # rsalign's zone_N_cK name - selectComponent by that name fails
+        # (mesh mast_a, 2026-08-10). "" = maximal component, which for a
+        # single-manifest zone IS the feature component.
+        return (scenes[0] if scenes else None), ""
     fdir = os.path.join(MERGED, feat)
     scenes = sorted(glob.glob(os.path.join(fdir, "**", "*.rsproj"),
                               recursive=True), key=os.path.getmtime)
