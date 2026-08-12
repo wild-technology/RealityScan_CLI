@@ -110,19 +110,81 @@ class _Settings:
 CLI = RealityScanCLI(logger, _Settings())
 
 
+_OP_IN_FLIGHT = threading.Lock()
+METRICS_CSV = os.path.join(WORK, "metrics.csv")
+
+
+def _mem_gb():
+    """(rsgui_ws_gb, commit_used_gb) - cheap enough for op boundaries
+    and a 30 s peak sampler (owner 2026-08-11: track time AND memory
+    per step)."""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "$p = Get-Process RealityScan -ErrorAction SilentlyContinue "
+             "| Sort-Object WorkingSet64 -Descending "
+             "| Select-Object -First 1; "
+             "$os = Get-CimInstance Win32_OperatingSystem; "
+             "[math]::Round($p.WorkingSet64/1GB,2); "
+             "[math]::Round(($os.TotalVirtualMemorySize"
+             "-$os.FreeVirtualMemory)/1MB,1)"],
+            capture_output=True, text=True, timeout=30,
+            creationflags=0x08000000)
+        ws, commit = [float(x) for x in out.stdout.split()]
+        return ws, commit
+    except Exception:
+        return 0.0, 0.0
+
+
 def night(mode, *args):
-    """One NightGrow.bat primitive against the live instance."""
-    clear_errors()
-    t0 = time.time()
-    result = CLI.run_attach_script("NightGrow.bat", [mode, *args],
-                                   LOGS, instance=INSTANCE)
-    mins = (time.time() - t0) / 60
-    if not result.success:
-        log(f"NightGrow {mode} FAILED after {mins:.1f} min: "
-            f"{result.errors or result.return_code} (log: {result.log_path})")
-        return False
-    log(f"NightGrow {mode} ok ({mins:.1f} min)")
-    return True
+    """One NightGrow.bat primitive against the live instance. Serialized:
+    the hourly saver skips its save when an op holds the lock, so saves
+    never stack behind long aligns/censuses (save time scales with the
+    component count - owner note 2026-08-11; every mutating mode already
+    saves on completion). Per-op wall time and memory (RSGUI working
+    set + system commit, with 30 s peak sampling) land in the log and
+    metrics.csv."""
+    with _OP_IN_FLIGHT:
+        clear_errors()
+        t0 = time.time()
+        ws0, cm0 = _mem_gb()
+        peak = {"ws": ws0, "cm": cm0}
+        done = threading.Event()
+
+        def sampler():
+            while not done.wait(30):
+                ws, cm = _mem_gb()
+                peak["ws"] = max(peak["ws"], ws)
+                peak["cm"] = max(peak["cm"], cm)
+
+        st = threading.Thread(target=sampler, daemon=True)
+        st.start()
+        result = CLI.run_attach_script("NightGrow.bat", [mode, *args],
+                                       LOGS, instance=INSTANCE)
+        done.set()
+        mins = (time.time() - t0) / 60
+        ws1, cm1 = _mem_gb()
+        peak["ws"] = max(peak["ws"], ws1)
+        peak["cm"] = max(peak["cm"], cm1)
+        new_csv = not os.path.isfile(METRICS_CSV)
+        with open(METRICS_CSV, "a", encoding="utf-8", newline="") as f:
+            if new_csv:
+                f.write("timestamp,mode,ok,minutes,ws_before_gb,"
+                        "ws_after_gb,ws_peak_gb,commit_before_gb,"
+                        "commit_after_gb,commit_peak_gb\r\n")
+            f.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S},{mode},"
+                    f"{int(result.success)},{mins:.1f},{ws0},{ws1},"
+                    f"{peak['ws']},{cm0},{cm1},{peak['cm']}\r\n")
+        if not result.success:
+            log(f"NightGrow {mode} FAILED after {mins:.1f} min "
+                f"(WS {ws0}->{ws1} peak {peak['ws']} GB; commit {cm0}->"
+                f"{cm1} peak {peak['cm']} GB): "
+                f"{result.errors or result.return_code} "
+                f"(log: {result.log_path})")
+            return False
+        log(f"NightGrow {mode} ok ({mins:.1f} min; WS {ws0}->{ws1} peak "
+            f"{peak['ws']} GB; commit {cm0}->{cm1} peak {peak['cm']} GB)")
+        return True
 
 
 # ------------------------------------------------------------------ wait
@@ -227,8 +289,40 @@ def restore(tag):
 
 def hourly_saver(stop_event):
     while not stop_event.wait(SAVE_INTERVAL_S):
+        if _OP_IN_FLIGHT.locked():
+            # An op is running; every mutating mode saves on completion,
+            # so skipping here loses nothing and never queues a save
+            # behind a long align/census (component-count save cost).
+            log("hourly save skipped (operation in flight)")
+            continue
         log("hourly save")
         night("saveonly", SCENE)
+
+
+def tidy_components(comps):
+    """Delete components fully CONTAINED in a larger one (align/merge
+    leaves superseded SOURCE components in the scene - FINDINGS; they
+    bloat every save, which scales with component count). Containment is
+    manifest-verified from the census stems; the largest component is
+    never deleted. Returns the tidied census list."""
+    keep = [comps[0]]
+    victims = []
+    for name, cnt, stems in comps[1:]:
+        container = next((k for k in comps
+                          if k[0] != name and k[1] > cnt
+                          and stems <= k[2]), None)
+        if container is not None:
+            victims.append((name, cnt, container[0]))
+        else:
+            keep.append((name, cnt, stems))
+    for name, cnt, cname in victims:
+        log(f"tidy: deleting {name} ({cnt:,} cams - contained in {cname})")
+        if not night("delete2nd", SCENE, name):
+            log(f"tidy: delete of {name} failed - leaving it")
+            keep.append(next(c for c in comps if c[0] == name))
+    if victims:
+        keep.sort(key=lambda c: -c[1])
+    return keep
 
 
 # ------------------------------------------------------------------ main
@@ -365,6 +459,9 @@ def main():
             f"({len(reg2):,} total)")
         rollbacks = 0
         comps, registered, baseline = comps2, reg2, set(reg2)
+        # Keep the scene tidy: superseded source components bloat every
+        # save (save time scales with component count - owner note).
+        comps = tidy_components(comps)
         if gained == 0:
             log("S: converged (no growth) - seed loop done")
             break
@@ -377,6 +474,7 @@ def main():
         comps3, reg3 = census("merge_rigid")
         if comps3 is not None and not (baseline - reg3):
             comps, registered, baseline = comps3, reg3, set(reg3)
+            comps = tidy_components(comps)
             merged_ok = len(comps) < 2
         else:
             restore("night_pre_merge")
@@ -388,6 +486,7 @@ def main():
             if comps4 is not None and not (baseline - reg4) \
                     and len(reg4) >= len(baseline):
                 comps, registered = comps4, reg4
+                comps = tidy_components(comps)
             else:
                 log("M: align rung shrank the census - restoring")
                 restore("night_pre_align_merge")
@@ -410,4 +509,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        # A crash must be VISIBLE to the monitors (the 2026-08-11
+        # checkpoint .lock crash died silently into the console log).
+        import traceback
+        log("ABORT: unhandled exception\n" + traceback.format_exc())
+        raise

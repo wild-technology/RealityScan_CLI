@@ -65,7 +65,9 @@ def checkpoint_scene(scene_path: str, checkpoints_dir: str, tag: str,
     for src in scene_bundle(scene_path):
         target = os.path.join(staging, os.path.basename(src))
         if os.path.isdir(src):
-            shutil.copytree(src, target)
+            shutil.copytree(src, target,
+                                ignore=shutil.ignore_patterns(
+                                    '.lock', '*.lock'))
         else:
             shutil.copy2(src, target)
     if os.path.isdir(dest):
@@ -118,7 +120,9 @@ def restore_scene(scene_path: str, checkpoints_dir: str, tag: str, logger) -> No
             src = os.path.join(src_dir, name)
             target = os.path.join(scene_dir, name)
             if os.path.isdir(src):
-                shutil.copytree(src, target)
+                shutil.copytree(src, target,
+                                ignore=shutil.ignore_patterns(
+                                    '.lock', '*.lock'))
             else:
                 shutil.copy2(src, target)
     except OSError as exc:
