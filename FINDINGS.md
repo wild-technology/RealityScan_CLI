@@ -52,6 +52,22 @@ silently-broken-delegated-command class (-setPriorCalibrationGroup,
 -setPriorLensGroup, -setDownscaleForDepthMaps, component ops on a
 GUI instance).
 
+UPDATE (same night, headless RS2 twin): the delete is NOT GUI-specific.
+A full -selectMaximalComponent/-deleteSelectedComponent x2 +
+-importComponent(hull) + -save on a HEADLESS RS2 instance holding a
+COPY of the scene - with REAL memory movement (commit 93->110 GB
+during the 11.8 GB hull re-import, so the ops did execute in memory) -
+still reloaded to a byte-identical 24-component census with the victim
+present. So component deletion executes in memory (the census peel
+proves it every round) but does NOT PERSIST through -save+reload from
+the delegated CLI, on any instance. The census "works" only because it
+peels in-memory and DISCARDS the result by reloading; a workflow that
+SAVES the peeled state does not keep it. PRODUCTION RULE: never rely on
+CLI component deletion as a persistent edit - exclude the component's
+members at the driver level (solve-level deletion: drop from baseline +
+enable lists) and leave the object for an interactive GUI delete. The
+delete-reimport-save dance is retired.
+
 Same night, two rollback-machinery findings while attaching to a LIVE
 scene: scene_checkpoint's restore rmtree died on the GUI-held .lock
 BEFORE touching data (dotfiles sort first) but AFTER deleting the
