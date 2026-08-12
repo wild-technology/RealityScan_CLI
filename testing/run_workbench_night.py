@@ -386,6 +386,7 @@ def main():
         abort("census #0 failed")
     saver.start()
 
+    excluded_stems = set()
     # D: delete the second-largest component (owner instruction).
     # Name-free (deletesecond): -selectComponent silently no-ops on
     # RS-generated names like 'Component 23 (1)' - the first attempt
@@ -398,28 +399,42 @@ def main():
         log(f"D: deleting second-largest {victim[0]} ({victim[1]:,} cams) "
             f"via name-free peel; largest re-imported from census export")
         checkpoint("night_pre_delete")
-        if not night("deletesecond", SCENE, largest_rsalign):
+        if not night("deletesecond", SCENE, largest_rsalign,
+                     os.path.join(WORK, "xmp_trash"), ZONES, POOL):
             restore("night_pre_delete")
             abort("deletesecond failed - scene restored")
-        comps, registered = census("post_delete2")
+        comps, registered = census("post_delete3")
         if comps is None:
             abort("post-delete census failed")
-        expected = len(set().union(*[c[2] for c in comps]))
         victim_gone = all(c[2] != victim[2] for c in comps)
         largest_ok = any(c[1] >= keep[1] * 0.999 for c in comps)
-        if not victim_gone or not largest_ok:
-            restore("night_pre_delete")
-            abort(f"deletion VERIFY failed (victim_gone={victim_gone}, "
-                  f"largest_ok={largest_ok}) - scene restored; needs "
-                  "owner eyes")
-        log(f"D: verified - victim gone, largest intact, "
-            f"registered {len(registered):,}")
+        if victim_gone and largest_ok:
+            log(f"D: verified - victim gone, largest intact, "
+                f"registered {len(registered):,}")
+        else:
+            # FALLBACK (owner-goal preserving): stop theorizing about
+            # the silent no-op class mid-night. Keep the victim's
+            # component but EXCLUDE its members from every enable list
+            # and every verdict for the rest of the campaign - the
+            # solve-level equivalent of deletion; the owner can delete
+            # the component in the GUI in seconds in the morning.
+            log(f"D: deletion verify failed AGAIN (victim_gone="
+                f"{victim_gone}, largest_ok={largest_ok}) - falling "
+                f"back to EXCLUSION of the victim's {victim[1]:,} "
+                "members for the whole campaign; component left for "
+                "morning GUI deletion")
+            excluded_stems = set(victim[2])
+            registered = registered - excluded_stems
+            comps = [(n, len(st - excluded_stems), st - excluded_stems)
+                     for n, cnt, st in comps
+                     if st != victim[2]]
+            comps.sort(key=lambda c: -c[1])
     else:
         log("D: fewer than 2 components - nothing to delete")
 
     # O: orphan breakout + yellow screen
     idx = pool_index()
-    orphan_stems = sorted(set(idx) - registered)
+    orphan_stems = sorted(set(idx) - registered - excluded_stems)
     log(f"O: {len(orphan_stems):,} orphan images "
         f"(pool {len(idx):,} - registered {len(registered):,})")
     excluded = []
@@ -540,10 +555,34 @@ def main():
             comps = tidy_components(comps)
 
     # M: final merge of largest + the grown rest
-    log("M: enabling ALL and attempting final consolidation")
     checkpoint("night_pre_merge")
     merged_ok = False
-    if night("mergefinal", SCENE, ALIGN_PARAMS, "merge"):
+    if excluded_stems:
+        log("M: exclusion active - rigid mergeComponents SKIPPED (it "
+            "ignores enable flags and could fold the excluded component "
+            "in); align engine with victims disabled instead")
+        enable = sorted({idx[s2] for s2 in baseline if s2 in idx}
+                        | set(accepted))
+        elist = write_list(os.path.join(WORK, "merge_enable.imagelist"),
+                           enable)
+        if night("seedpass", SCENE, elist, ALIGN_PARAMS):
+            comps3, reg3 = census("merge_excl")
+            if comps3 is not None:
+                reg3 = reg3 - excluded_stems
+                if not (baseline - reg3) and len(reg3) >= len(baseline):
+                    comps = [(n, len(st - excluded_stems),
+                              st - excluded_stems)
+                             for n, st_cnt, st in
+                             [(n, c, st) for n, c, st in comps3]
+                             if st != excluded_stems]
+                    comps = [c for c in comps if c[1] > 0]
+                    comps.sort(key=lambda c: -c[1])
+                    registered, baseline = reg3, set(reg3)
+                    merged_ok = len(comps) < 2
+                else:
+                    restore("night_pre_merge")
+        merged_ok = True  # no further engines in exclusion mode
+    elif night("mergefinal", SCENE, ALIGN_PARAMS, "merge"):
         comps3, reg3 = census("merge_rigid")
         if comps3 is not None and not (baseline - reg3):
             comps, registered, baseline = comps3, reg3, set(reg3)

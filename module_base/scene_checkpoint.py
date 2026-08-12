@@ -109,20 +109,40 @@ def restore_scene(scene_path: str, checkpoints_dir: str, tag: str, logger) -> No
             f'empty. Free space, then re-run - the snapshot is intact in '
             f'{src_dir}.')
     # Remove the rejected bundle first so stale sidecar data can never
-    # mix with the restored snapshot.
+    # mix with the restored snapshot. LOCK-TOLERANT (2026-08-12): a LIVE
+    # instance holds <companion>\.lock open; rmtree dies on it (WinError
+    # 32) - and because dotfiles sort first it dies BEFORE touching any
+    # scene data, leaving the bundle intact but the rollback failed.
+    # Locks are runtime artifacts, never scene data: skip them during
+    # the clear (checkpoints exclude them on the way in already); any
+    # OTHER locked file still fails loudly.
+    def _clear_tree(root):
+        for r, dirs, files in os.walk(root, topdown=False):
+            for f in files:
+                if f.endswith('.lock'):
+                    continue
+                os.remove(os.path.join(r, f))
+            for d in dirs:
+                try:
+                    os.rmdir(os.path.join(r, d))
+                except OSError:
+                    pass  # still holds a .lock - fine
     for cur in scene_bundle(scene_path):
         if os.path.isdir(cur):
-            shutil.rmtree(cur)
-        else:
+            _clear_tree(cur)
+        elif os.path.isfile(cur):
             os.remove(cur)
     try:
         for name in os.listdir(src_dir):
             src = os.path.join(src_dir, name)
             target = os.path.join(scene_dir, name)
             if os.path.isdir(src):
+                # dirs_exist_ok: the lock-tolerant clear leaves the live
+                # companion dir in place (it still holds the .lock).
                 shutil.copytree(src, target,
                                 ignore=shutil.ignore_patterns(
-                                    '.lock', '*.lock'))
+                                    '.lock', '*.lock'),
+                                dirs_exist_ok=True)
             else:
                 shutil.copy2(src, target)
     except OSError as exc:

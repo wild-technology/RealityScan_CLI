@@ -70,13 +70,24 @@ exit /b 0
 
 :deletesecond
 :: Name-free second-largest deletion. -selectComponent silently no-ops
-:: on RS-generated names like 'Component 23 (1)' (2026-08-12, third
-:: member of the silently-broken delegated-command class). Instead:
-:: delete the MAXIMAL in memory (promotes the victim to maximal),
-:: delete the new maximal (the victim), re-import the largest from its
-:: fresh census export (%4), save. Verified by the caller's census.
+:: on RS-generated names like 'Component 23 (1)', and BARE
+:: selectMaximal/delete after a -load ALSO silently no-op (2026-08-12:
+:: identical census after "ok" exit) - the census peel's deselect +
+:: exportXMP preamble is what makes component ops take effect, so this
+:: mode reproduces the census context EXACTLY, then: delete maximal
+:: (promotes victim), delete new maximal (victim), re-import the
+:: largest from its census export (%4), save. Exported hydration XMPs
+:: are swept to %5 (trash dir). Verified by the caller's census.
 set "largest_rsalign=%~4"
+set "xmp_trash=%~5"
+set "harvest_a=%~6"
+set "harvest_b=%~7"
 if not exist "%largest_rsalign%" ( echo ERROR: largest export not found: %largest_rsalign% & exit /b 1 )
+if not exist "%xmp_trash%" mkdir "%xmp_trash%"
+call :run -deselectAllImages || goto :fail
+call :run -exportXMP || goto :fail
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { foreach ($r in @('%harvest_a%','%harvest_b%')) { if ($r -and (Test-Path -LiteralPath $r)) { Get-ChildItem -LiteralPath $r -Recurse -Filter *.xmp | Move-Item -Destination '%xmp_trash%' -Force } } } catch { Write-Output $_.Exception.Message; exit 1 }"
+if errorlevel 1 ( echo ERROR: hydration sweep failed & goto :fail )
 call :run -selectMaximalComponent || goto :fail
 call :run -deleteSelectedComponent || goto :fail
 call :run -selectMaximalComponent || goto :fail
@@ -142,13 +153,24 @@ exit /b 0
 
 :deletesecond
 :: Name-free second-largest deletion. -selectComponent silently no-ops
-:: on RS-generated names like 'Component 23 (1)' (2026-08-12, third
-:: member of the silently-broken delegated-command class). Instead:
-:: delete the MAXIMAL in memory (promotes the victim to maximal),
-:: delete the new maximal (the victim), re-import the largest from its
-:: fresh census export (%4), save. Verified by the caller's census.
+:: on RS-generated names like 'Component 23 (1)', and BARE
+:: selectMaximal/delete after a -load ALSO silently no-op (2026-08-12:
+:: identical census after "ok" exit) - the census peel's deselect +
+:: exportXMP preamble is what makes component ops take effect, so this
+:: mode reproduces the census context EXACTLY, then: delete maximal
+:: (promotes victim), delete new maximal (victim), re-import the
+:: largest from its census export (%4), save. Exported hydration XMPs
+:: are swept to %5 (trash dir). Verified by the caller's census.
 set "largest_rsalign=%~4"
+set "xmp_trash=%~5"
+set "harvest_a=%~6"
+set "harvest_b=%~7"
 if not exist "%largest_rsalign%" ( echo ERROR: largest export not found: %largest_rsalign% & exit /b 1 )
+if not exist "%xmp_trash%" mkdir "%xmp_trash%"
+call :run -deselectAllImages || goto :fail
+call :run -exportXMP || goto :fail
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { foreach ($r in @('%harvest_a%','%harvest_b%')) { if ($r -and (Test-Path -LiteralPath $r)) { Get-ChildItem -LiteralPath $r -Recurse -Filter *.xmp | Move-Item -Destination '%xmp_trash%' -Force } } } catch { Write-Output $_.Exception.Message; exit 1 }"
+if errorlevel 1 ( echo ERROR: hydration sweep failed & goto :fail )
 call :run -selectMaximalComponent || goto :fail
 call :run -deleteSelectedComponent || goto :fail
 call :run -selectMaximalComponent || goto :fail
