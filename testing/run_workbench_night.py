@@ -251,13 +251,24 @@ def census(tag):
                  for f in os.listdir(rdir) if f.lower().endswith(".xmp")}
         rounds.append(stems)
     comps = []
-    rsaligns = sorted(glob.glob(os.path.join(outdir, "*.rsalign")),
-                      key=os.path.getmtime)
+    # Round->name mapping is CAPTURED ONCE and persisted (name_order.json,
+    # mtime order at capture completion). Re-deriving from mtimes on
+    # reuse mis-mapped names after -importComponent touched a file: the
+    # driver then re-imported a small FRAGMENT as "the largest" - caught
+    # 2026-08-12 seconds before it saved a hull-less scene. Never trust
+    # mtimes twice.
+    order_path = os.path.join(outdir, "name_order.json")
+    if os.path.isfile(order_path):
+        names = json.load(open(order_path, encoding="utf-8"))
+    else:
+        names = [os.path.basename(f)[:-len(".rsalign")]
+                 for f in sorted(glob.glob(os.path.join(outdir, "*.rsalign")),
+                                 key=os.path.getmtime)]
+        json.dump(names, open(order_path, "w", encoding="utf-8"))
     for i in range(len(rounds)):
         later = rounds[i + 1] if i + 1 < len(rounds) else set()
         members = rounds[i] - later
-        name = (os.path.basename(rsaligns[i])[:-len(".rsalign")]
-                if i < len(rsaligns) else f"component_{i}")
+        name = names[i] if i < len(names) else f"component_{i}"
         comps.append((name, len(members), members))
     comps.sort(key=lambda c: -c[1])
     registered = set().union(*rounds) if rounds else set()
@@ -403,6 +414,13 @@ def main():
         keep = comps[0]
         largest_rsalign = os.path.join(WORK, "census_c0",
                                        keep[0] + ".rsalign")
+        by_size = max(glob.glob(os.path.join(WORK, "census_c0",
+                                             "*.rsalign")),
+                      key=os.path.getsize)
+        if os.path.abspath(by_size) != os.path.abspath(largest_rsalign):
+            log(f"D: name-mapping vs size disagree ({largest_rsalign} vs "
+                f"{by_size}) - trusting SIZE for the re-import")
+            largest_rsalign = by_size
         log(f"D: deleting second-largest {victim[0]} ({victim[1]:,} cams) "
             f"via name-free peel; largest re-imported from census export")
         checkpoint("night_pre_delete")
