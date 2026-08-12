@@ -51,7 +51,12 @@ from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUN2 = r"M:\ON2026_run2"
-SCENE = os.path.join(RUN2, "workbench", "ON2026_RH0041_RH2042_workbench.rsproj")
+# NIGHT_INSTANCE/NIGHT_SCENE: the GUI-attach pathway proved unable to
+# execute mutations (adds/aligns/component ops all silently no-op on a
+# GUI instance - FINDINGS 2026-08-12); the campaign runs on a HEADLESS
+# twin instead, GUI untouched, result loaded back at the end.
+SCENE = os.environ.get("NIGHT_SCENE") or os.path.join(
+    RUN2, "workbench", "ON2026_RH0041_RH2042_workbench.rsproj")
 POOL = os.path.join(RUN2, "rs_images")
 ZONES = os.path.join(RUN2, "batched_images_by_zone")
 NAV = os.path.join(RUN2, "nav", "flight_log_run2.txt")
@@ -63,10 +68,12 @@ LOGS = os.path.join(RUN2, "logs")
 NIGHT_LOG = os.path.join(LOGS, "night.log")
 ERRORS_DIR = os.path.join(REPO, "modules", "realityscan_interface", "RS_CLI",
                           "Errors")
-ERRORS_FILE = os.path.join(ERRORS_DIR, "errors_RSGUI.txt")
-PROGRESS_FILE = os.path.join(ERRORS_DIR, "progress_RSGUI.txt")
+ERRORS_FILE = os.path.join(ERRORS_DIR,
+                           f"errors_{os.environ.get('NIGHT_INSTANCE', 'RSGUI')}.txt")
+PROGRESS_FILE = os.path.join(ERRORS_DIR,
+                             f"progress_{os.environ.get('NIGHT_INSTANCE', 'RSGUI')}.txt")
 YELLOW = os.path.join(REPO, "testing", "yellow_filter.py")
-INSTANCE = "RSGUI"
+INSTANCE = os.environ.get("NIGHT_INSTANCE", "RSGUI")
 
 MAX_SEED_PASSES = 6
 ROLLBACK_STORM = 2
