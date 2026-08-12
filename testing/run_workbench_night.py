@@ -269,6 +269,34 @@ def write_list(path, paths):
     return path
 
 
+def delete_component(name):
+    """Delete a component by name - the name rides via env: names like
+    'Component 23 (1)' carry cmd metacharacters that can never be .bat
+    arguments (hard rule 8; assert_bat_safe refused them 2026-08-12)."""
+    os.environ["RS_NG_COMPNAME"] = name
+    try:
+        return night("delete2nd", SCENE)
+    finally:
+        os.environ.pop("RS_NG_COMPNAME", None)
+
+
+def census_light(tag):
+    """Registered-set-only census: ONE exportXMP sweep, non-destructive,
+    minutes not hours (a full 24-component peel measured 135 min -
+    2026-08-12). Enough for the never-shrink verdict; component
+    membership comes from the last FULL census."""
+    outdir = os.path.join(WORK, f"light_{tag}")
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(outdir)
+    if not night("censuslight", SCENE, outdir, ZONES, POOL):
+        return None
+    stems = {os.path.splitext(f)[0].lower()
+             for f in os.listdir(outdir) if f.lower().endswith(".xmp")}
+    log(f"light census {tag}: {len(stems):,} registered")
+    return stems
+
+
 def checkpoint(tag):
     return scene_checkpoint.checkpoint_scene(SCENE, CKPTS, tag, logger)
 
@@ -317,7 +345,7 @@ def tidy_components(comps):
             keep.append((name, cnt, stems))
     for name, cnt, cname in victims:
         log(f"tidy: deleting {name} ({cnt:,} cams - contained in {cname})")
-        if not night("delete2nd", SCENE, name):
+        if not delete_component(name):
             log(f"tidy: delete of {name} failed - leaving it")
             keep.append(next(c for c in comps if c[0] == name))
     if victims:
@@ -354,7 +382,7 @@ def main():
         log(f"D: deleting second-largest component {second[0]} "
             f"({second[1]:,} cams) per owner instruction")
         checkpoint("night_pre_delete")
-        if not night("delete2nd", SCENE, second[0]):
+        if not delete_component(second[0]):
             abort("delete2nd failed - scene checkpointed at night_pre_delete")
         comps, registered = census("post_delete")
         if comps is None:
@@ -410,24 +438,29 @@ def main():
     else:
         log("A: no orphans to add")
 
-    # S: seed-growth loop - largest component disabled throughout
+    # S: seed-growth loop - largest component disabled throughout.
+    # Verdicts ride the LIGHT census (one export sweep, minutes); the
+    # 135-minute full peel refreshes membership + tidies only every
+    # FULL_EVERY passes and at loop end (measured 2026-08-12).
+    FULL_EVERY = 3
     baseline = set(registered)
-    prev_tag = "night_pre_seed"
-    checkpoint(prev_tag)
+    largest_members = set(comps[0][2])
+    largest_label = f"{comps[0][0]}={comps[0][1]:,}"
+    checkpoint("night_pre_seed")
     rollbacks = 0
+    accepted_since_full = 0
     for p in range(1, MAX_SEED_PASSES + 1):
-        largest = comps[0]
-        small_stems = set()
-        for name, cnt, stems in comps[1:]:
-            small_stems |= stems
-        enable = sorted({idx[s] for s in small_stems if s in idx}
-                        | set(accepted))
+        # Enable EVERYTHING except the last-known largest membership:
+        # covers small components AND images grown since the last full
+        # peel (they are in no recorded component) AND added orphans.
+        enable = sorted({idx[s] for s in (baseline - largest_members)
+                         if s in idx} | set(accepted))
         if not enable:
             log(f"S{p}: nothing outside the largest component to grow - done")
             break
         elist = write_list(os.path.join(WORK, f"seed_{p}.imagelist"), enable)
         log(f"S{p}: aligning {len(enable):,} enabled images "
-            f"(largest {largest[0]}={largest[1]:,} disabled)")
+            f"(largest {largest_label} disabled)")
         tag = f"night_seed_{p}"
         checkpoint(tag)
         if not night("seedpass", SCENE, elist, ALIGN_PARAMS):
@@ -439,8 +472,8 @@ def main():
                     "not something to push through)")
                 break
             continue
-        comps2, reg2 = census(f"seed_{p}")
-        if comps2 is None:
+        reg2 = census_light(f"seed_{p}")
+        if reg2 is None:
             restore(tag)
             break
         lost = baseline - reg2
@@ -458,13 +491,26 @@ def main():
         log(f"S{p}: ACCEPT - +{gained:,} newly registered "
             f"({len(reg2):,} total)")
         rollbacks = 0
-        comps, registered, baseline = comps2, reg2, set(reg2)
-        # Keep the scene tidy: superseded source components bloat every
-        # save (save time scales with component count - owner note).
-        comps = tidy_components(comps)
+        registered, baseline = reg2, set(reg2)
+        accepted_since_full += 1
+        if accepted_since_full >= FULL_EVERY:
+            comps2, regf = census(f"seed_full_{p}")
+            if comps2 is not None:
+                comps, registered, baseline = comps2, regf, set(regf)
+                comps = tidy_components(comps)
+                largest_members = set(comps[0][2])
+                largest_label = f"{comps[0][0]}={comps[0][1]:,}"
+                accepted_since_full = 0
         if gained == 0:
             log("S: converged (no growth) - seed loop done")
             break
+    # Refresh membership before the merge stage if the loop ended
+    # between full peels (merge verdicts + tidy need real membership).
+    if accepted_since_full:
+        comps2, regf = census("seed_final")
+        if comps2 is not None:
+            comps, registered, baseline = comps2, regf, set(regf)
+            comps = tidy_components(comps)
 
     # M: final merge of largest + the grown rest
     log("M: enabling ALL and attempting final consolidation")

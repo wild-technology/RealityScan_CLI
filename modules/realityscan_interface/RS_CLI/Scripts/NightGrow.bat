@@ -54,7 +54,21 @@ if errorlevel 1 ( echo ERROR: instance %RS_TARGET% is not running & exit /b 1 )
 
 if /I "%mode%" == "saveonly"   goto :saveonly
 if /I "%mode%" == "census"     goto :census
-if /I "%mode%" == "delete2nd"  goto :delete2nd
+if /I "%mode%" == "censuslight" goto :censuslight
+if /I "%mode%" == "delete2nd"  goto :censuslight
+set "outdir=%~4"
+set "harvest_a=%~5"
+set "harvest_b=%~6"
+if not exist "%outdir%" mkdir "%outdir%"
+call :run -save "%scene%" || goto :fail
+call :run -deselectAllImages || goto :fail
+call :run -exportXMP || goto :fail
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { foreach ($r in @('%harvest_a%','%harvest_b%')) { if ($r -and (Test-Path -LiteralPath $r)) { Get-ChildItem -LiteralPath $r -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%outdir%' -Force } } } catch { Write-Output $_.Exception.Message; exit 1 }"
+if errorlevel 1 ( echo ERROR: light census harvest failed & goto :fail )
+echo NIGHTGROW OK censuslight
+exit /b 0
+
+:delete2nd
 if /I "%mode%" == "addorphans" goto :addorphans
 if /I "%mode%" == "seedpass"   goto :seedpass
 if /I "%mode%" == "mergefinal" goto :mergefinal
@@ -93,6 +107,19 @@ goto :censusLoop
 echo Census captured %comp_index% component peel(s) - reloading saved scene
 call :run -load "%scene%" || goto :fail
 echo NIGHTGROW OK census %comp_index%
+exit /b 0
+
+:censuslight
+set "outdir=%~4"
+set "harvest_a=%~5"
+set "harvest_b=%~6"
+if not exist "%outdir%" mkdir "%outdir%"
+call :run -save "%scene%" || goto :fail
+call :run -deselectAllImages || goto :fail
+call :run -exportXMP || goto :fail
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { foreach ($r in @('%harvest_a%','%harvest_b%')) { if ($r -and (Test-Path -LiteralPath $r)) { Get-ChildItem -LiteralPath $r -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%outdir%' -Force } } } catch { Write-Output $_.Exception.Message; exit 1 }"
+if errorlevel 1 ( echo ERROR: light census harvest failed & goto :fail )
+echo NIGHTGROW OK censuslight
 exit /b 0
 
 :delete2nd
