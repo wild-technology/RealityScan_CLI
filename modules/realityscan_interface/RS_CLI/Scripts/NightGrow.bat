@@ -68,6 +68,24 @@ if errorlevel 1 ( echo ERROR: light census harvest failed & goto :fail )
 echo NIGHTGROW OK censuslight
 exit /b 0
 
+:deletesecond
+:: Name-free second-largest deletion. -selectComponent silently no-ops
+:: on RS-generated names like 'Component 23 (1)' (2026-08-12, third
+:: member of the silently-broken delegated-command class). Instead:
+:: delete the MAXIMAL in memory (promotes the victim to maximal),
+:: delete the new maximal (the victim), re-import the largest from its
+:: fresh census export (%4), save. Verified by the caller's census.
+set "largest_rsalign=%~4"
+if not exist "%largest_rsalign%" ( echo ERROR: largest export not found: %largest_rsalign% & exit /b 1 )
+call :run -selectMaximalComponent || goto :fail
+call :run -deleteSelectedComponent || goto :fail
+call :run -selectMaximalComponent || goto :fail
+call :run -deleteSelectedComponent || goto :fail
+call :run -importComponent "%largest_rsalign%" || goto :fail
+call :run -save "%scene%" || goto :fail
+echo NIGHTGROW OK deletesecond
+exit /b 0
+
 :delete2nd
 if /I "%mode%" == "addorphans" goto :addorphans
 if /I "%mode%" == "seedpass"   goto :seedpass
@@ -120,6 +138,24 @@ call :run -exportXMP || goto :fail
 powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { foreach ($r in @('%harvest_a%','%harvest_b%')) { if ($r -and (Test-Path -LiteralPath $r)) { Get-ChildItem -LiteralPath $r -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%outdir%' -Force } } } catch { Write-Output $_.Exception.Message; exit 1 }"
 if errorlevel 1 ( echo ERROR: light census harvest failed & goto :fail )
 echo NIGHTGROW OK censuslight
+exit /b 0
+
+:deletesecond
+:: Name-free second-largest deletion. -selectComponent silently no-ops
+:: on RS-generated names like 'Component 23 (1)' (2026-08-12, third
+:: member of the silently-broken delegated-command class). Instead:
+:: delete the MAXIMAL in memory (promotes the victim to maximal),
+:: delete the new maximal (the victim), re-import the largest from its
+:: fresh census export (%4), save. Verified by the caller's census.
+set "largest_rsalign=%~4"
+if not exist "%largest_rsalign%" ( echo ERROR: largest export not found: %largest_rsalign% & exit /b 1 )
+call :run -selectMaximalComponent || goto :fail
+call :run -deleteSelectedComponent || goto :fail
+call :run -selectMaximalComponent || goto :fail
+call :run -deleteSelectedComponent || goto :fail
+call :run -importComponent "%largest_rsalign%" || goto :fail
+call :run -save "%scene%" || goto :fail
+echo NIGHTGROW OK deletesecond
 exit /b 0
 
 :delete2nd

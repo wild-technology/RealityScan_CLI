@@ -386,17 +386,34 @@ def main():
         abort("census #0 failed")
     saver.start()
 
-    # D: delete the second-largest component (owner instruction)
+    # D: delete the second-largest component (owner instruction).
+    # Name-free (deletesecond): -selectComponent silently no-ops on
+    # RS-generated names like 'Component 23 (1)' - the first attempt
+    # "succeeded" and deleted NOTHING (census-verified 2026-08-12).
     if len(comps) >= 2:
-        second = comps[1]
-        log(f"D: deleting second-largest component {second[0]} "
-            f"({second[1]:,} cams) per owner instruction")
+        victim = comps[1]
+        keep = comps[0]
+        largest_rsalign = os.path.join(WORK, "census_c0",
+                                       keep[0] + ".rsalign")
+        log(f"D: deleting second-largest {victim[0]} ({victim[1]:,} cams) "
+            f"via name-free peel; largest re-imported from census export")
         checkpoint("night_pre_delete")
-        if not delete_component(second[0]):
-            abort("delete2nd failed - scene checkpointed at night_pre_delete")
-        comps, registered = census("post_delete")
+        if not night("deletesecond", SCENE, largest_rsalign):
+            restore("night_pre_delete")
+            abort("deletesecond failed - scene restored")
+        comps, registered = census("post_delete2")
         if comps is None:
             abort("post-delete census failed")
+        expected = len(set().union(*[c[2] for c in comps]))
+        victim_gone = all(c[2] != victim[2] for c in comps)
+        largest_ok = any(c[1] >= keep[1] * 0.999 for c in comps)
+        if not victim_gone or not largest_ok:
+            restore("night_pre_delete")
+            abort(f"deletion VERIFY failed (victim_gone={victim_gone}, "
+                  f"largest_ok={largest_ok}) - scene restored; needs "
+                  "owner eyes")
+        log(f"D: verified - victim gone, largest intact, "
+            f"registered {len(registered):,}")
     else:
         log("D: fewer than 2 components - nothing to delete")
 
