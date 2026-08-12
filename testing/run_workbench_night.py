@@ -220,13 +220,23 @@ def stage_wait():
 
 def census(tag):
     """Non-destructive component census. Returns (components, registered):
-    components = [(name, count, stems_set)] largest first."""
+    components = [(name, count, stems_set)] largest first.
+
+    RESUMES from a completed same-tag capture (marker file written after
+    a successful peel): a full peel measured 135 min, and a driver
+    restart between census and the next mutation must not repeat it.
+    Tags after mutations are unique per pass, so reuse is safe."""
     outdir = os.path.join(WORK, f"census_{tag}")
-    if os.path.isdir(outdir):
-        shutil.rmtree(outdir)
-    os.makedirs(outdir)
-    if not night("census", SCENE, outdir, ZONES, POOL):
-        return None, None
+    done_marker = os.path.join(outdir, "CAPTURE_COMPLETE")
+    if not os.path.isfile(done_marker):
+        if os.path.isdir(outdir):
+            shutil.rmtree(outdir)
+        os.makedirs(outdir)
+        if not night("census", SCENE, outdir, ZONES, POOL):
+            return None, None
+        open(done_marker, "w").close()
+    else:
+        log(f"census {tag}: reusing completed capture")
     rounds = []
     for rdir in sorted(glob.glob(os.path.join(outdir, "census_r*")),
                        key=lambda d: int(d.rsplit("r", 1)[1])):
