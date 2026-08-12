@@ -29,6 +29,38 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [ON2026] 2026-08-12 - delegated COMPONENT ops silently no-op against
+## the live GUI instance (night campaign, 3x census-verified)
+
+Against the GUI-visible RSGUI instance holding the loaded workbench,
+BOTH -selectComponent "<name>" + -deleteSelectedComponent AND the
+name-free -selectMaximalComponent -> -deleteSelectedComponent ->
+(promote) -> delete -> -importComponent -> -save sequence exit 0,
+report no errors, and change NOTHING - three post-delete censuses
+byte-identical to baseline, including one attempt with the census
+context reproduced exactly (deselect + exportXMP hydration first;
+that preamble theory is REFUTED). The identical peel sequence WORKS
+inside the census .bat on the same instance (successive rounds shrink,
+harvests prove in-memory deletion) - the difference between the
+working and non-working contexts is still UNDIAGNOSED; what is
+established is that a save after the "deletions" persists the
+unchanged scene. Every failure is silent (exit 0, empty errors file) -
+the census verify + exclusion fallback (exclude the victim's members
+from all enable lists and verdicts; leave the component for a GUI
+delete) is the production-safe handling. Fourth member of the
+silently-broken-delegated-command class (-setPriorCalibrationGroup,
+-setPriorLensGroup, -setDownscaleForDepthMaps, component ops on a
+GUI instance).
+
+Same night, two rollback-machinery findings while attaching to a LIVE
+scene: scene_checkpoint's restore rmtree died on the GUI-held .lock
+BEFORE touching data (dotfiles sort first) but AFTER deleting the
+.rsproj file (bundle clear removes the project file first - the scene
+"vanished" while its companion dir stayed intact; single-file copy
+from the checkpoint completed the restore). checkpoint/restore are now
+lock-tolerant end to end; integrity checks must cover the .rsproj
+FILE, not just the companion folder.
+
 ## [ON2026] 2026-08-09 - pause/flush/resume recovery recipe (owner-
 ## directed cache flush before the hull merge)
 
