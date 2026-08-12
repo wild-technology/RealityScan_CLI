@@ -1,7 +1,7 @@
 @echo off
 setlocal
 :: ATTACH-ONLY night-growth primitive set (owner directive 2026-08-11).
-:: Drives the ALREADY-RUNNING GUI instance %RS_INSTANCE% (RSGUI). Never
+:: Drives the ALREADY-RUNNING GUI instance %RS_TARGET% (RSGUI). Never
 :: boots, never -newScene, never -quit: the GrowZone/startRealityScan
 :: reuse path would WIPE the loaded workbench (-newScene) and this
 :: build rejects -deleteAutosave (err:7180, async - FINDINGS
@@ -35,16 +35,22 @@ setlocal
 
 call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
-set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
 
-if [%1] == [] ( echo ERROR: mode required & exit /b 1 )
-set "mode=%~1"
-set "scene=%~2"
+:: Attach contract (run_attach_script): %1 = TARGET instance name -
+:: RS_INSTANCE keeps meaning "the instance this checkout boots", which
+:: NightGrow never does.
+if [%1] == [] ( echo ERROR: target instance required & exit /b 1 )
+set "RS_TARGET=%~1"
+set "ErrorsFile=%ErrorPath%\errors_%RS_TARGET%.txt"
+
+if [%2] == [] ( echo ERROR: mode required & exit /b 1 )
+set "mode=%~2"
+set "scene=%~3"
 if not exist "%scene%" ( echo ERROR: scene not found: %scene% & exit /b 1 )
 
 :: Attach guard - the instance must already be up; we never boot it.
-%RealityScan% -getStatus %RS_INSTANCE%
-if errorlevel 1 ( echo ERROR: instance %RS_INSTANCE% is not running & exit /b 1 )
+%RealityScan% -getStatus %RS_TARGET%
+if errorlevel 1 ( echo ERROR: instance %RS_TARGET% is not running & exit /b 1 )
 
 if /I "%mode%" == "saveonly"   goto :saveonly
 if /I "%mode%" == "census"     goto :census
@@ -61,9 +67,9 @@ echo NIGHTGROW OK saveonly
 exit /b 0
 
 :census
-set "outdir=%~3"
-set "harvest_a=%~4"
-set "harvest_b=%~5"
+set "outdir=%~4"
+set "harvest_a=%~5"
+set "harvest_b=%~6"
 if not exist "%outdir%" mkdir "%outdir%"
 call :run -save "%scene%" || goto :fail
 call :run -setMinComponentSize 2 || goto :fail
@@ -90,8 +96,8 @@ echo NIGHTGROW OK census %comp_index%
 exit /b 0
 
 :delete2nd
-set "compname=%~3"
-if [%3] == [] ( echo ERROR: component name required & exit /b 1 )
+set "compname=%~4"
+if [%4] == [] ( echo ERROR: component name required & exit /b 1 )
 call :run -selectComponent "%compname%" || goto :fail
 call :run -deleteSelectedComponent || goto :fail
 call :run -save "%scene%" || goto :fail
@@ -99,9 +105,9 @@ echo NIGHTGROW OK delete2nd %compname%
 exit /b 0
 
 :addorphans
-set "addlist=%~3"
-set "flog=%~4"
-set "flparams=%~5"
+set "addlist=%~4"
+set "flog=%~5"
+set "flparams=%~6"
 if not exist "%addlist%" ( echo ERROR: imagelist not found: %addlist% & exit /b 1 )
 call :run -add "%addlist%" || goto :fail
 if not "%flog%" == "" (
@@ -118,8 +124,8 @@ echo NIGHTGROW OK addorphans
 exit /b 0
 
 :seedpass
-set "enablelist=%~3"
-set "alignparams=%~4"
+set "enablelist=%~4"
+set "alignparams=%~5"
 if not exist "%enablelist%" ( echo ERROR: enable list not found: %enablelist% & exit /b 1 )
 if not exist "%alignparams%" ( echo ERROR: align params not found: %alignparams% & exit /b 1 )
 call :run -selectAllImages || goto :fail
@@ -137,8 +143,8 @@ echo NIGHTGROW OK seedpass
 exit /b 0
 
 :mergefinal
-set "alignparams=%~3"
-set "engine=%~4"
+set "alignparams=%~4"
+set "engine=%~5"
 if "%engine%" == "" set "engine=merge"
 call :run -selectAllImages || goto :fail
 call :run -editInputSelection "inpEnabled=true" || goto :fail
@@ -162,7 +168,7 @@ exit /b 0
 :: delegated -selectImage per line (instant, FIFO; no per-line wait).
 :selectFromList
 for /f "usebackq delims=" %%L in ("%~1") do (
-    %RealityScan% -delegateTo %RS_INSTANCE% -selectImage "%%~L" union
+    %RealityScan% -delegateTo %RS_TARGET% -selectImage "%%~L" union
 )
 exit /b 0
 
@@ -173,7 +179,7 @@ set /a applied_keys=0
 for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%~1") do (
     echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"sfm" /c:"lis" >nul
     if not errorlevel 1 (
-        %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+        %RealityScan% -delegateTo %RS_TARGET% -set "%%A=%%B"
         set /a applied_keys+=1
     )
 )
@@ -189,15 +195,15 @@ exit /b 1
 :: pattern; the errors file is cleared by the PYTHON caller per phase so
 :: async attribution slips are diagnosed there, not silently absorbed).
 :run
-%RealityScan% -delegateTo %RS_INSTANCE% %*
+%RealityScan% -delegateTo %RS_TARGET% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*
     exit /b 1
 )
 ping -n 3 127.0.0.1 >nul
-%RealityScan% -waitCompleted %RS_INSTANCE%
+%RealityScan% -waitCompleted %RS_TARGET%
 ping -n 2 127.0.0.1 >nul
-%RealityScan% -waitCompleted %RS_INSTANCE%
+%RealityScan% -waitCompleted %RS_TARGET%
 if exist "%ErrorsFile%" (
     for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
         echo ERROR: RealityScan reported a failure during: %*
