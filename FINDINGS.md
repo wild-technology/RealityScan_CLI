@@ -2633,3 +2633,75 @@ a re-run with updated nav. Source tag **[ON2026]**.
   errors_RS1.txt pre-run, wrote the resource CSV, and shut down
   verified.** The wildscan portal now has zero paths around the
   execution layer. [ON2026] (2026-08-07) ESTABLISHED
+
+## Cross-line import: [MAGIC] — ItsMagicISwear Apple-silicon engine line (2026-08-13)
+
+A sibling project (`ItsMagicISwear`, local repo on the owner's Mac: a native Apple-silicon
+photogrammetry engine) ran a research pass + same-day benchmarks on NA173 zone_4 that produce
+facts directly relevant to THIS pipeline's future. Source fact base: that repo's `FINDINGS.md`
+(M-20260812-15..22) and `docs/TECHNIQUE_SELECTION.md`. Entries below carry [MAGIC]; numbers
+were measured on an M5 MacBook Pro (no CUDA) unless stated.
+
+- **The COLMAP research line's fact base is a generation stale: COLMAP 4.1.1 absorbed
+  GLOMAP as `colmap global_mapper` and ships a learned frontend built in** (ALIKED
+  extraction + LightGlue matching via bundled ONNX, `--FeatureExtraction.type ALIKED_N16ROT`,
+  `--FeatureMatching.type ALIKED_LIGHTGLUE`), plus `pose_prior_mapper` accepting per-image
+  position priors with full 3x3 covariance. Standalone GLOMAP was archived 2026-03-09 with
+  its prior path broken end-to-end (glomap issue #142) — "COLMAP vs GLOMAP" is no longer a
+  meaningful comparison; the unified 4.1 binary is the thing to re-baseline against on
+  HONEYBADGER before trusting any C-2026072x-derived comparison. Discovered: brew install
+  colmap 4.1.1 + `-h` dumps + adversarially-verified research pass. [MAGIC] (2026-08-12)
+  ESTABLISHED
+
+- **First COLMAP-x-CLAHE datum, and it flips the expected sign for the COLMAP side of Q-05:
+  CLAHE (2.0, 8x8, LAB-L — the exact Stage-0.5 recipe) HELPED COLMAP on NA173 ROV imagery.**
+  200 contiguous zone_4 camlower frames, SIMPLE_RADIAL single camera, sequential-15 matching,
+  registration by full reconstruction (per the F-20260723-03 metric lesson): SIFT raw 90/200
+  (45%) -> SIFT+CLAHE 126/200 (63%) with global_mapper. Note the LilyJean cells that
+  established "enhancement hurts COLMAP" tested adaptive enhancement and fixed backscatter
+  subtraction, NOT plain CLAHE — so Q-05's reconciliation matrix gains a cell rather than a
+  contradiction: preprocessing sign depends on the (imagery, exact enhancer, stack) triple,
+  and CLAHE-on-ROV-video-frames helps COLMAP too, not only RealityScan. [MAGIC] (2026-08-12)
+  ESTABLISHED
+
+- **CLAHE's benefit extends to the learned stack on this imagery — and the learned stack
+  raw beats classical+CLAHE.** Same 200-frame cell, global_mapper registration:
+  ALIKED+LightGlue raw 127/200 (63.5%); ALIKED+LightGlue+CLAHE **149/200 (74.5%)** — best in
+  matrix, with ALIKED at its default 2,048-feature budget vs SIFT's 8,192. Incremental mapper
+  stayed flat at 88–94 in every variant: on 1 fps ROV imagery the global mapper is uniformly
+  better, consistent with F-20260723-07. If the COLMAP line is revived on HONEYBADGER, the
+  first cell to run is ALIKED+LightGlue+CLAHE+global_mapper. Caveat for that run: on the Mac
+  build the bundled ONNX matcher ran ~7x slower than SIFT matching (1,111 s vs 161 s for the
+  same pairs; likely CPU execution provider) — verify which ONNX EP the Windows CUDA build
+  uses before timing conclusions. [MAGIC] (2026-08-12) ESTABLISHED
+
+- **Nav-derived pair gating removes ~97–98% of matching work at 1 fps — the flight log alone
+  is a sufficient retrieval stage.** zone_4 full log (1,912 images, median inter-frame
+  spacing 0.285 m): exhaustive 1,826,916 pairs; sequential window 15 = 28,560 (1.56%);
+  3 m XY radius = 60,947 (3.34%); their union ~3–4% while covering forward overlap and
+  cross-track loop closures. Relevant wherever vocab-tree matching has been a cost or
+  stability problem (cf. C-20260721-11/12): position-based gating from the 13-column log
+  needs no vocab tree at all. Caveat: gating depends on RELATIVE nav error between nearby
+  frames (smooth Kalman drift), not the 10 m absolute column — validate radius per cruise.
+  [MAGIC] (2026-08-12) ESTABLISHED
+
+- **Working recipe for injecting 13-column-log pose priors into a COLMAP 4.1.1 database**
+  (the schema is the new rig/frame one): SQLite insert into `pose_priors` with
+  corr_data_id=image_id, corr_sensor_type=0 (CAMERA), coordinate_system=1 (CARTESIAN),
+  position as 3xfloat64 blob, position_covariance as 9xfloat64 blob (diag from the accuracy
+  columns), gravity NULL. Positions MUST be local-frame (centroid-subtracted UTM) — the
+  C-20260721-01 float32-UTM poisoning applies. `pose_prior_mapper` consumed them and ran;
+  registration was unchanged vs plain incremental (88/200 both) — position priors anchor
+  georeferencing but do not rescue correspondence-starved registration, matching this
+  pipeline's own experience that the match layer, not the prior layer, is the binding
+  constraint. COLMAP still has no attitude-prior input; the 13-column log's orientation
+  columns remain unconsumed there. [MAGIC] (2026-08-12) ESTABLISHED
+
+- **Context pointer: a learned-first engine is viable on Apple silicon.** VGGT-1B (feed-
+  forward multi-view transformer) ran zero-shot on an M5/32 GB via torch-MPS: 128 frames per
+  pass at 518 px in 20.6 GB, poses within 0.22 m mean of nav on raw turbid zone_4 imagery.
+  The sibling project's v1 stack (ALIKED+LightGlue, MapAnything chunks, prior-native global
+  solver, COLMAP 4.x interop) is recorded in its `docs/TECHNIQUE_SELECTION.md`; this
+  pipeline's FINDINGS conventions and its RS pain points (component membership opacity, no
+  incremental-against-locked-poses, census-not-exit-codes) are that engine's requirements
+  spec via `docs/RS_CLI_DIGEST.md`. [MAGIC] (2026-08-12) ESTABLISHED
