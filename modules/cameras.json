@@ -110,6 +110,15 @@
       "lens_distortion_group": "6",
       "lens_distortion_prior": "Approximate",
       "distortion_model": null
+    },
+    "sony_a7m3": {
+      "_provenance": "NA168 H2082 still_cam_sony. Sony ILCE-7M3 (a7 III), 3936x2624 from EXIF. A DIFFERENT physical sensor from the 1920x1080 dualHD Zeuss, so it gets its own calibration/lens group (7; 1-4 rig, 5-6 Voyis taken) - a different sensor footprint means different intrinsics and RealityScan groups it separately regardless. Focal unknown (no FocalLength tag survives the export), so left null and self-calibrated within its own group.",
+      "calibration_group": "7",
+      "calibration_prior": "Approximate",
+      "focal_length_35mm": null,
+      "lens_distortion_group": "7",
+      "lens_distortion_prior": "Approximate",
+      "distortion_model": "brown3"
     }
   },
   "families": [
@@ -216,6 +225,23 @@
       "family": "zeuss",
       "pattern": "(^|[_\\-.])(zeuss|herc)([_\\-.]|$)",
       "camera": "zeuss",
+      "era": "all",
+      "mount": {
+        "fwd": 0.5,
+        "lat": 0.0,
+        "down": 0.5,
+        "pitch": 30.0,
+        "p_acc": 30.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S"
+      ]
+    },
+    {
+      "_comment": "NA168 H2082 Sony stillcam, staged by the H2082 driver as <UTC14>_sonystill.jpg. MOUNT IS NOT MEASURED: it reuses the Zeuss mount on explicit owner direction (2026-08-14, \"substitute these for zeuss-derived images ... use same field though\"), NOT because anyone surveyed the lever arm. If a Sony-specific lever arm is ever measured, replace these numbers rather than inheriting silently. Delimiter-bounded token like zeuss; appended after the seven parity-pinned legacy rows so their relative order is untouched.",
+      "family": "sony_stillcam",
+      "pattern": "(^|[_\\-.])sonystill([_\\-.]|$)",
+      "camera": "sony_a7m3",
       "era": "all",
       "mount": {
         "fwd": 0.5,
