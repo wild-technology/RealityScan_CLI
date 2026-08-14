@@ -22,8 +22,15 @@ families (owner-confirmed 2026-07-23):
 Calibration/lens groups are per PHYSICAL camera, never per lens type:
 Port and Starboard share a lens spec but are different units with
 different real intrinsics. Groups matter because the WCA JPGs are
-EXIF-identical (Z CAM E2-F6, no focal tag) -- without the XMP groups
+EXIF-identical (Z CAM E2-F6, no focal tag) -- without an explicit group
 RealityScan cannot separate the cameras at all.
+
+Those groups are now applied IN-SESSION through the RealityScan CLI
+(`-selectImage` + `-setPriorCalibrationGroup` / `-setPriorLensGroup`, see
+modules/prior_groups.py), NOT by writing XMP sidecars beside the images.
+The sidecar path is retired: it was never the only mechanism, and owning
+every image-adjacent .xmp is what let the identity harvest strip 17.5% of
+zone_1's calibration priors and sweep ON2026's hand-placed files.
 
 Mount geometry (pitch offsets, lever arms) keys off family() below, not
 off the camera: the same Cinema unit sits 10 deg down under legacy
@@ -188,6 +195,18 @@ def _assert_parity() -> None:
 
 
 _assert_parity()
+
+
+def families_in_match_order() -> tuple[dict, ...]:
+    """The family specs in the SAME most-specific-first order family() walks.
+
+    Exposed for modules/prior_groups.py, which must emit its per-family
+    `-selectImage` / `-setPrior*Group` commands in this order: the patterns
+    deliberately overlap (an unanchored zeuss/herc token would otherwise
+    beat an anchored WCA prefix), so a later selection must be allowed to
+    re-group images an earlier, broader one already touched.
+    """
+    return _FAMILIES
 
 
 def family(filename: str) -> str | None:
