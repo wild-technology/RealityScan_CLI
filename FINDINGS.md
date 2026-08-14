@@ -29,6 +29,47 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [NA168] 2026-08-14 - the stillcam DNGs declare white_level 255 over 12-bit data
+
+**This silently produced 340 blank white frames and a 0-camera align.**
+`raw/still_cam/**.DNG` reports `white_level = 255` while the sensor data is
+12-bit (`raw_image` max 4095, median ~331, p99.9 ~1030). rawpy honours the
+declared level, so a plain `postprocess()` clips EVERY pixel to white:
+converted frames measured mean 255.0 / std 0.1, RealityScan detected no
+features, and the align exited **result code 0** with zero components.
+Nothing in the pipeline flagged it - a successful-looking run end to end.
+
+`raw.white_level` is read-only, but `raw.raw_image` is writable, so
+`tools/convert_dng.py` rescales the plane into the declared range before
+demosaic (fixed factor 0.2372, mapping p99.9 to ~245). The factor is
+FIXED, never per-image: a per-frame stretch gives overlapping frames
+different tone curves and works against the matcher.
+
+Camera WB also renders this imagery heavily magenta (RGB means
+229/122/223). The converter now applies a fixed `user_wb` of
+[2.1331, 1.3822, 1.2840] - the daylight WB times an averaged gray-world
+correction sampled over 8 frames, which agreed within a few percent. Note
+this is NOT the gray-world that hurt registration in the zone_9 A/B: that
+was correcting already-correct colour; this is fixing a real cast at
+conversion time.
+
+LESSON: verify converted imagery has actual content (a luminance std of
+0.1 is not an image) before spending a RealityScan run on it. Both failing
+aligns here reported success at every stage.
+
+## [NA168] 2026-08-14 - Division is the wrong global distortion model for rectilinear rigs
+
+`Metadata/AlignmentParams.xml` carries `sfmDistortionModel = Division`,
+commented as a global fallback because "the real distortion model is
+per-camera via XMP sidecars". But `batch_xmp_priors` DEFAULTS TO FALSE, so
+on a normal run no sidecar states a model and every camera aligns as
+FISHEYE. For NA168 both photogrammetry cameras are rectilinear (cinema and
+the Sony are brown3), so the H2077/H2082 aligns ran fisheye-on-rectilinear.
+Worked around per-run with `RS_ALIGN_PARAMS` pointing at a Brown3 variant
+rather than editing the canonical file, which the WCA fisheye line still
+depends on. The real fix is for the global to follow the rig actually
+present - open.
+
 ## [NA168] 2026-08-14 - the survey imagery is H2077's, not H2082's
 
 NA168's only photogrammetry-grade stills are
