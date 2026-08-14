@@ -9,6 +9,7 @@ from module_base.parameter import Parameter
 from .. import align_fingerprint
 from .. import camera_registry
 from .. import component_manifest
+from .. import prior_groups
 from ..flight_logs import (ensure_frame_match, find_flight_log,
                            utm_zone_from_flight_log_name,
                            write_flight_log_params)
@@ -374,6 +375,34 @@ class RealityScanAlignment(RSModule):
                     'Verify this cruise really uses local:1 priors!')
 
         files_before = set(os.listdir(output_folder))
+
+        # Calibration/lens prior groups, applied IN-SESSION instead of via
+        # XMP sidecars beside the images (modules/prior_groups.py). The WCA
+        # JPGs are EXIF-identical and NA168's dualHD channels share one
+        # footprint, so without an explicit group RealityScan calibrates
+        # physically different cameras as one. Delivered as a file because
+        # a regexp carries delimiters cmd would split (hard rule 8).
+        groups_file = os.path.join(log_dir, f'prior_groups_{scene_name}.cmds')
+        try:
+            families = prior_groups.write_command_file(input_folder, groups_file)
+        except Exception as exc:                                  # noqa: BLE001
+            self.logger.error('Prior-group generation failed for %s: %s - '
+                              'aligning WITHOUT explicit calibration groups',
+                              input_folder, exc)
+            families = 0
+        if families:
+            os.environ['RS_PRIOR_GROUPS_FILE'] = groups_file
+            self.logger.info('Applying prior calibration/lens groups for %d '
+                             'camera family/families (%s)', families, groups_file)
+        else:
+            # No recognised family: leave the variable UNSET so AlignZone
+            # skips the block entirely rather than replaying a stale file
+            # from a previous zone.
+            os.environ.pop('RS_PRIOR_GROUPS_FILE', None)
+            self.logger.warning(
+                'No known camera family under %s - aligning without explicit '
+                'calibration groups; cameras will be grouped by EXIF alone',
+                input_folder)
 
         result = self.cli.run_batch_script(
             'AlignZone.bat',
