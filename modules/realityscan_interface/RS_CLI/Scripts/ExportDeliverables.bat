@@ -81,6 +81,22 @@ for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7
 echo Saving project - residuals removed, before any in-memory coloring
 call :run -save "%scene_path%" || goto :fail
 
+:: Output CRS. WITHOUT this the export inherits whatever coordinate system
+:: the application last held, and nothing in the pipeline ever set one:
+:: H2077's first export (a 53N cruise) was stamped
+:: globalCoordinateSystemName="epsg:32757 - WGS 84 / UTM zone 57S" - the
+:: stale FlightLogParams placeholder zone - so a correctly aligned model
+:: carried georeferencing from the wrong hemisphere (2026-08-14).
+:: write_flight_log_params only rewrites the CRS of the flight log being
+:: IMPORTED; it has no bearing on what is EXPORTED.
+:: RS_OUTPUT_CRS is authority:id, e.g. epsg:32653, and the Python layer
+:: derives it from the flight log's own zone tag.
+if defined RS_OUTPUT_CRS if not "%RS_OUTPUT_CRS%" == "" (
+    echo Setting project/output coordinate system to %RS_OUTPUT_CRS%
+    call :run -setProjectCoordinateSystem "%RS_OUTPUT_CRS%" || goto :fail
+    call :run -setOutputCoordinateSystem "%RS_OUTPUT_CRS%" || goto :fail
+)
+
 for /f "usebackq delims=" %%N in ("%name_list%") do (
     call :export_component "%%N" || goto :fail
 )

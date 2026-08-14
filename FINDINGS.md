@@ -29,6 +29,29 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [NA168] 2026-08-14 - exports were stamped with the WRONG coordinate system
+
+**A correctly aligned, correctly georeferenced H2077 model exported as
+`globalCoordinateSystemName="epsg:32757 - WGS 84 / UTM zone 57S"`.** H2077
+is 53N. 32757 is the placeholder zone sitting in `FlightLogParams.xml`.
+
+Cause: nothing in the pipeline ever set an output coordinate system, so
+the export inherits whatever the application last held.
+`write_flight_log_params()` rewrites the CRS of the flight log being
+**imported** - it has no bearing on what is **exported**. The two are
+separate settings and only the first was managed.
+
+RealityScan 2.2 has `-setProjectCoordinateSystem authority:id` and
+`-setOutputCoordinateSystem authority:id`; neither was called anywhere.
+`ExportDeliverables.bat` now issues both when `RS_OUTPUT_CRS` is set, and
+`export_deliverables.py` derives it from the flight log's own zone tag
+(`--flight-log`, via the existing `crs_for_flight_log`) or takes `--crs`
+directly. With neither, it now WARNS instead of silently inheriting.
+
+Note this is separate from the publish path, which already resolved a CRS
+per asset (`publish_batch.py`) - so the exports on disk were wrong while
+the upload was right, and nothing compared them.
+
 ## [NA168] 2026-08-14 - the stillcam DNGs declare white_level 255 over 12-bit data
 
 **This silently produced 340 blank white frames and a 0-camera align.**
