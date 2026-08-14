@@ -29,6 +29,62 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [NA168] 2026-08-14 - XMP sidecars are NOT the only way to group cameras
+
+**SUPERSEDES** the line below reading "XMP calibration sidecars are the
+ONLY way to separate EXIF-identical cameras". RealityScan 2.2 ships
+`-setPriorCalibrationGroup <n>` and `-setPriorLensGroup <n>`, which set
+exactly the two groups the sidecar carried, against whatever
+`-selectImage <regexp>` has selected - and the registry already stores a
+per-family filename regex. Also present: `-setConstantCalibrationGroups`,
+`-removeCalibrationGroups`, `-setCalibrationGroupByExif`. Discovered by
+reading Epic's own "List of All CLI Commands" page while scoping the
+sidecar removal; the claim had never been re-checked against 2.2 docs.
+Implemented in `modules/prior_groups.py`. NOT yet verified against a live
+instance - the H2082 production run below still used the legacy path.
+
+## [NA168] 2026-08-14 - component identity without the destructive harvest
+
+`-exportLatestComponents <dir>` writes every component >= the
+`setMinComponentSize` gate as its own `.rsalign`, so the component SET is
+knowable without deleting anything; `-selectComponent` +
+`-exportRegistration` then reads each component's membership directly
+instead of inferring it by successive difference of XMP stem harvests.
+This removes the mechanism that stripped 796 of 4,540 zone_1 images
+(17.5%) of their calibration priors. Implemented in `AlignZone.bat`
+behind the default path, old harvest kept at `RS_LEGACY_XMP_IDENTITY=1`.
+CAVEAT: `build_component_manifests` still reads `identity_r<K>`, so the
+legacy flag remains REQUIRED for a full run until that is ported. Also
+open: `-exportRegistration`'s params XML is not hand-authorable - it must
+be exported once from RealityScan's own "Export Registration" dialog.
+
+## [NA168] 2026-08-14 - H2082 Sony stillcam clock runs on Palau local time
+
+The Sony ILCE-7M3 stills in `raw/still_cam_sony/H2082` carry EXIF
+`DateTime` on **UTC+9**, not UTC. Correcting by **-9 h** is what makes
+them georeferenceable at all; geoall reads time from the FILENAME, so the
+staging step bakes the corrected stamp in. Established three ways, because
+the dive-window test alone could not discriminate (offsets -6 h through
+-10 h all put 306/306 frames inside launch-recovery):
+1. cross-correlation against the UTC-named dualHD frames peaks at -9 h
+   (100 Sony frames within +/-120 s of a dualHD frame; next best 87);
+2. -9 h aligns the two cameras' FIRST frames to 41 s - every other offset
+   is out by an hour or more;
+3. NA168 sits at ~130.8 E, and Palau is UTC+9.
+Discovered when 260/306 frames fell inside the dive window and 46 did
+not - a partial fit, which is the signature of a clock offset rather than
+a data problem. A naive as-is import would have silently georeferenced
+those 46 frames against the wrong nav.
+
+## [NA168] 2026-08-14 - H2082 is UTM zone 52N, not 53N
+
+H2082 works at 4.68 N, 130.77 E - **zone 52N, EPSG:32652** - and the whole
+79,457-row track stays in one zone (no crossings). Worth recording because
+the neighbouring H2077 site is at 7.56 N, 132.80 E, which IS zone 53N:
+taking "the NA168 zone" from another dive's summary puts the whole model
+~350 km east. geoall derives the zone from the nav itself and tags the
+flight-log filename, which is the only thing downstream reads.
+
 ## [ON2026] 2026-08-08 - calibration-sidecar hygiene collision (test cell)
 
 Per-eye APPROXIMATE calibration sidecars (manufacturer resized-corrected
@@ -191,9 +247,13 @@ sidecar-free (95-99% registration, consistent).
   sfmImagesOverlap Low→Medium, sfmForceComponentRematch=false and
   sfmMergeGeoreferencedComponents=false for pass-1 zone aligns,
   appIncSubdirs=true always. [H2023] (2026-07-23)
-- **XMP calibration sidecars are the ONLY way to separate EXIF-identical
-  cameras** — WCA rendered JPGs are EXIF-identical across cameras (Z CAM
-  E2-F6, no focal tag). One calibration/lens group per PHYSICAL camera.
+- **SUPERSEDED (2026-08-14, see the [NA168] entry at the top): XMP
+  calibration sidecars are the ONLY way to separate EXIF-identical
+  cameras** — the PREMISE holds (WCA rendered JPGs are EXIF-identical
+  across cameras: Z CAM E2-F6, no focal tag, one calibration/lens group
+  per PHYSICAL camera), but "only way" does not: RealityScan 2.2's
+  `-setPriorCalibrationGroup` / `-setPriorLensGroup` set the same groups
+  in-session, with no file written beside the images.
   Old batcher values (camlower "12 mm fisheye"; actually rectilinear
   17 mm) were wrong and plausibly explain NA167's "priors hurt" A/B.
   [H2023] (2026-07-23)
