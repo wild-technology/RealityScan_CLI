@@ -92,6 +92,35 @@ LESSON: verify converted imagery has actual content (a luminance std of
 0.1 is not an image) before spending a RealityScan run on it. Both failing
 aligns here reported success at every stage.
 
+## [NA168] 2026-08-14 - MEASURED: Division registers ZERO on rectilinear imagery
+
+Controlled A/B on H2082. Same imagery, same 2 zones, same flight log and
+priors, same `-r_mcs 50`. The ONLY variable is `sfmDistortionModel`:
+
+| model | registered |
+|---|---|
+| **Division** (canonical, shipped) | **0 cameras - both zones FAILED** |
+| **Brown3** (variant) | **1,925 cameras (28.9%)** |
+
+Not "worse" - ZERO. A fisheye distortion model on rectilinear cameras
+does not converge at all. H2077 (92.4%) also ran Brown3.
+
+Two consequences:
+
+1. The canonical `AlignmentParams.xml` ships `Division` as a "global
+   fallback", relying on per-camera XMP sidecars to state the real model -
+   but `batch_xmp_priors` DEFAULTS TO FALSE, so on a default run nothing
+   states it and every rectilinear camera aligns as fisheye. That
+   combination is unusable for any rectilinear rig, which is most of them.
+2. H2082's 28.9% ceiling is therefore NOT a parameter artefact - it is the
+   dive's transect geometry (see the transect entry). Changing the
+   distortion model cannot lift it; it can only take it to zero.
+
+For a MIXED rig (H2080: fisheye upper + rectilinear cinema/zeuss) neither
+global value is right for both, and the CLI has no per-camera setting -
+see the per-camera-distortion entry. Choosing one global model means
+choosing which camera to break.
+
 ## [NA168] 2026-08-14 - Division is the wrong global distortion model for rectilinear rigs
 
 `Metadata/AlignmentParams.xml` carries `sfmDistortionModel = Division`,
@@ -132,6 +161,52 @@ Naming that matters: `still_cam` IS the cinemacam - its
 and resolve to calibration group 3 with no registry change. The Sony is a
 separate body, ILCE-7M3 with an `E 20mm F2.8 F050`; focal 20.0 mm is read
 from the EXIF sub-IFD rather than assumed.
+
+## [NA168] 2026-08-14 - dropping the low-res camera HURT registration (negative result)
+
+Intuition said the 1920x1080 dualHD H.264 grabs were polluting a solve
+built on 5760x3240 stills. Measured, they were not - they were bridging.
+
+H2082, same imagery, same settings, only the camera set differs:
+
+| run | cinema registered | of | rate |
+|---|---|---|---|
+| cinema + zeuss + sony (6,656 imgs) | 1,759 | 2,844 | **61.8%** |
+| cinema ONLY (2,844 imgs)           | 1,613 | 2,844 | **56.7%** |
+
+The zeuss frames themselves registered at only 4.4% (154/3,506) and sony
+at 3.9% (12/306) - so by their own numbers they look like dead weight -
+yet REMOVING them cost the cinema camera 5 points. They supply
+intermediate views between the high-res bursts. Do not prune a camera on
+its own registration rate alone.
+
+## [NA168] 2026-08-14 - H2082 is a TRANSECT; it cannot yield one model
+
+H2082's survey is 3 s bursts strung along a line, not an area block. The
+component structure says so directly: 15 components over roughly
+100 x 350 m, each only 5-35 m wide, and merge_zones partitions those 15
+into **13 spatial clusters** - i.e. almost nothing overlaps anything.
+merge_zones' own words on the one cluster with neighbours: "shared-image
+graph does not span the subset - align-only rungs; a merge rung could
+only rigid-glue here".
+
+The metric-scale oracle agrees: **10 of 13 components FAIL** the
+0.90-1.10 gate (observed 0.79-1.17, and one component at 0.000). Weak
+geometry, not a settings problem.
+
+Consequence: H2082 yields a SET of disjoint patches, largest 409 cameras.
+Reprocessing will not change that; only a different survey pattern would.
+Compare H2077, an actual area survey: 92.4% into ONE 284-camera
+component.
+
+BUT the fragmentation is NOT the same as bad geometry, and the scale
+oracle separates the two cleanly. The three largest components PASS:
+zone_2_c0 409 cams at **scale 0.991, IQR width 0.040** (excellent),
+c2 163 cams at 1.033, c3 144 cams at 0.965 - 716 cameras of metrically
+sound reconstruction. The 10 failures are the small scattered fragments
+(0.485-1.166, one degenerate at 0.000), which is exactly the expected
+shape. So H2082's deliverable is three sound patches, not one site model
+and not a write-off. Do not read "13 clusters" as "the dive is unusable".
 
 ## [NA168] 2026-08-14 - there is NO CLI command for a per-camera distortion model
 
