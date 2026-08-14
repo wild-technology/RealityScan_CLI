@@ -112,10 +112,10 @@
       "distortion_model": null
     },
     "sony_a7m3": {
-      "_provenance": "NA168 H2082 still_cam_sony. Sony ILCE-7M3 (a7 III), 3936x2624 from EXIF. A DIFFERENT physical sensor from the 1920x1080 dualHD Zeuss, so it gets its own calibration/lens group (7; 1-4 rig, 5-6 Voyis taken) - a different sensor footprint means different intrinsics and RealityScan groups it separately regardless. Focal unknown (no FocalLength tag survives the export), so left null and self-calibrated within its own group.",
+      "_provenance": "NA168 H2082 still_cam_sony. Sony ILCE-7M3 (a7 III) + Sony E 20mm F2.8 (LensModel \"E 20mm F2.8 F050\"), 3936x2624. Focal 20.0 mm read from the EXIF sub-IFD (FocalLength and FocalLengthIn35mmFilm both 20) - MEASURED from the imagery, not inherited. Its own calibration/lens group (7; 1-4 rig, 5-6 Voyis) because it is a different physical sensor from the 1920x1080 dualHD.",
       "calibration_group": "7",
       "calibration_prior": "Approximate",
-      "focal_length_35mm": null,
+      "focal_length_35mm": 20.0,
       "lens_distortion_group": "7",
       "lens_distortion_prior": "Approximate",
       "distortion_model": "brown3"
@@ -238,17 +238,34 @@
       ]
     },
     {
-      "_comment": "NA168 H2082 Sony stillcam, staged by the H2082 driver as <UTC14>_sonystill.jpg. MOUNT IS NOT MEASURED: it reuses the Zeuss mount on explicit owner direction (2026-08-14, \"substitute these for zeuss-derived images ... use same field though\"), NOT because anyone surveyed the lever arm. If a Sony-specific lever arm is ever measured, replace these numbers rather than inheriting silently. Delimiter-bounded token like zeuss; appended after the seven parity-pinned legacy rows so their relative order is untouched.",
+      "_comment": "NA168 forward-facing mount (owner, 2026-08-14: \"both stillcam and sonycam are facing forward\"). pitch 0 = no down-tilt from the vehicle forward axis. Lever arm is NOT surveyed - it reuses the cinema/zeuss 1.0/0.0/1.0 magnitude; only the TILT is owner-stated. p_acc 15 deg per PD-0 (3-5 fragments the solve). Replaces the Zeuss mount this entry first inherited.",
       "family": "sony_stillcam",
       "pattern": "(^|[_\\-.])sonystill([_\\-.]|$)",
       "camera": "sony_a7m3",
       "era": "all",
       "mount": {
-        "fwd": 0.5,
+        "fwd": 1.0,
         "lat": 0.0,
-        "down": 0.5,
-        "pitch": 30.0,
-        "p_acc": 30.0
+        "down": 1.0,
+        "pitch": 0.0,
+        "p_acc": 15.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S"
+      ]
+    },
+    {
+      "_comment": "NA168 forward-facing mount (owner, 2026-08-14: \"both stillcam and sonycam are facing forward\"). pitch 0 = no down-tilt from the vehicle forward axis. Lever arm is NOT surveyed - it reuses the cinema/zeuss 1.0/0.0/1.0 magnitude; only the TILT is owner-stated. p_acc 15 deg per PD-0 (3-5 fragments the solve). Same optical body as wca_cinema (group 3) but its own family because MOUNT is the family identity: wca_cinema sits 45 deg down and editing that row would silently re-point every WCA dataset. Matched on the _na168still token the H2082/H2077 stager writes, so it can never shadow the C###C prefix rows.",
+      "family": "na168_stillcam",
+      "pattern": "(^|[_\\-.])na168still([_\\-.]|$)",
+      "camera": "cinema",
+      "era": "all",
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 1.0,
+        "pitch": 0.0,
+        "p_acc": 15.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S"

@@ -29,6 +29,34 @@ Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
 
+## [NA168] 2026-08-14 - the survey imagery is H2077's, not H2082's
+
+NA168's only photogrammetry-grade stills are
+`raw/still_cam/survey_stills`: 340 cinemacam DNG at a **2 s median gap
+(p90 also 2 s)**, spanning 2024-11-11 22:16 - 11-12 05:34. That interval
+sits inside **H2077** (launch 11-11T19:17, recovery 11-12T10:54), not
+H2082. The folder is flat and undived, which is why it reads as generic.
+
+H2082's own stills are documentation, not survey: `still_cam/H2082` is
+103 frames at a 35 s median and **616 s p90** gap, and `still_cam_sony/
+H2082` is 306 frames across a 21 h dive. A first alignment attempt on
+H2082 (93 dualHD highlights + 306 Sony, CLAHE 2.0/8x8, loose 10/1/15
+priors) registered **0 cameras and produced 0 components** - consecutive
+frames are ~29 m apart at p90 over a 1254 x 2511 m box, so they share no
+visual field. That is a property of the imagery, not a pipeline fault.
+
+`processed/capture_highlights` (94 frames for H2082) is a curated subset
+of `processed/capture_pngs` (3,616 in-window frames, burst cadence);
+neither is usable here anyway - the dualHD grab is Unreal-only material
+by owner direction (2026-08-14), and its cam1/cam2 channels share one
+1920x1080 footprint, so they could not be separated by sensor size.
+
+Naming that matters: `still_cam` IS the cinemacam - its
+`C007C6418_<UTC14>.DNG` names already match the `^c\d+c` family pattern
+and resolve to calibration group 3 with no registry change. The Sony is a
+separate body, ILCE-7M3 with an `E 20mm F2.8 F050`; focal 20.0 mm is read
+from the EXIF sub-IFD rather than assumed.
+
 ## [NA168] 2026-08-14 - XMP sidecars are NOT the only way to group cameras
 
 **SUPERSEDES** the line below reading "XMP calibration sidecars are the

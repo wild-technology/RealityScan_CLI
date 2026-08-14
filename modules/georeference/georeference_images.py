@@ -34,14 +34,18 @@ from module_base.parameter import Parameter
 # superseded-by modules/cameras.json families[].mount - pending migration step (c+)
 MOUNTS: dict[str, dict | None] = {
     'zeuss': {'fwd': 0.5, 'lat': 0.0, 'down': 0.5, 'pitch': 30.0, 'p_acc': 30.0},
-    # NA168 H2082 Sony stillcam (ILCE-7M3). NOT MEASURED: these are the
-    # Zeuss numbers, reused on explicit owner direction (2026-08-14,
-    # "substitute these for zeuss-derived images ... use same field
-    # though") because the stillcam rides the same vehicle and no
-    # Sony-specific lever arm has ever been surveyed. This is an inherited
-    # prior, not a measurement - if the mount is ever ground-truthed,
-    # REPLACE these numbers rather than letting them stand by default.
-    'sony_stillcam': {'fwd': 0.5, 'lat': 0.0, 'down': 0.5, 'pitch': 30.0, 'p_acc': 30.0},
+    # NA168 forward-facing stills. pitch 0 is OWNER-STATED (2026-08-14:
+    # "both stillcam and sonycam are facing forward"); the lever arm is
+    # NOT surveyed and reuses the cinema magnitude. Only the tilt is a
+    # fact here - if the arm is ever measured, replace these.
+    #
+    # na168_stillcam is the SAME optical body as wca_cinema (owner:
+    # "stillcam is actually cinemacam", calibration group 3) but needs its
+    # own family because the family IS the mount identity: wca_cinema sits
+    # 45 deg down, and pointing NA168's forward stills through that row
+    # would assert a 45 deg error at 15 deg claimed accuracy.
+    'sony_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
+    'na168_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
     'legacy_camupper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 70.0, 'p_acc': 10.0},
     'legacy_cammid': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 20.0, 'p_acc': 10.0},
     'legacy_camlower': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 10.0, 'p_acc': 5.0},
