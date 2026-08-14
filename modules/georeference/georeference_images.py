@@ -57,7 +57,19 @@ MOUNTS: dict[str, dict | None] = {
     # briefly re-applied 2026-07-26 until a contradiction audit caught it).
     # Pitch accuracy is 15 deg, not 3-5: tighter FRAGMENTS the solve (PD-0).
     'wca_port': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
-    'wca_cinema': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
+    # OWNER CORRECTION 2026-08-14: "upper is 45 degrees down, cinema and mid
+    # are pointed directly forward ... it's how they were loaded on this
+    # cruise and NA165". Cinema was carrying 45 deg while wca_starboard (the
+    # upper) carried mount=None - the tilt was on the WRONG camera. Cinema
+    # is now 0 (forward) and the 45 moved to wca_upper below.
+    # BLAST RADIUS: pre-NA168 WCA datasets (the NA156 H2023/H2024 line) were
+    # solved with cinema at 45. The owner vouched for NA168 and NA165 only.
+    # If that line is ever reprocessed, give it a cruise-scoped family
+    # rather than moving this row back.
+    'wca_cinema': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 0.0, 'p_acc': 15.0},
+    # WCA upper stills (U###C). 45 deg down is owner-stated; the lever arm
+    # is NOT surveyed and reuses the cinema magnitude.
+    'wca_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
     # Starboard's mount has NEVER been measured. The owner excludes Starboard
     # from photogrammetry, so this should not be reached - and if it is, the run
     # must SAY SO rather than invent a zero lever arm and a 0 deg tilt.

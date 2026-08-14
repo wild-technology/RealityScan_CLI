@@ -105,11 +105,6 @@ if defined RS_PRIOR_GROUPS_FILE if not "%RS_PRIOR_GROUPS_FILE%" == "" (
     )
 )
 
-if not "%flight_log_dir%" == "" (
-    echo Importing flight log
-    call :run -importFlightLog "%flight_log_dir%" "%flight_log_params_dir%" || goto :fail
-)
-
 echo Applying alignment settings from AlignmentParams.xml
 :: -align takes NO parameters in RealityScan 2.x (a params xml passed to
 :: it is silently ignored), so apply the sfm*/lis* keys via -set first.
@@ -131,6 +126,18 @@ for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%AlignmentParams%") do (
 )
 if %applied_settings% EQU 0 goto :noSettings
 echo Applied %applied_settings% alignment setting(s) from %AlignmentParams%
+
+:: Flight log LAST, after the prior groups and the sfm* settings (owner
+:: sequence 2026-08-14: load images -> select by camera pattern -> set
+:: priors/params -> load flight log for geo data). It used to be imported
+:: BEFORE the settings loop, which meant the georeferencing priors were
+:: taken in while sfmEnableCameraPrior / sfmCameraPriorWeight /
+:: sfmCameraPriorAccuracy* still held whatever the instance last had -
+:: the very keys that govern how those priors are weighted.
+if not "%flight_log_dir%" == "" (
+    echo Importing flight log
+    call :run -importFlightLog "%flight_log_dir%" "%flight_log_params_dir%" || goto :fail
+)
 
 echo Aligning images - this may take a long time
 call :run -align || goto :fail

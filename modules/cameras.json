@@ -149,13 +149,14 @@
         "fwd": 1.0,
         "lat": 0.0,
         "down": 0.0,
-        "pitch": 45.0,
+        "pitch": 0.0,
         "p_acc": 15.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S",
         "%Y%m%dT%H%M%SZ"
-      ]
+      ],
+      "_comment": "OWNER CORRECTION 2026-08-14: \"upper is 45 degrees down, cinema and mid are pointed directly forward ... it is how they were loaded on this cruise and NA165\". Cinema carried 45 deg while wca_starboard (the upper) carried mount=None - the tilt was on the WRONG camera. BLAST RADIUS: pre-NA168 WCA datasets (NA156 H2023/H2024) were solved with cinema at 45; the owner vouched for NA168/NA165 only. Give that line a cruise-scoped family rather than moving this row back. Lever arms are unchanged and remain the VALIDATED ones."
     },
     {
       "_comment": "Starboard's mount has NEVER been measured. The owner excludes Starboard from photogrammetry, so this should not be reached - and if it is, the run must SAY SO rather than invent a zero lever arm and a 0 deg tilt. Inventing rig numbers is what produced the Port-1 m incident.",
@@ -269,6 +270,24 @@
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S"
+      ]
+    },
+    {
+      "_comment": "WCA upper stills (U###C prefix, e.g. U001C6642_20241117052233). Owner-stated 2026-08-14: UPPER IS 45 DEG DOWN, cinema and mid point directly forward. Note wca_starboard previously carried mount=None (never measured) while the 45 deg sat on wca_cinema - see FINDINGS. Lever arm still NOT surveyed; it reuses the wca_cinema magnitude. Only the tilt is owner-stated. p_acc 15 per PD-0 (3-5 fragments the solve).",
+      "family": "wca_upper",
+      "pattern": "^u\\d+c",
+      "camera": "starboard",
+      "era": "wca",
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 0.0,
+        "pitch": 45.0,
+        "p_acc": 15.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
       ]
     }
   ],

@@ -51,7 +51,8 @@ EXPECTED = {
     'legacy_cammid': ((1.0, 0.0, 1.0), 20.0, 10.0),
     'legacy_camlower': ((1.0, 0.0, 1.0), 10.0, 5.0),
     'wca_port': ((1.0, 0.0, 1.0), 0.0, 15.0),
-    'wca_cinema': ((1.0, 0.0, 0.0), 45.0, 15.0),
+    'wca_cinema': ((1.0, 0.0, 0.0), 0.0, 15.0),
+    'wca_upper': ((1.0, 0.0, 0.0), 45.0, 15.0),
 }
 
 SAMPLE = {
@@ -61,6 +62,7 @@ SAMPLE = {
     'legacy_camlower': 'camlower_0001.jpg',
     'wca_port': 'P231C0003_20231103235906_edt.jpg',
     'wca_cinema': 'C231C0003_20231103235906_edt.jpg',
+    'wca_upper': 'U001C6642_20241117052233.png',
 }
 
 
@@ -101,7 +103,10 @@ def test_family_and_camera_are_separate_concepts():
     assert camera_registry.identify('camlower_1.jpg').key == 'cinema'
     assert camera_registry.identify('C231C0003_x.jpg').key == 'cinema'
     assert MOUNTS['legacy_camlower']['pitch'] == 10.0
-    assert MOUNTS['wca_cinema']['pitch'] == 45.0
+    # Owner correction 2026-08-14: the 45 deg down-look belongs to UPPER,
+    # not cinema. Cinema and mid point directly forward.
+    assert MOUNTS['wca_cinema']['pitch'] == 0.0
+    assert MOUNTS['wca_upper']['pitch'] == 45.0
 
 
 def test_every_family_maps_to_a_known_camera():
@@ -146,7 +151,7 @@ def test_port_sits_one_metre_below_cinema(geo):
 def test_next_cruise_digits_get_real_geometry(geo):
     """M5 regression: this used to be a zero lever arm at 10 deg confidence."""
     assert geo._get_camera_offsets('C245C0007_x.jpg') == (1.0, 0.0, 0.0)
-    assert geo._get_camera_pitch_offset('C245C0007_x.jpg') == 45.0
+    assert geo._get_camera_pitch_offset('C245C0007_x.jpg') == 0.0
     assert geo._get_camera_pitch_accuracy('C245C0007_x.jpg') == 15.0
 
 
@@ -191,7 +196,7 @@ def test_geoall_fallback_matches_the_module_for_unmapped_families(geo, filename)
 
 def test_geoall_covers_wca_at_all(geo):
     """geoall had NO WCA branch, so Cinema lost its 45 deg down-look."""
-    assert geoall.get_camera_pitch_offset('C231C0003_x.jpg') == 45.0
+    assert geoall.get_camera_pitch_offset('C231C0003_x.jpg') == 0.0
     assert geoall.get_camera_offsets('P231C0003_x.jpg') == (1.0, 0.0, 1.0)
 
 

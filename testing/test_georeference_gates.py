@@ -276,7 +276,9 @@ def test_unknown_mount_gets_no_pitch_prior():
     assert module._get_camera_pitch_offset('S231C0001.jpg') is None
     assert module._get_camera_pitch_accuracy('S231C0001.jpg') is None
     # A measured mount is untouched.
-    assert module._get_camera_pitch_offset('C231C0001.jpg') == 45.0
+    # Owner correction 2026-08-14: cinema points directly forward; the
+    # 45 deg down-look belongs to upper (wca_upper).
+    assert module._get_camera_pitch_offset('C231C0001.jpg') == 0.0
     assert module._get_camera_pitch_accuracy('C231C0001.jpg') == 15.0
 
 

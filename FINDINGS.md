@@ -133,6 +133,62 @@ and resolve to calibration group 3 with no registry change. The Sony is a
 separate body, ILCE-7M3 with an `E 20mm F2.8 F050`; focal 20.0 mm is read
 from the EXIF sub-IFD rather than assumed.
 
+## [NA168] 2026-08-14 - there is NO CLI command for a per-camera distortion model
+
+Searched the complete `set*` command list in Epic's own CLI reference. The
+only per-selection calibration commands are:
+
+    setPriorCalibrationGroup    setPriorLensGroup
+    setConstantCalibrationGroups    setCalibrationGroupByExif
+
+All four set GROUPING. `sfmDistortionModel` (Division | Brown3 | Brown4 |
+Brown3WithTangential2 | Brown4WithTangential2 | KplusBrown3WithTangential2
+| KplusBrown4WithTangential2) is a GLOBAL `sfm*` alignment key - one value
+for the whole scene.
+
+Consequence, and it NARROWS the supersession entry below: the CLI replaces
+sidecars for SEPARATING cameras, but **not** for stating a per-camera
+distortion model. On a MIXED rig - NA168 H2080 has fisheye upper
+(division) firing alongside rectilinear cinema and zeuss (brown3) - one
+global model is wrong for one of them, and the XMP `Camera:DistortionModel`
+entry remains the only mechanism that can say otherwise.
+
+Options for a mixed rig, none free: keep sidecars for the model only;
+align fisheye and rectilinear as separate zones and merge; or accept one
+global model and let the mismatched cameras self-calibrate within their
+own lens group. Unresolved - do not assume the sidecar-free path covers
+this case.
+
+## [NA168] 2026-08-14 - the 45 deg down-look was on the WRONG camera
+
+Owner, 2026-08-14: "upper is 45 degrees down, cinema and mid are pointed
+directly forward ... it's how they were loaded on this cruise and NA165."
+
+The registry had `wca_cinema` at **pitch 45** and `wca_starboard` (the
+upper) at **mount=None, never measured** - the tilt recorded against the
+camera that does not have it, and absent from the one that does.
+`camera_registry`'s own docstring repeated the error ("the same Cinema
+unit sits ... 45 deg under WCA names").
+
+Fixed: `wca_cinema` -> pitch 0, new `wca_upper` family (`^u\d+c`, the
+`U###C` WCA still prefix) -> starboard camera at pitch 45. `wca_port`
+(mid) already read 0 and was right. Lever arms untouched - those are the
+VALIDATED figures and were not in question.
+
+BLAST RADIUS: the NA156 H2023/H2024 WCA line was solved with cinema at 45.
+The owner vouched for NA168 and NA165 only. If that line is reprocessed,
+give it a cruise-scoped family rather than moving the row back.
+
+## [NA168] 2026-08-14 - flight log must be imported AFTER the sfm settings
+
+Owner sequence: load images -> select by camera pattern -> set
+priors/params -> load flight log for geo data. AlignZone.bat had
+`-importFlightLog` BEFORE the AlignmentParams `-set` loop, so the
+georeferencing priors were taken in while `sfmEnableCameraPrior`,
+`sfmCameraPriorWeight` and `sfmCameraPriorAccuracy*` still held whatever
+the instance last had - the very keys governing how those priors are
+weighted. Reordered.
+
 ## [NA168] 2026-08-14 - XMP sidecars are NOT the only way to group cameras
 
 **SUPERSEDES** the line below reading "XMP calibration sidecars are the
