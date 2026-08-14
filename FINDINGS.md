@@ -31,9 +31,21 @@ frozen as the NA167 raw log; all new findings go HERE.
 
 ## [NA168] 2026-08-14 - exports were stamped with the WRONG coordinate system
 
-**A correctly aligned, correctly georeferenced H2077 model exported as
+**H2077 exported with
 `globalCoordinateSystemName="epsg:32757 - WGS 84 / UTM zone 57S"`.** H2077
 is 53N. 32757 is the placeholder zone sitting in `FlightLogParams.xml`.
+
+SCOPE - the GEOMETRY was never wrong. `ModelExportParamsOBJ_NiraParts`
+sets `exportCoordinateSystemType=3`, i.e. geocentric ECEF, and the
+exported vertices check out against H2077's own nav to within ~1 km
+(computed ECEF -4294961/4638621/833425 vs exported
+-4295946/4638342/832605, the residual being the survey patch's offset
+from the dive's on-bottom fix). The vertices are absolute, so they do not
+depend on a UTM zone at all. What was wrong is the METADATA LABEL - and
+that is what a GIS import, a Cesium tiler or a Nira upload reads to place
+the asset. Re-exporting changed the label and left the geometry
+byte-identical, which is the expected result and the proof of both
+claims.
 
 Cause: nothing in the pipeline ever set an output coordinate system, so
 the export inherits whatever the application last held.
