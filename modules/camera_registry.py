@@ -310,6 +310,117 @@ def ensure_calibration_sidecars(image_root: str) -> tuple[int, int]:
     return created, skipped
 
 
+def assert_sidecars_current(image_root: str, logger=None, strict: bool = True) -> dict:
+    """Refuse to align against sidecars that do not match the images present.
+
+    A STALE sidecar set is silent and dangerous, and it recurs. The failure
+    modes this catches, all seen in practice:
+
+    - POSE-BEARING sidecars beside images. RealityScan auto-imports those as
+      EXACT-POSE priors on any later add (bug B7), so a re-align inherits the
+      previous solve's poses and cannot disagree with it.
+    - ORPHANED sidecars - a `.xmp` whose image is gone. That means the tree
+      was rebuilt from a different image set and the sidecars were not, so
+      they describe images that are not here. On 2026-08-14 an H2082 batch
+      carried 7,694 sidecars for a set that had become 4,903 images after
+      thumbnail contamination was removed.
+    - WRONG-GROUP sidecars - the calibration group does not match what the
+      filename's family resolves to, i.e. the registry changed (or the file
+      was written for another cruise) and the sidecars were not regenerated.
+
+    Returns a dict of counts. Raises RuntimeError when strict and anything
+    is wrong, because every one of these silently corrupts a solve rather
+    than failing it.
+    """
+    import logging
+    import os
+
+    log = logger or logging.getLogger(__name__)
+    exts = ('.jpg', '.jpeg', '.png', '.heif')
+    pose: list[str] = []
+    orphaned: list[str] = []
+    wrong_group: list[str] = []
+    uncovered = 0
+    sidecars = 0
+
+    for root, _dirs, files in os.walk(image_root):
+        # identity_r<K>/ folders are the harvest's OWN output - pose sidecars
+        # live there by design and are not beside any image.
+        if os.path.basename(root).startswith('identity_'):
+            continue
+        names = {f.lower() for f in files}
+        for filename in files:
+            if not filename.lower().endswith('.xmp'):
+                continue
+            sidecars += 1
+            path = os.path.join(root, filename)
+            stem = os.path.splitext(filename)[0]
+            if not any((stem + e).lower() in names for e in exts):
+                orphaned.append(path)
+                continue
+            try:
+                content = open(path, encoding='utf-8', errors='replace').read()
+            except OSError:
+                continue
+            if 'xcr:Position' in content:
+                pose.append(path)
+            camera = identify(filename)
+            if camera is not None and \
+                    f'<Camera:CalibrationGroup>{camera.calibration_group}<' not in content:
+                wrong_group.append(path)
+        for filename in files:
+            if not filename.lower().endswith(exts):
+                continue
+            if identify(filename) is None:
+                continue
+            if (os.path.splitext(filename)[0] + '.xmp').lower() not in names:
+                uncovered += 1
+
+    result = {
+        'sidecars': sidecars,
+        'pose_bearing': len(pose),
+        'orphaned': len(orphaned),
+        'wrong_group': len(wrong_group),
+        'images_without_sidecar': uncovered,
+    }
+
+    # Pose-bearing sidecars are WARNED, not refused. The align path already
+    # announces them ("HEADS UP: ... contains N pose-bearing .xmp") because
+    # the identity harvest moves them out and never returns them, and that
+    # announcement is a documented contract with a test behind it
+    # (testing/test_align_and_rollback_safety.py). Raising here would take
+    # that warning away and turn a handled case into a hard stop.
+    if pose:
+        log.warning('%d pose-bearing sidecar(s) beside images under %s - they '
+                    'auto-import as EXACT-POSE priors (bug B7) and the harvest '
+                    'will move them out without returning them.',
+                    len(pose), image_root)
+
+    problems = []
+    if orphaned:
+        problems.append(f'{len(orphaned)} ORPHANED sidecar(s) with no matching '
+                        f'image - the tree was rebuilt but the sidecars were '
+                        f'not, e.g. {os.path.basename(orphaned[0])}')
+    if wrong_group:
+        problems.append(f'{len(wrong_group)} sidecar(s) whose calibration group '
+                        f'contradicts the registry, e.g. '
+                        f'{os.path.basename(wrong_group[0])}')
+
+    if problems:
+        message = (f'Sidecars under {image_root} are NOT current: '
+                   + '; '.join(problems)
+                   + '. Regenerate them (ensure_calibration_sidecars) or delete '
+                     'them before aligning - a stale sidecar corrupts a solve '
+                     'silently rather than failing it.')
+        if strict:
+            raise RuntimeError(message)
+        log.error(message)
+    else:
+        log.info('Sidecar check OK under %s: %d sidecar(s), %d image(s) '
+                 'without one', image_root, sidecars, uncovered)
+    return result
+
+
 def sanitize_and_census(image_root: str) -> tuple[int, int, int]:
     """Count pose-bearing XMP sidecars under image_root, then restore each
     to calibration-only content (or delete it for unknown cameras).

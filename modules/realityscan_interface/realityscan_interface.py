@@ -374,6 +374,14 @@ class RealityScanAlignment(RSModule):
                     'template as-is (frame checked: it does not declare UTM). '
                     'Verify this cruise really uses local:1 priors!')
 
+        # Sidecars must describe the images that are ACTUALLY here. A stale
+        # set is silent: pose-bearing sidecars re-import the previous solve's
+        # poses (B7), orphans describe images that are gone, wrong-group ones
+        # contradict the registry. Owner, 2026-08-14: "you must check the
+        # sidecar files are always up to date - this is a recurring and
+        # dangerous bug." Refuse the align rather than corrupt the solve.
+        camera_registry.assert_sidecars_current(input_folder, self.logger)
+
         files_before = set(os.listdir(output_folder))
 
         # Calibration/lens prior groups, applied IN-SESSION instead of via
