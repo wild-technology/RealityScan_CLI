@@ -92,34 +92,31 @@ LESSON: verify converted imagery has actual content (a luminance std of
 0.1 is not an image) before spending a RealityScan run on it. Both failing
 aligns here reported success at every stage.
 
-## [NA168] 2026-08-14 - MEASURED: Division registers ZERO on rectilinear imagery
+## [NA168] 2026-08-14 - RETRACTED: "Division registers ZERO on rectilinear imagery"
 
-Controlled A/B on H2082. Same imagery, same 2 zones, same flight log and
-priors, same `-r_mcs 50`. The ONLY variable is `sfmDistortionModel`:
+**This entry previously reported a controlled A/B showing Division at 0
+cameras against Brown3 at 1,925. THE TEST WAS CONFOUNDED. Do not cite it.**
 
-| model | registered |
-|---|---|
-| **Division** (canonical, shipped) | **0 cameras - both zones FAILED** |
-| **Brown3** (variant) | **1,925 cameras (28.9%)** |
+The Division run was given a COPY of a batch tree taken AFTER a full
+align + identity-harvest cycle, so it carried 7,694 inherited calibration
+sidecars the Brown3 run had left behind, plus whatever else that cycle
+wrote. The distortion model was not the only variable, so the comparison
+establishes nothing about Division.
 
-Not "worse" - ZERO. A fisheye distortion model on rectilinear cameras
-does not converge at all. H2077 (92.4%) also ran Brown3.
+Two further reasons the same measurement was unsound: the image set at the
+time was ~50% thumbnails (see the thumbnail entry below), and nothing
+verified sidecar currency before either run.
 
-Two consequences:
+Owner position, 2026-08-14: **Division is universal**; Brown3 is somewhat
+better for rectilinear, but Division is what the shipped
+`AlignmentParams.xml` uses and what the pipeline should run. Follow the
+code's logic. A clean A/B - fresh batch, no inherited sidecars, no
+thumbnails - has not been done; until it is, there is NO evidence here
+either way.
 
-1. The canonical `AlignmentParams.xml` ships `Division` as a "global
-   fallback", relying on per-camera XMP sidecars to state the real model -
-   but `batch_xmp_priors` DEFAULTS TO FALSE, so on a default run nothing
-   states it and every rectilinear camera aligns as fisheye. That
-   combination is unusable for any rectilinear rig, which is most of them.
-2. H2082's 28.9% ceiling is therefore NOT a parameter artefact - it is the
-   dive's transect geometry (see the transect entry). Changing the
-   distortion model cannot lift it; it can only take it to zero.
-
-For a MIXED rig (H2080: fisheye upper + rectilinear cinema/zeuss) neither
-global value is right for both, and the CLI has no per-camera setting -
-see the per-camera-distortion entry. Choosing one global model means
-choosing which camera to break.
+What DOES survive from that work: H2082's registration ceiling is set by
+its transect geometry, not by the distortion model (see the transect
+entry), and the components that do form are metrically sound.
 
 ## [NA168] 2026-08-14 - Division is the wrong global distortion model for rectilinear rigs
 
@@ -161,6 +158,57 @@ Naming that matters: `still_cam` IS the cinemacam - its
 and resolve to calibration group 3 with no registry change. The Sony is a
 separate body, ILCE-7M3 with an `E 20mm F2.8 F050`; focal 20.0 mm is read
 from the EXIF sub-IFD rather than assumed.
+
+## [NA168] 2026-08-14 - capture_pngs carries a thumbnails/ subdir under the SAME filenames
+
+`processed/capture_pngs/<date>/` has a `thumbnails/` subdirectory holding a
+**350x197 copy of every frame under an identical filename**. Any recursive
+glob (`**/*.png`) therefore returns TWO files per timestamp, and half the
+staged set is 30x too small to match features against full-size imagery.
+
+Measured on H2082: 3,506 staged "frames" were **1,991 thumbnails + 1,753
+real**, and the zeuss camera registered at **4.4%** as a direct result.
+Nothing downstream notices - they are valid PNGs, with valid parseable
+timestamps, that resolve to the correct camera family. The only tell is
+image dimensions.
+
+Same trap applies to `dive_reports/<DIVE>/images/thumbnails` and
+`samples/<id>/vidcaps/thumbnails`. ALWAYS exclude a `thumbnails` path
+component when staging, and assert a single image dimension per camera
+afterwards - a dimension census is the cheap check that catches this.
+
+CAUTION: this invalidates any registration-rate comparison made against
+H2082 before 2026-08-14, including the "dropping the low-res camera hurt"
+entry below, which was measured on the contaminated set.
+
+## [NA168] 2026-08-14 - frames must be gated to ON BOTTOM, not launch-recovery
+
+Video-derived frames outside `[On Bottom Time, Off Bottom Time]` are
+descent and ascent - open water, no seafloor, nothing to match, and they
+pull the zone clustering toward a track that has no imagery worth aligning.
+
+Use the dive summary's On/Off Bottom columns, the SAME window and source
+`ROVDataConcat/processors/process_dat.filter_vfr_data` uses to gate DVL
+positions, so imagery and nav agree on what counts as the dive. For H2082
+that is 20:00:32 -> 16:33:34 against a 19:04:56 -> 17:24:44
+launch-recovery: ~56 min of descent and ~51 min of ascent trimmed.
+
+Gate at the VIDEO level first, not just the frame level: 6 of H2082's 90
+ProRes files fall entirely outside the window, and skipping them avoids
+~220 GB of copying and ~40 min of extraction before a single frame is
+written.
+
+## [NA168] 2026-08-14 - the RealityScan cache reached 1.2 TB and nearly stopped the box
+
+`%LOCALAPPDATA%\Temp\RealityScan` grew to **1,227 GB across 133,804 files,
+flat in one directory** - no per-session subfolders, so age is the only way
+to tell live cache from dead. Free space had fallen to 182 GB with a 39 GB
+ProRes staging pipeline and an alignment both writing.
+
+Deleting entries older than 24 h freed **562 GB with 0 files in use**, so
+the running align was untouched. The project must be SAVED before clearing
+cache younger than that. Bucket by `LastWriteTime` before deleting anything
+- a wholesale clear during a live align destroys it.
 
 ## [NA168] 2026-08-14 - dropping the low-res camera HURT registration (negative result)
 
