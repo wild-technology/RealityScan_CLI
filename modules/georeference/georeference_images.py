@@ -70,6 +70,9 @@ MOUNTS: dict[str, dict | None] = {
     # WCA upper stills (U###C). 45 deg down is owner-stated; the lever arm
     # is NOT surveyed and reuses the cinema magnitude.
     'wca_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
+    # Same camera as wca_upper, reached through the stager's UTC-first
+    # filename (the U###C prefix does not survive the rename).
+    'na168_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
     # Starboard's mount has NEVER been measured. The owner excludes Starboard
     # from photogrammetry, so this should not be reached - and if it is, the run
     # must SAY SO rather than invent a zero lever arm and a 0 deg tilt.
@@ -280,6 +283,30 @@ class GeoreferenceImages(RSModule):
                     'so it gets no position or orientation prior - measure the '
                     'mount or exclude the camera, do not guess')
         return mount
+
+    def _get_camera_focal_length(self, filename: str) -> float | None:
+        """35mm-equivalent focal length prior for this image, or None.
+
+        THE ONLY ROUTE this value has to RealityScan. It used to travel in
+        an XMP calibration sidecar; sidecars are now forbidden, and neither
+        -setPriorCalibrationGroup nor -setPriorLensGroup carries a focal
+        length (those two are the ONLY prior-setting CLI commands that
+        exist). The WCA units publish no EXIF focal length or lens tag
+        either, so without this column RealityScan solves focal from
+        scratch on the weakest imagery in the set.
+
+        FocalLength is a documented prior-calibration variable of
+        RealityScan.Import.CSVFlightLog - see Help/en-US/tools/
+        defineimportformat.htm. Requires the 14-column format
+        {D1F2A3B4-...}; modules/flightlog_format.assert_format_installed()
+        fails closed if that format is not registered in the RealityScan
+        INSTALL, because a missing format silently drops columns.
+
+        None (empty field) when the family or camera is unknown - the same
+        contract as the pitch prior: say nothing rather than invent a lens.
+        """
+        cam = camera_registry.identify(filename)
+        return cam.focal_length_35mm if cam else None
 
     def _get_camera_offsets(self, filename: str) -> tuple[float, float, float]:
         """(forward, lateral, down) lever arm in metres; zeros when unknown."""
@@ -752,8 +779,14 @@ class GeoreferenceImages(RSModule):
         self.stats['orientation_accuracy_deg'] = yaw_acc
 
         with open(flight_log_filename, "w") as f:
+            # 14 columns, matching flight-log format {D1F2A3B4-...}. Column
+            # 13 (FocalLength) is the per-image calibration prior that used
+            # to live in an XMP sidecar; see _get_camera_focal_length.
+            # The format MUST be registered in the RealityScan install or
+            # trailing columns are dropped silently - flightlog_format
+            # .assert_format_installed() gates the import on exactly that.
             f.write(
-                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
+                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy;FocalLength\n"
             )
 
             for image in accepted_images:
@@ -784,7 +817,8 @@ class GeoreferenceImages(RSModule):
                     fmt(rc_roll),
                     fmt(yaw_acc),
                     fmt(pitch_acc),
-                    fmt(roll_acc)
+                    fmt(roll_acc),
+                    fmt(self._get_camera_focal_length(image["FILENAME"]))
                 ])
                 f.write(line + "\n")
 

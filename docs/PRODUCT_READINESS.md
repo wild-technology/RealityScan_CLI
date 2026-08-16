@@ -139,8 +139,12 @@ hash. Every fix ships with a test or an empirical verification transcript.
   local-frame decision reads first-in-walk-order log; add unanimity check
   (partially fixed 7a22b51 — verify remaining gap).
 - Wildcard attach bypasses the per-instance lock contract.
-- AlignZone applier silently drops the 7 GUI-obfuscated keys
-  (s235l/s236l/s237l/s251l–s254l) from AlignmentParams.xml.
+- ~~AlignZone applier silently drops the 7 GUI-obfuscated keys
+  (s235l/s236l/s237l/s251l–s254l) from AlignmentParams.xml.~~ **CLOSED
+  2026-08-15.** Settings contract restated: the params XML is
+  authoritative for every key it names (all 35 now applied, verified by
+  parse); keys it does not name are explicitly UNDEFINED and inherit the
+  instance. `app*` keys fail closed rather than being dropped.
 - Direct .bat invocation path: instance-name collision at boot yields a
   raw HRESULT; frame guard not applied.
 - Silent 900 s shutdown-verify wait on cancel/failure; orphaned instance

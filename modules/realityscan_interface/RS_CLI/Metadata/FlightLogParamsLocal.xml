@@ -1,7 +1,10 @@
 <Configuration id="{93DBD041-AE1C-4631-89BC-D9430FCED843}">
   <entry key="ifuuInhEn" value="true"/>
   <entry key="ifCSopt" value="1"/>
-  <entry key="gpsLogFileFormat" value="{B438A617-2434-5A24-C1B7-58980F28345A}"/>
+  <!-- 14-column RUMI format (13 + per-image FocalLength); kept in step with
+       Metadata/FlightLogParams.xml. See the note there: a GUID missing from
+       the RealityScan INSTALL drops columns silently rather than failing. -->
+  <entry key="gpsLogFileFormat" value="{D1F2A3B4-5C6D-4E7F-8A9B-0C1D2E3F4A5B}"/>
   <!-- Local-Euclidean template (COLMAP local:1 priors; validated on
        ON2026, FINDINGS C-20260730-05). Provenance: this filename matches
        the hand-made original on M: for the ON2026 campaign; commit

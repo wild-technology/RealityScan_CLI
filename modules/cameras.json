@@ -119,6 +119,15 @@
       "lens_distortion_group": "7",
       "lens_distortion_prior": "Approximate",
       "distortion_model": "brown3"
+    },
+    "starboard_1to1": {
+      "_provenance": "NA168 H2080 upper, CROPPED to 1:1 (owner directive 2026-08-16). Physically the same unit as 'starboard', but the imagery is no longer the same sensor format: 5760x3240 -> 3190x3190, taken at x=1285,y=0 so the bottom 50 px are dropped. 35mm-equivalent focal scales with the SENSOR DIAGONAL, which the crop shortens from 6608.7 px to 4511.3 px (ratio 1.46491), so 16.0 -> 23.44 mm. Its OWN calibration/lens group (8; 1-4 rig, 5-6 Voyis, 7 Sony) because cropped and uncropped frames do not share intrinsics and must not be solved as one group. Distortion stays division (same fisheye glass). Uncropped 'starboard' is untouched - NA165/NA167 wca_upper and legacy_camupper still use it.",
+      "calibration_group": "8",
+      "calibration_prior": "Approximate",
+      "focal_length_35mm": 23.44,
+      "lens_distortion_group": "8",
+      "lens_distortion_prior": "Approximate",
+      "distortion_model": "division"
     }
   },
   "families": [
@@ -278,6 +287,24 @@
       "pattern": "^u\\d+c",
       "camera": "starboard",
       "era": "wca",
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 0.0,
+        "pitch": 45.0,
+        "p_acc": 15.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
+      ]
+    },
+    {
+      "_comment": "NA168 WCA upper stills staged as <UTC14>_na168upper.jpg. Same physical camera as wca_upper (the U###C prefix) - starboard, calibration group 4, DIVISION because it is the fisheye - but the stager rewrites the name to a UTC-first form, so the U###C prefix is gone and a token family is needed. Owner 2026-08-14: upper is 45 deg DOWN. Lever arm not surveyed; reuses the cinema magnitude.",
+      "family": "na168_upper",
+      "pattern": "(^|[_\\-.])na168upper([_\\-.]|$)",
+      "camera": "starboard_1to1",
+      "era": "all",
       "mount": {
         "fwd": 1.0,
         "lat": 0.0,

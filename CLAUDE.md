@@ -56,6 +56,16 @@ Exceptions that must NOT be renamed:
   generation (`write_flight_log_params`: UTM zone parsed from the log's
   filename tag → EPSG → FlightLogParams XML; never hand-edit the
   template's zone).
+- `modules/flightlog_format.py` — guarantees the flight-log FORMAT is
+  installed where RealityScan looks. Format GUIDs (`gpsLogFileFormat`)
+  resolve against `flightlogs.xml` **in the RealityScan install
+  directory**, not this repo, and a missing GUID does NOT error — the
+  import falls back and silently DROPS the columns that format defined.
+  `assert_format_installed()` runs before every import and SELF-HEALS by
+  merging the repo's formats. It also manages `calibration.xml`
+  (registration export). Both install files are reverted by RealityScan
+  updates, which is why repair is code, not a chore (this bug shipped
+  twice — see FINDINGS 2026-08-16).
 - `modules/realityscan_interface/` — the ONLY place RealityScan is
   executed:
   - `realityscan_cli.py` — unified execution layer (`RealityScanCLI`).
@@ -177,6 +187,20 @@ section wins. Every rule traces to a recorded incident.
 
 ## Hard rules
 
+0. **NO XMP SIDECARS. The input image tree is READ-ONLY to this
+   pipeline.** Owner directive 2026-08-16: "Sidecars are forbidden in the
+   workflow — they keep messing things up." The reason is structural, not
+   stylistic: an `.xmp` beside an image is READ BY RealityScan on import,
+   so anything left there silently becomes a PRIOR for the next run (7,694
+   inherited sidecars once confounded a distortion A/B; 6,024 were
+   re-created on H2080 in a tree that had just been certified clean).
+   Priors travel IN via the flight log — position, orientation, their
+   accuracies, and `FocalLength` (a documented CSV flight-log variable,
+   along with PrincipalU/V, Skew, AspectRatio and the distortion
+   coefficients) — plus `-setPriorCalibrationGroup` / `-setPriorLensGroup`
+   in-session. Identity travels OUT via `-exportRegistration` into the
+   OUTPUT tree. Anything a stage produces goes to the output tree; if a
+   new writer needs to put a file next to an image, the design is wrong.
 1. Never add a second way to launch/monitor RealityScan — extend
    `RealityScanCLI` and the `:run` pattern instead.
 2. Never infer completion from process names (`tasklist`); the pre-2.x

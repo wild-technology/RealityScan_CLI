@@ -9,6 +9,7 @@ from module_base.parameter import Parameter
 from .. import align_fingerprint
 from .. import camera_registry
 from .. import component_manifest
+from .. import flightlog_format
 from .. import prior_groups
 from ..flight_logs import (ensure_frame_match, find_flight_log,
                            utm_zone_from_flight_log_name,
@@ -374,6 +375,20 @@ class RealityScanAlignment(RSModule):
                     'template as-is (frame checked: it does not declare UTM). '
                     'Verify this cruise really uses local:1 priors!')
 
+            # FAIL CLOSED on an unregistered flight-log format. RealityScan
+            # resolves gpsLogFileFormat against flightlogs.xml in its INSTALL
+            # directory; when the GUID is absent there the import does not
+            # error - it falls back to a stock parser and silently DROPS the
+            # trailing columns. Because our first ten columns coincide with
+            # stock {97F08A22}, position and raw yaw/pitch/roll still landed
+            # and nothing looked wrong, while YawAccuracy/PitchAccuracy/
+            # RollAccuracy were discarded on EVERY import (found 2026-08-16;
+            # previously found, hand-patched and LOST again - see
+            # testing/PRIORS_DISTORTION_TEST_PLAN.md item 1). Checking after
+            # the import cannot detect this, so it is checked before.
+            flightlog_format.assert_format_installed(
+                flight_log_params_path, self.logger)
+
         # Sidecars must describe the images that are ACTUALLY here. A stale
         # set is silent: pose-bearing sidecars re-import the previous solve's
         # poses (B7), orphans describe images that are gone, wrong-group ones
@@ -431,23 +446,31 @@ class RealityScanAlignment(RSModule):
                 'identity harvest?) - restored/removed for hygiene',
                 leftover)
 
-        # RUNS ON EVERY EXIT PATH. The identity harvest MOVES pose sidecars
-        # out of the image tree and never re-exports the last-peeled
-        # component's, leaving those images with NO calibration prior at
-        # all; sanitize_and_census above only touches sidecars that are
-        # STILL PRESENT, so it cannot repair that. This call used to sit
-        # after the failure and no-component returns below, i.e. it was
-        # skipped precisely when the operator re-runs - re-opening the
-        # FINDINGS 2026-07-25 defect (796 of 4,540 zone_1 images left
-        # ungrouped, which CONFOUNDED PD-4/PD-4a) that the same entry
-        # records as fixed (audit 2026-08-07). Idempotent: (0, 0) on a
-        # complete tree.
-        created, no_camera = camera_registry.ensure_calibration_sidecars(
-            input_folder)
-        if created:
-            self.logger.info(
-                'Restored %d calibration sidecar(s) displaced by the identity '
-                'harvest in %s', created, input_folder)
+        # NO CALIBRATION-SIDECAR REPAIR HERE (removed 2026-08-16, owner
+        # directive "nothing has sidecar files for images").
+        #
+        # This used to call camera_registry.ensure_calibration_sidecars()
+        # on every exit path, because the legacy identity harvest MOVES
+        # pose sidecars out of the image tree and left those images with no
+        # calibration prior (FINDINGS 2026-07-25: 796 of 4,540 zone_1
+        # images ungrouped, which confounded PD-4/PD-4a).
+        #
+        # That repair is obsolete AND actively harmful now. Calibration no
+        # longer travels in sidecars at all: AlignZone applies
+        # -setPriorCalibrationGroup / -setPriorLensGroup in-session from
+        # modules/prior_groups.py, fresh for every zone, before -align. The
+        # repair instead WROTE per-image XMPs carrying
+        # DistortionModel=brown3 and FocalLength35mm=16.0 into the batch
+        # tree - contradicting the GLOBAL sfmDistortionModel=Division and
+        # duplicating the group the CLI had already set. Measured on H2080
+        # 2026-08-16: 6,024 sidecars re-created across zone_2/zone_3 in a
+        # tree that assert_sidecars_current had just certified as clean
+        # ("0 sidecar(s), 4194 image(s) without one"), so the NEXT run would
+        # have imported priors nobody chose.
+        #
+        # If an image needs a calibration prior, add its family to
+        # cameras.json - the CLI path picks it up. Do not reintroduce a
+        # writer into the image tree.
 
         if not result.success:
             self.logger.error(f"RealityScan workflow failed for {input_folder}: "
@@ -491,10 +514,10 @@ class RealityScanAlignment(RSModule):
         except OSError as exc:
             self.logger.warning('Could not write %s: %s',
                                 align_fingerprint.FINGERPRINT_NAME, exc)
-        # (The calibration-sidecar repair ran above, on every exit path -
-        # capture_component_identities also regenerates each member's
-        # sidecar as it walks the harvest, so nothing is lost by the move.)
-        camera_registry.ensure_calibration_sidecars(input_folder)
+        # (No calibration-sidecar repair here either - see the block on the
+        # failure path above. Calibration priors are applied in-session by
+        # AlignZone via prior_groups.py; nothing may write XMPs into the
+        # image tree.)
 
         registered = 0
         for mp in manifest_paths:
@@ -589,13 +612,14 @@ class RealityScanAlignment(RSModule):
                     members.append(stem)
                     continue
                 members.append(entry[0])
-                # Regenerate the displaced calibration-only sidecar
-                camera = camera_registry.identify(entry[0])
-                if camera is not None:
-                    sidecar = os.path.splitext(entry[1])[0] + '.xmp'
-                    if not os.path.exists(sidecar):
-                        with open(sidecar, 'w', encoding='utf-8') as fh:
-                            fh.write(camera_registry.calibration_xmp(camera))
+                # NO SIDECAR REGENERATION (removed 2026-08-16). This was the
+                # THIRD writer of calibration XMPs into the image tree, and
+                # it survived the removal of the other two - so the earlier
+                # comment claiming the writer was eliminated was wrong while
+                # this line stood 170 lines below it. Calibration groups are
+                # applied in-session by AlignZone via prior_groups.py and
+                # focal length now travels in the flight log's FocalLength
+                # column; neither needs a file beside the image.
 
             bbox = component_manifest.bbox_from_flight_log(
                 flight_log_path or None, members)

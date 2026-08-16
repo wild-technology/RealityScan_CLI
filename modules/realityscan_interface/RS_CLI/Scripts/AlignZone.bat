@@ -19,9 +19,13 @@ setlocal
 ::   %5 scene name (used for the saved .rsproj)
 ::   %6 minimum component size in cameras (e.g. 50)
 ::
-:: Alignment settings ALWAYS come from Metadata\AlignmentParams.xml -
-:: never from instance defaults (an instance carries whatever the last
-:: GUI/CLI session set; aligning on unknown settings is not reproducible).
+:: SETTINGS CONTRACT (owner, 2026-08-15): Metadata\AlignmentParams.xml is
+:: AUTHORITATIVE for every setting it names - ALL of them are applied.
+:: Settings the file does NOT name are explicitly UNDEFINED: they keep
+:: whatever the instance holds, and this workflow makes no claim about
+:: them. The file names 35 of RealityScan's settings, not the whole
+:: namespace, so the previous "never from instance defaults" promise was
+:: never achievable - it described a guarantee this script cannot make.
 
 echo Reading default variables
 call "%~dp0SetVariables.bat"
@@ -107,27 +111,58 @@ if defined RS_PRIOR_GROUPS_FILE if not "%RS_PRIOR_GROUPS_FILE%" == "" (
 
 echo Applying alignment settings from AlignmentParams.xml
 :: -align takes NO parameters in RealityScan 2.x (a params xml passed to
-:: it is silently ignored), so apply the sfm*/lis* keys via -set first.
+:: it is silently ignored), so every key goes in via -set first.
 :: Delegated commands queue FIFO, so the sets execute before the align;
 :: they are instant and need no completion wait.
+::
+:: EVERY entry is applied, not just an sfm*/lis* subset. RealityScan
+:: serializes part of its own Alignment Settings dialog under OBFUSCATED
+:: numeric ids (s235l, s236l, s237l, s251l-s254l) instead of readable
+:: sfm* names. The old `findstr /b "sfm" "lis"` filter dropped those 7
+:: silently - 28 of 35 entries applied, the other 7 inherited from the
+:: instance while the header claimed otherwise (PRODUCT_READINESS gap,
+:: closed 2026-08-15).
+::
+:: The KEY gates the line, NEVER token 1. Token 1 is "  (entry key=" and
+:: the angle bracket in it is a cmd REDIRECTION operator, so echoing it
+:: sends the shell hunting for a file named "entry" and every setting is
+:: lost - 35 of 35, measured 2026-08-15 before this shipped. A key must
+:: instead start with a LETTER, which admits every real setting and
+:: rejects the "(Configuration id=" header, whose quoted token is a
+:: brace-led GUID. A non-empty value is required too. Comment lines carry
+:: no quotes at all and never reach token 2.
+::
+:: app* keys are REFUSED, not skipped. They are application-wide, persist
+:: into the user's own GUI session, and need per-instance approval
+:: (docs/AGENT_OPERATIONS.md rule 9). The one this workflow needs,
+:: appIncSubdirs, is set deliberately above. Silently dropping keys is the
+:: bug being fixed here, so an app* key fails closed rather than vanishing.
+::
 :: The count is the point. If the XML attribute order changes, or an
 :: RS_ALIGN_PARAMS variant yields no matching tokens, this loop applied
 :: ZERO settings and -align then succeeded on whatever the instance last
-:: held - contradicting this file own header, silently, with exit code 0
-:: (audit 2026-08-07). set /a inside the block is safe under plain
-:: expansion because the total is only READ after the loop.
+:: held - silently, with exit code 0 (audit 2026-08-07). set /a inside the
+:: block is safe under plain expansion because the total is only READ
+:: after the loop.
 set /a applied_settings=0
 for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%AlignmentParams%") do (
-    echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"sfm" /c:"lis" >nul
-    if not errorlevel 1 (
-        %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
-        set /a applied_settings+=1
+    if not "%%B" == "" (
+        echo %%A| %SystemRoot%\System32\findstr.exe /b /r "[a-zA-Z]" >nul
+        if not errorlevel 1 (
+            echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"app" >nul
+            if not errorlevel 1 (
+                echo ERROR: app-global key "%%A" found in the params file
+                goto :appGlobalKey
+            )
+            %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+            set /a applied_settings+=1
+        )
     )
 )
 if %applied_settings% EQU 0 goto :noSettings
 echo Applied %applied_settings% alignment setting(s) from %AlignmentParams%
 
-:: Flight log LAST, after the prior groups and the sfm* settings (owner
+:: Flight log LAST, after the prior groups and the params settings (owner
 :: sequence 2026-08-14: load images -> select by camera pattern -> set
 :: priors/params -> load flight log for geo data). It used to be imported
 :: BEFORE the settings loop, which meant the georeferencing priors were
@@ -262,10 +297,19 @@ echo Shutting down RealityScan instance %RS_INSTANCE% - NO save after identity l
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
+:appGlobalKey
+echo ERROR: %AlignmentParams% names an app-global (app*) setting.
+echo   app* keys are application-wide: they persist into the user's own
+echo   RealityScan GUI session, so they need per-instance approval
+echo   (docs/AGENT_OPERATIONS.md rule 9). Set them deliberately in this
+echo   workflow - appIncSubdirs already is - not through the params file.
+goto :fail
+
 :noSettings
 echo ERROR: ZERO alignment settings were applied from %AlignmentParams%.
-echo   The file exists but no sfm*/lis* key/value pair could be parsed from it.
-echo   Aligning on instance defaults is not reproducible - see this file header.
+echo   The file exists but no "entry key=... value=..." pair could be
+echo   parsed from it. The params file is authoritative for what it
+echo   names - applying none of it is not reproducible; see this header.
 goto :fail
 
 :fail

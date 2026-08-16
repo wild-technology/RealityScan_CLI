@@ -92,6 +92,90 @@ LESSON: verify converted imagery has actual content (a luminance std of
 0.1 is not an image) before spending a RealityScan run on it. Both failing
 aligns here reported success at every stage.
 
+## [NA168] 2026-08-16 - The flight-log FORMAT must be installed, or columns vanish silently
+
+`Metadata/FlightLogParams.xml` names its parser by GUID
+(`gpsLogFileFormat`). RealityScan resolves that GUID against
+`flightlogs.xml` **in its own installation directory**, never the repo
+copy. When the GUID is absent there the import does NOT fail: it falls
+back and DROPS the columns that format defined, exit code 0.
+
+Measured 2026-08-16: `grep -c B438A617 "<install>/flightlogs.xml"` = **0**.
+Our first ten columns coincide with stock `{97F08A22}`, so position and raw
+yaw/pitch/roll still landed and nothing looked wrong, while **columns
+10-12 (YawAccuracy, PitchAccuracy, RollAccuracy) were discarded on every
+import**, leaving `ifUseOriAcc=true` with nothing to consume. Every H2077 /
+H2082 / H2080 align to date ran on unweighted orientation priors.
+
+This is the SECOND occurrence. testing/PRIORS_DISTORTION_TEST_PLAN.md item
+1 records the same defect, hand-patched, with the note "verify it survives
+app updates". It did not - a RealityScan update reverted the file. A
+hand-run repair step is a fix with a half-life.
+
+FIXED, permanently: `modules/flightlog_format.py` asserts the configured
+GUID is registered in the INSTALL **before every import**, and SELF-HEALS
+by merging the repo's formats when it is not. Verified by reverting the
+install to stock and watching the guard detect, install and re-verify.
+Checking after an import cannot detect this, so it is checked before.
+
+RELATED FACT, and it retires the sidecars: the CSV flight-log reader's
+variable vocabulary is far wider than its shipped example formats suggest.
+Per `Help/en-US/tools/defineimportformat.htm` it also accepts
+**FocalLength, PrincipalU, PrincipalV, Skew, AspectRatio,
+RadialDistortion1-4, TangentialDistortion1-2** - i.e. a full per-image
+PRIOR CALIBRATION. New 14-column format `{D1F2A3B4-...}` adds FocalLength
+at index 13, sourced per camera from cameras.json. There is no CLI command
+that sets focal length (only `-setPriorCalibrationGroup` and
+`-setPriorLensGroup` exist), and the WCA units publish no EXIF focal tag,
+so before this the focal prior reached RealityScan by NO route at all once
+sidecars were removed.
+
+Registration EXPORT is customisable the same way (`calibration.xml`,
+`Help/.../defineexportformat.htm`). `-exportRegistration` runs against the
+SELECTED component, so `$ExportCameras` enumerates that component's members
+in one non-destructive pass, written to the OUTPUT tree - which is what
+finally makes the XMP identity harvest unnecessary.
+
+Two traps found while implementing:
+- `&tab;` is not a predefined XML entity, so a strict parser rejects both
+  files. The first draft SWALLOWED that ParseError and returned an empty
+  set, which reports a correctly installed format as missing.
+- An ElementTree round-trip reindents the whole stock file and rewrites
+  `&tab;` as `&#9;`. The installer splices at TEXT level instead.
+
+## [NA168] 2026-08-15 - Settings contract: the params XML is authoritative for what it names
+
+RealityScan serializes part of its own Alignment Settings dialog under
+OBFUSCATED numeric ids - `s235l`, `s236l`, `s237l`, `s251l`-`s254l` -
+instead of readable `sfm*` names. AlignZone's applier filtered on
+`findstr /b /c:"sfm" /c:"lis"`, so those 7 were silently skipped: **28 of
+35 entries applied**, the other 7 inheriting whatever the instance held,
+while the file header promised settings "never from instance defaults".
+
+Owner contract (2026-08-15): **settings named in the XML take priority and
+are ALL applied; settings it does not name are explicitly UNDEFINED** and
+inherit the instance. The old promise was never achievable anyway - the
+file names 35 settings, not RealityScan's whole namespace.
+
+Two traps found while implementing it:
+
+- **Never gate on token 1.** The obvious fix is to check that a line is an
+  `entry` line, but token 1 is `  (entry key=` and cmd reads that angle
+  bracket as a REDIRECTION operator: every `echo %%P| findstr` becomes a
+  hunt for a file named `entry`. Measured result: "The system cannot find
+  the file specified" x35 and TOTAL=0 - all 35 settings lost, worse than
+  the bug being fixed. Gate on the KEY (token 2) instead, requiring it to
+  start with a letter: that admits every real setting and rejects the
+  `(Configuration id="{GUID}")` header, whose quoted token is brace-led.
+- **Angle brackets in `echo` inside .bat** break the same way in error
+  messages - an `echo` describing the XML entry format silently redirected.
+
+`app*` keys now FAIL CLOSED (`:appGlobalKey`) rather than being skipped:
+they are application-wide, persist into the user's own GUI session, and
+need per-instance approval. `appIncSubdirs` is set deliberately in the
+workflow, not through the params file. Verified by running the parse
+standalone against the real XML: 35 of 35, GUID rejected. 484 tests pass.
+
 ## [NA168] 2026-08-14 - RETRACTED: "Division registers ZERO on rectilinear imagery"
 
 **This entry previously reported a controlled A/B showing Division at 0
