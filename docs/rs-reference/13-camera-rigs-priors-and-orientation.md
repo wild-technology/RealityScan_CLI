@@ -34,7 +34,7 @@ inline. Nothing in this class has been confirmed by running the application.
 
 1. [The prior model in one table](#1-the-prior-model-in-one-table)
 2. [XMP sidecars: the per-image metadata channel](#2-xmp-sidecars-the-per-image-metadata-channel)
-3. [Rigs: `xcr:Rig` / `RigInstance` / `RigPoseIndex`](#3-rigs-xcrrig--riginstance--rigposeindex)
+3. [Rigs: `xcr:Rig` / `RigInstance` / `RigPoseIndex`](#3-rigs-xcrrig--riginstance--rigposeindex) — incl. §3.5, the `.rcrx` requirement and importing an external solve as locked poses
 4. [Calibration groups vs distortion (lens) groups](#4-calibration-groups-vs-distortion-lens-groups)
 5. [Distortion models and the coefficient vector](#5-distortion-models-and-the-coefficient-vector)
 6. [Rotation conventions](#6-rotation-conventions)
@@ -55,6 +55,7 @@ Read these first; they are the facts most likely to be wrong in your head.
 | 1 | "prior set to Approximate … lens distortion as close to zero as possible" | that describes the *"No lens distortion" model*, not the `Approximate` **strength**; `Approximate` with no coefficients still solved k1 = −0.0524 over 2,204 cameras |
 | 2.4 | no naming rule given for `-exportXMPForSelectedComponent` | it writes **ordinal** `00000.xmp`, not `<stem>.xmp`; the command, not the scene, decides |
 | 3.1 | rigging is "only for inputs connected in a rig (e.g. individual `.lsp` files)" and "when using the laser scans" | the binary ships an image-based **Rig Creation Wizard**: "a set of cameras mounted together which are synchronously taking pictures" |
+| 3.2 | route 1 says XMP `xcr:Rig`/`RigInstance`/`RigPoseIndex` is a documented way to declare a rig | declaring `xcr:Rig` makes `-add` demand `rig<GUID>.rcrx` beside the images and the run dies without it; no `.rcrx` ships and the extension is in no Help topic (§3.5) |
 | 5.4 | a per-image lens **Model** field and `xcr:DistortionModel` imply per-camera models | `sfmDistortionModel` is **global and all-or-nothing**; 2,558 `brown3` sidecars came back `division` |
 | 6.3 | `appbasics/selectedinputs` + `tools/defineimportformat`: Yaw→Y, Pitch→X, Roll→Z | `tools/flightlogimport`, the shipped `EulerFormat="zyx"` templates, the staff post and the binary tooltip all say Yaw→**Z**, Pitch→**Y**, Roll→**X** in NED |
 | 9.3 | (repo record) `ifKGrp`/`ifKmode` are the Euler-order and Camera-mount carriers, and neither string is in any installed file | `ifKmode` does not exist in the binary at all (the real key is `ifKModel`); `ifKGrp` does; the rotation settings are `gpsLogEulerAnglesOrderYPR` / `gpsLogMount` |
@@ -487,6 +488,11 @@ undocumented `inpRig*` keys. [VERIFIED-by-absence: full-text search of
    same `xcr:Rig` type GUID for the whole rig, and pose data with the export mode set to
    *exact* (relative positions preserved) or *locked* (relative **and** absolute).
    [OFFICIAL: tools/xmpalign — the sample XMP is exactly this shape]
+
+   > **[CONTRADICTED 2026-08-23] Route 1 is NOT sufficient on its own.** Declaring
+   > `xcr:Rig` makes RealityScan demand a companion **rig file** beside the images and
+   > abort the run when it is absent — see §3.5. The sample XMP's shape is necessary but
+   > not sufficient.
 2. **CLI, per selection.** Select the images of one physical camera, then
    `-editInputSelection "inpPosePriorRelative=2"` (Exact) and a shared
    `-editInputSelection "inpPosePriorRelativeGroup=<name>"`. [OFFICIAL:
@@ -553,6 +559,53 @@ untested opportunity is real, and larger than the repo's own notes suggest:
 [OPEN — see Q6.]
 
 ---
+
+### 3.5 [VERIFIED 2026-08-23] `xcr:Rig` requires a `.rcrx` rig file — and what to do instead
+
+Measured on a two-camera stereo survey (Sony ILX-LR1 pair, 483 images), RealityScan
+2.2.0.119430.
+
+**The blocker.** Sidecars carrying `xcr:Rig` / `xcr:RigInstance` / `xcr:RigPoseIndex` in
+the documented attribute form, with 201 rig instances over 402 images, produced this on
+`-add`:
+
+```
+Missing rig file: '<image dir>\rig7F3A1C58-2E64-4B90-A1D7-6C50B93E28AA.rcrx'
+```
+
+i.e. `rig<GUID-without-braces>.rcrx` next to the imagery. The workflow then died at the
+next command (`-deselectAllImages`, rc=1, **0 images registered**). Reproduced on two
+arms, raw and preprocessed. No `.rcrx` file ships anywhere under the install tree and the
+extension appears in **no** Help topic, so its format is unknown and the image-rig route is
+effectively closed from the CLI until someone reverse-engineers it.
+**Do not declare `xcr:Rig` unless you can also supply the `.rcrx`.**
+
+**What works instead — hand RealityScan an external solve as locked poses.** Dropping the
+three rig attributes and writing pose sidecars only:
+
+| | best RealityScan self-alignment | COLMAP poses supplied via XMP |
+|---|---:|---:|
+| registered | 87 / 483 | **392 / 483** |
+| components | fragmented | **1** |
+| rig baseline (measured 225.425 mm) | 224.71 mm | **225.42 mm** |
+| pairs within 5 % of baseline | 53.8 % | **100 %** |
+
+The relative geometry the rig declaration would have imposed is already implied by the
+absolute poses, so nothing was lost by dropping it.
+
+**Token behaviour.** `xcr:PosePrior="locked"` and `xcr:PosePrior="exact"` gave *identical*
+results (392 registered, scale ratio 1.0000, zero residual against the supplied values),
+and **both are echoed back as `"initial"`** on re-export. The echo therefore cannot be used
+to confirm which strength was applied, and the mode-2/mode-3 token question stays open.
+
+**What survives the round-trip.** `Position`, `Rotation` and `FocalLength35mm` came back
+bit-for-bit. `CalibrationGroup` and `DistortionGroup` were reset to `-1`, and
+`DistortionModel` to `perspective` — the latter despite a global
+`sfmDistortionModel=Brown3`, which is consistent with §5.4.
+
+**What it does not prove.** RealityScan *adopted* the supplied poses rather than re-solving
+them, so none of this is independent corroboration of the external solve. It is a transport
+mechanism, not a validation.
 
 ## 4. Calibration groups vs distortion (lens) groups
 
@@ -633,6 +686,42 @@ k1 gap is the fisheye declaring itself. Because the JPGs are EXIF-identical, the
 are the *only* mechanism that could have produced the separation — this is independent
 confirmation that the sidecar grouping is honoured, not merely written.
 [VERIFIED: FINDINGS 2026-07-26, parsed from the PD-6 identity harvest]
+
+#### [VERIFIED 2026-08-23] Independent confirmation, using the DOCUMENTED `xcr:` form
+
+§4.4's proof used the `Camera:`-namespaced sidecars this repo writes (§2.3). The same
+conclusion now holds for the **documented `xcr:` attribute form**, measured on a different
+rig and by a different statistic — the within-eye *spread* of solved focal, which a real
+group must collapse:
+
+| Arm | Sidecars | Eye | Focal IQR | Focal p10–p90 | `CalibrationGroup` echoed back |
+|---|---|---|---:|---:|---|
+| `L_all_levers` | none | left | 1.175 | **10.432** | `-1` |
+| `L_all_levers` | none | right | 9.569 | **22.995** | `-1` |
+| `M_rig_all` | `xcr:CalibrationGroup` + `xcr:FocalLength35mm` | left | 0.173 | **0.228** | `2` |
+| `M_rig_all` | same | right | 0.105 | **0.182** | `3` |
+
+Supplying the group collapses the spread by 50–100× and RealityScan echoes a real group id
+instead of `-1`. **RealityScan RENUMBERS supplied groups** — 1 and 2 came back as 2 and 3 —
+so the grouping *structure* is preserved but the identifiers are not; never key anything off
+the id you wrote.
+
+A caution on method: an earlier reading of this same pair of arms attributed a
+registration-count difference (87 → 66) to the calibration priors. That difference is
+**inside the run-to-run noise** of this dataset (§ below) and proved nothing. The focal-spread
+statistic above is deterministic and is what the claim rests on.
+[VERIFIED: onr2 arms L_all_levers vs M_rig_all, 2026-08-23]
+
+#### [VERIFIED 2026-08-23] RealityScan alignment is not necessarily repeatable — check before attributing
+
+On this dataset, bit-identical reruns of the same configuration gave **26 vs 55** and
+**76 vs 61** registered images. Within-configuration spread (15–29) covered a third to a
+half of the entire range seen *across* thirteen different configurations (26–87). Any
+attribution of an effect smaller than that spread is unfounded.
+
+`-align` exposes no seed key in `AlignmentParams.xml`. **Run one replicate before ranking
+settings**, particularly on marginal, low-texture or near-degenerate geometry.
+[VERIFIED: onr2 arms A/A2 and E/E2, 2026-08-23]
 
 ### 4.4a Reading grouping back out — the direct check nobody used
 
@@ -859,6 +948,19 @@ Practical decision rules:
   [VERIFIED-by-arithmetic on the OFFICIAL sample]
 
 ### 6.2 Which frames `R` maps between — [INFERRED], strongly evidenced
+
+> **[2026-08-23] Do not try to settle this on nadir imagery.** An attempt to confirm the
+> world→camera reading empirically — comparing RealityScan's own solved rotations against an
+> external solve carried through a similarity fitted on camera centres — was **inconclusive
+> on three separate arms** (world→camera median 10.0° / 22.8° / 28.7°; camera→world 10.4° /
+> 22.4° / 39.6°; never cleanly separated). The reason is structural: a downward-looking
+> camera has a rotation matrix close to a 180° rotation, and a 180° rotation **is its own
+> inverse** (R = Rᵀ), so the two hypotheses are near-indistinguishable by construction.
+> Settling §6.2 empirically needs a dataset with substantial off-nadir variety.
+>
+> Note also that supplying poses and checking a rig baseline does **not** test this: the
+> baseline depends only on camera positions, so a transposed convention passes unnoticed.
+> [VERIFIED-as-inconclusive: onr2 arms L / E / C, 2026-08-23]
 
 **Claim: `R00..R22` (and `tX,tY,tZ`) form the world→camera pose, i.e. `X_cam = R·X_world +
 t`, with the camera frame x-right / y-down / z-forward (OpenCV-style) and the world frame

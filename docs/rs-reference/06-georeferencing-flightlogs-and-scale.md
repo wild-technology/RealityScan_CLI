@@ -303,6 +303,43 @@ what the H2023 scale collapse (§6.1) can be attributed to.
   Until then, **treat every orientation-prior attribution made on data older than
   2026-07-25 as unfounded in both directions.**
 
+#### [RESOLVED 2026-08-23 — Side A holds] What an unresolvable format GUID actually does
+
+The probe above was run, on a different dataset and by a different route: a
+prior-import cell on a 60-image stereo fixture, with `gpsLogFileFormat` naming a GUID
+deliberately absent from `flightlogs.xml`, censused from the saved `.rsproj` (which
+serialises the stored priors as `<input>` attributes) rather than from a report template.
+
+**RealityScan imports POSITION ONLY and silently drops orientation and every accuracy,
+returning exit code 0.** Measured against an otherwise identical cell whose GUID *was*
+installed:
+
+| | GUID installed | GUID absent |
+|---|---|---|
+| `absX/absY/absZ` (position) | 60/60 | **60/60** |
+| `absRX/absRY/absRZ` (orientation) | 60/60 | **0/60** |
+| `absuX…` / `absuRX…` (accuracies) | 60/60 | **0/60** |
+| `absPrior` | `pose` | **`registered`** |
+| exit code | 0 | **0** |
+
+So there is no error, no warning, and no non-zero result code — only the silent loss.
+**Side A is correct**: if `gpsLogFileFormat` named a GUID that was not in the installed
+`flightlogs.xml` at run time, no YPR and no per-image accuracy reached the solver, and
+difference (c) in the §6.1 attribution evaporates.
+
+**Mechanical check, cheaper than any report template** — grep the saved project:
+`absPrior="registered"` together with absent `absu*` attributes means the format GUID did
+not resolve. `absPrior="pose"` with `absu*` present means it did.
+[VERIFIED: onr2 stereo fixture, RealityScan 2.2.0.119430, 2026-08-23]
+
+**This failure is live, not historical.** On the machine used for that session the
+installed `flightlogs.xml` had been hand-edited to `{B438A617-2424-5A24-C1B7-58920F28345A}`
+while `RS_CLI/Metadata/FlightLogParams.xml` still named
+`{B438A617-2434-5A24-C1B7-58980F28345A}` — two hex digits different in two places. Every
+import in that window lost its orientation priors silently. §9 item 5 should therefore
+check that the params GUID and the installed GUID **match each other**, not merely that
+some `B438A617` block is present.
+
 ### 2.4 The full `<Variable>` vocabulary
 
 Every element name accepted inside `<parser>` for `reader="RealityScan.Import.CSVFlightLog"`
@@ -329,12 +366,31 @@ Every element name accepted inside `<parser>` for `reader="RealityScan.Import.CS
 | `RadialDistortion1` … `RadialDistortion4` | prior radial distortion coefficients |
 | `TangentialDistortion1` / `TangentialDistortion2` | prior tangential distortion coefficients |
 
-**A flight log can therefore carry calibration priors as well as pose priors.** None of the
-14 shipped formats uses the calibration variables; a custom `<format>` with `FocalLength`,
-`PrincipalU/V`, `AspectRatio`, `Skew` and the distortion coefficients would let one text
-file deliver per-image intrinsics, which is otherwise only possible through per-image XMP
-sidecars. This has never been exercised here. [OFFICIAL for the vocabulary]
-[OPEN — §9 item 6.] Note the read-back exists: `$(inputF)`, `$(inputK1..K4)`,
+**A flight log can therefore carry calibration priors as well as pose priors** — per the
+vocabulary. [OFFICIAL for the vocabulary]
+
+#### [CONTRADICTED 2026-08-23] `FocalLength` in a flight log is accepted and then ignored
+
+Exercised on a 60-image fixture with a custom 14-column `<format>` declaring
+`<FocalLength index="13"/>`, the column populated with COLMAP-solved 35 mm-equivalent
+focals (16.5836 mm / 19.8072 mm for the two eyes):
+
+- the import succeeds and positions/orientation/accuracies all land normally;
+- **no focal prior is stored.** The saved `.rsproj` carries no `FocalLength35mm`, no
+  `FocalPrior`, no `PrincipalPointU` and no `DistortionModel` attribute on any of the 60
+  `<input>` elements, and the strings `16.58` / `19.80` appear **nowhere in the file**;
+- corroborated independently by the solve: the same numbers delivered through a flight log
+  leave the solved focal at 20.0 / 28.4 mm, while the same numbers delivered through XMP
+  (`xcr:FocalLength35mm` + `xcr:CalibrationGroup`) pull it onto 16.5 / 19.8 mm.
+
+The Help lists `FocalLength` as an available flight-log variable, so this is a
+documentation-versus-behaviour contradiction, not a syntax error on our side.
+**Per-image intrinsics must go through XMP sidecars; the flight log cannot deliver them.**
+[VERIFIED: onr2 stereo fixture + full-dataset arms, RealityScan 2.2.0.119430, 2026-08-23]
+
+Only `FocalLength` was exercised. `PrincipalU/V`, `Skew`, `AspectRatio` and the distortion
+coefficients were not, and are assumed to share the behaviour but are **not** measured.
+[OPEN — the remaining calibration variables.] Note the read-back exists: `$(inputF)`, `$(inputK1..K4)`,
 `$(inputT1/T2)`, `$(inputLensModel)` and `$(inputCalibrationPriorType)` report what arrived
 (§7), so the probe is self-checking.
 
@@ -1965,12 +2021,13 @@ Each item states the question and the cheapest probe that answers it.
    after any update or repair install, `findstr /c:"B438A617" "C:\Program Files\Epic Games\RealityScan_2.2\flightlogs.xml"`
    — one command, must be in the post-update checklist. (§2.3)
 
-6. **Can a flight log deliver per-image calibration priors?** The reader's variable vocabulary
-   includes `FocalLength`, `PrincipalU/V`, `Skew`, `AspectRatio`, `RadialDistortion1..4`,
-   `TangentialDistortion1..2`, but no shipped format uses them. Probe: add a custom `<format>`
-   with those columns, import on smoke, and read `inputF` / `inputK1` back through
-   `$ExportImagePriors`. Would replace the per-image XMP calibration sidecar route entirely if
-   it works. (§2.4)
+6. ~~**Can a flight log deliver per-image calibration priors?**~~ **ANSWERED 2026-08-23 —
+   NO, at least for `FocalLength`.** A custom 14-column format declaring
+   `<FocalLength index="13"/>` imports without error and stores no focal prior at all: the
+   saved `.rsproj` has no `FocalLength35mm` / `FocalPrior` attribute and does not contain
+   the supplied values anywhere. It does **not** replace the XMP calibration sidecar route.
+   The remaining calibration variables (`PrincipalU/V`, `Skew`, `AspectRatio`, distortion)
+   were not exercised and stay open. (§2.4)
 
 7. **Does the unset project coordinate system degrade anything?** This repo never calls
    `-setProjectCoordinateSystem`, contrary to Epic's stated import procedure. Probe:

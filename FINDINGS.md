@@ -2389,3 +2389,51 @@ MERGE ATTEMPT's snapshot, and which artifact.
   pointer makes the stale rule load-bearing for future sessions.
   (2026-08-04) OPEN — needs an owner decision: annotate the notes in place,
   or repoint CLAUDE.md hard rule 9 at `docs/rs-reference/`.
+
+## 2026-08-23 — onr2 stereo rig (Sony ILX-LR1 pair, 483 images), RealityScan 2.2.0.119430
+
+Source for all of these: a 17-arm session driving RealityScan from the CLI on an external
+stereo survey, censused from saved `.rsproj` files and exported XMP rather than from exit
+status. Details and tables landed in `docs/rs-reference/` (05 §2.3, 06 §2.3/§2.4/§9-6,
+13 §3.2/§3.5/§4.4/§6.2, README fast path).
+
+- **Unresolvable `gpsLogFileFormat` GUID → position-only import, silently, exit 0.**
+  Settles the §06 [CONTRADICTED] Side A / Side B conflict in favour of **Side A**: if the
+  GUID named in `FlightLogParams.xml` is absent from the installed `flightlogs.xml`, no
+  orientation and no per-image accuracy reaches the solver. Control cell vs an identical
+  cell with the GUID installed: position 60/60 both; orientation 60/60 vs **0/60**;
+  accuracies 60/60 vs **0/60**; `absPrior` `pose` vs **`registered`**; exit code 0 both.
+  Mechanical check: grep the saved `.rsproj` for `absPrior="registered"` + missing `absu*`.
+- **This failure was live on the session machine.** Installed `flightlogs.xml` had been
+  hand-edited to `{B438A617-2424-…-58920F…}` while `RS_CLI/Metadata/FlightLogParams.xml`
+  still named `{B438A617-2434-…-58980F…}`. §9 item 5's post-update check should compare the
+  two GUIDs, not just look for a `B438A617` block.
+- **Flight-log `FocalLength` is accepted and ignored** — closes §06 §9 item 6 (negative).
+  No `FocalLength35mm` / `FocalPrior` in the project, supplied values absent from the whole
+  file, and the solve ignores them; the same numbers via XMP move the solve onto them.
+- **`xcr:Rig` requires a companion `rig<GUID>.rcrx` beside the images**; without it `-add`
+  logs "Missing rig file" and the run dies with 0 registered. Reproduced 2/2. No `.rcrx`
+  ships; the extension is in no Help topic. XMP alone cannot declare an image rig.
+- **Transporting an external solve as locked poses works**: 392/483 in ONE component vs 87
+  for the best self-alignment, rig baseline 225.42 mm against a measured 225.425 mm, 100 %
+  of pairs within 5 %. `PosePrior` `locked` and `exact` behave identically and **both echo
+  back as `initial`**. `Position`/`Rotation`/`FocalLength35mm` survive bit-for-bit;
+  `CalibrationGroup`/`DistortionGroup` reset to `-1` and `DistortionModel` to `perspective`.
+  Note this is transport, not validation — RealityScan adopted the poses, it did not re-solve.
+- **XMP calibration grouping in the documented `xcr:` attribute form is honoured**:
+  supplying `CalibrationGroup` collapses within-eye solved-focal spread from 10.4/23.0
+  (p10–p90) to 0.23/0.18, and RealityScan echoes a real group id. It **renumbers** groups
+  (1,2 → 2,3). Independent of §13 4.4's `Camera:`-form proof; says nothing about that form.
+- **RealityScan 2.2 writes `xcr:Rotation` as a child ELEMENT**, not an attribute — contra
+  Epic's sample and §05 2.3's "everything except Position is an attribute". Parsers must
+  alternate. The reader nonetheless *accepts* attribute-form `Rotation` (partially answers
+  §05 Q4).
+- **Alignment is not repeatable on marginal geometry.** Bit-identical reruns: 26 vs 55, and
+  76 vs 61 registered. Within-configuration spread (15–29) covered a third to a half of the
+  range across thirteen configurations (26–87). `-align` exposes no seed key. An earlier
+  ranking of distortion model / CLAHE / overlap / prior settings from this session was
+  withdrawn on this basis — **run a replicate before attributing anything**.
+- **§13 6.2 cannot be settled on nadir imagery.** A near-nadir camera's rotation is close to
+  a 180° rotation, which is its own inverse (R = Rᵀ), so world→camera and camera→world are
+  near-indistinguishable; three arms gave inconclusive separation. A rig-baseline check does
+  not test it either, since the baseline depends only on positions.

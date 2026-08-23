@@ -240,9 +240,56 @@ only, so it silently sees zero cameras in a directory of legacy attribute-form s
 and exits on the `MIN_CAMERAS = 3` guard.
 [VERIFIED-by-inspection: poses2flightlog.py, 2026-08-04]
 
-Whether the *reader* accepts element form for attributes other than `Position` (e.g.
-`<xcr:FocalLength35mm>16.0</xcr:FocalLength35mm>`) is **not established**. This matters
-directly — see §8. [OPEN — Q4]
+#### [CONTRADICTED 2026-08-23] RealityScan 2.2 writes `xcr:Rotation` as an ELEMENT too
+
+The rule above — "everything except `Position` is an attribute" — holds for Epic's sample
+(`xcr:Version="3"`), but **not** for what RealityScan 2.2.0.119430 actually writes.
+Sidecars produced by `-exportXMP` in 15 arms of a 2026-08-23 session are
+`xcr:Version="4"` and put **both** `Position` and `Rotation` in element form:
+
+```xml
+<rdf:Description xmlns:xcr="..." xcr:Version="4" xcr:ExportCoordinateSystemType="3"
+    xcr:PosePrior="initial" xcr:Coordinates="absolute" xcr:DistortionModel="perspective"
+    xcr:FocalLength35mm="16.5836" ...>
+  <xcr:Position>0.440450977 -1.629441201 -0.349711727</xcr:Position>
+  <xcr:Rotation>-0.536007698 -0.843529554 ... -0.995891934</xcr:Rotation>
+</rdf:Description>
+```
+
+A parser that expects `xcr:Rotation="..."` as an attribute therefore reads **zero
+rotations** from current sidecars, the same class of silent-zero bug §2.3 already records
+for `Position` in `poses2flightlog.py`. The safe alternation for both:
+
+```python
+POS_RE = re.compile(r'<xcr:Position>([^<]+)</xcr:Position>|xcr:Position="([^"]+)"')
+ROT_RE = re.compile(r'<xcr:Rotation>([^<]+)</xcr:Rotation>|xcr:Rotation="([^"]+)"')
+```
+
+[VERIFIED: onr2 arms A_opk / L_all_levers / E_overlap_high, sidecars written by
+RealityScan with no input sidecar present, 2026-08-23]
+
+#### [Q4 — PARTIALLY ANSWERED 2026-08-23] the reader DOES accept attribute form for `Rotation`
+
+Q4 asked whether the *reader* accepts element form for attributes other than `Position`.
+The converse direction is now settled for `Rotation`: sidecars written by hand with
+`xcr:Rotation="r00 r01 ... r22"` as an **attribute** and `<xcr:Position>` as an **element**
+were parsed correctly — RealityScan built a single 392-camera component from them and
+echoed the rotations back unchanged to twelve decimal places. So the reader is tolerant of
+attribute-form `Rotation` even though its own writer uses element form.
+
+Still open: element form for the *other* attributes (`FocalLength35mm`, `CalibrationGroup`,
+…), which was not exercised — every sidecar in that session wrote those as attributes.
+[VERIFIED for `Rotation`: onr2 arm N_colmap_locked, 2026-08-23] [OPEN — Q4, remainder]
+
+#### [VERIFIED 2026-08-23] a rewritten sidecar comes back in a different form than it went in
+
+When RealityScan re-exports over a sidecar that was supplied to it, the forms are not
+preserved: input `<xcr:Position>` element + `xcr:Rotation` attribute came back as
+`xcr:Position` **attribute** + `<xcr:Rotation>` **element**. Do not assume a round-trip
+preserves shape — only values. Values themselves survived bit-for-bit
+(`Position`, `Rotation`, `FocalLength35mm`), while `CalibrationGroup` and
+`DistortionGroup` were reset to `-1` and `DistortionModel` to `perspective` despite a
+global `sfmDistortionModel=Brown3`.
 
 ### 2.4 Encoding
 
