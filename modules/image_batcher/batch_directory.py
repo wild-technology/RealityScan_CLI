@@ -861,13 +861,34 @@ class BatchDirectory(RSModule):
         copied = 0
         missing = 0
 
+        # Flight-log rows may carry ABSOLUTE paths (export_rs_flightlog
+        # --path-mode=absolute), while the on-disk index above is keyed by
+        # bare lowercase basename - so resolution is by BASENAME. Two
+        # different paths collapsing to one basename would then silently
+        # copy the same indexed file under both rows' identities; refuse
+        # loudly instead (colmap_studio FINDINGS C-20260827-06).
+        claimed: dict[str, str] = {}
         for file in files:
-            file_path = by_name.get(file.lower())
+            raw = str(file)
+            key = os.path.basename(raw).lower()
+            prior = claimed.setdefault(key, raw)
+            if prior.lower() != raw.lower():
+                raise ValueError(
+                    f"flight-log basename collision: '{prior}' and '{raw}' "
+                    f"both map to '{key}' - basename lookup cannot tell "
+                    "them apart (C-20260827-06)")
+
+        for file in files:
+            # Basename-normalized row name: the lookup key, the copied
+            # file's name, and the sidecar stem (an absolute row must
+            # never be os.path.join'd - it would swallow camera_dir).
+            name = os.path.basename(str(file))
+            file_path = by_name.get(name.lower())
 
             if file_path is None:
                 missing += 1
                 # Check if it's an extension mismatch
-                base_name = os.path.splitext(file)[0]
+                base_name = os.path.splitext(name)[0]
                 other_ext = by_stem.get(base_name.lower())
                 if self._missing_example is None:
                     self._missing_example = file
@@ -878,11 +899,11 @@ class BatchDirectory(RSModule):
                 continue
             copied += 1
 
-            camera_subfolder = self.__determine_camera_subfolder(file, file_path)
+            camera_subfolder = self.__determine_camera_subfolder(name, file_path)
             camera_dir = os.path.join(batch_folder_dir, camera_subfolder)
             os.makedirs(camera_dir, exist_ok=True)
 
-            output_path = os.path.join(camera_dir, file)
+            output_path = os.path.join(camera_dir, name)
             if not os.path.exists(output_path):
                 shutil.copy(file_path, output_path)
 
@@ -891,7 +912,7 @@ class BatchDirectory(RSModule):
             # that the same as the parameter being absent/off)
             prior_param = (self.params or {}).get('batch_xmp_priors')
             if prior_param is not None and prior_param.get_value():
-                self.__generate_xmp_sidecar(file, camera_dir, camera_subfolder)
+                self.__generate_xmp_sidecar(name, camera_dir, camera_subfolder)
 
         return copied, missing
 

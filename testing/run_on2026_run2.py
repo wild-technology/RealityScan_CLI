@@ -352,7 +352,17 @@ def stage_features():
         abort("no aligned components found")
     nav = feature_merge.load_nav_positions(NAV)
     assigned = feature_merge.assign_components(comps, nav, boxes, default)
-    for c in assigned.get("_unassigned", []):
+    unassigned = assigned.get("_unassigned", [])
+    if unassigned and len(unassigned) == len(comps):
+        # Every component "no nav extent" means the nav keys match NO
+        # component member (name-vs-path mismatch, wrong log, ...): the
+        # feature plan would be EMPTY and the chain could still reach
+        # DONE having delivered nothing (C-20260827-06). Refuse.
+        abort(f"stage F: ALL {len(comps)} component(s) have no nav "
+              f"extent - nav keys from {NAV} match no component member "
+              "(filename-vs-path mismatch?); refusing to write an empty "
+              "feature plan (C-20260827-06)")
+    for c in unassigned:
         log(f"WARNING: component {c['key']} has no nav extent - "
             "NOT delivered under any feature; investigate")
     plans = {}

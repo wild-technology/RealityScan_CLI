@@ -361,7 +361,7 @@ class GeoreferenceImages(RSModule):
 
         RealityScan conventions (standard aerial photogrammetry):
         - Yaw: 0=North, 90=East, 180=South, 270=West
-        - Pitch: 0=nadir (straight down), 90=horizontal, -90=straight up
+        - Pitch: 0=nadir (straight down), 90=horizontal, 180=straight up
         - Roll: 0=level, positive=right wing down
         """
         # Yaw: Convert magnetic heading to true north, then use directly as RC yaw
@@ -383,6 +383,9 @@ class GeoreferenceImages(RSModule):
             rc_pitch = None
 
         # Roll: Pass through directly (same convention)
+        # NOTE: UNRESOLVED 180-deg roll-convention dispute with colmap_studio's
+        # export_rs_flightlog.py (level camera reads roll 180 there vs 0 here);
+        # see colmap_studio FINDINGS C-20260827-03 before changing this.
         rc_roll = roll_vehicle
 
         return rc_yaw, rc_pitch, rc_roll

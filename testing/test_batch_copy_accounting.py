@@ -407,3 +407,55 @@ def test_a_single_zone_directory_is_still_found(tmp_path):
     module = _module_with_input(tmp_path)
     got = module._BatchDirectory__get_flight_log_path()
     assert got and os.path.basename(got) == 'flight_log_53N_UTM.txt'
+
+
+# ---------------- absolute-path flight-log rows (C-20260827-06)
+
+def test_absolute_path_rows_resolve_by_basename(tmp_path):
+    """export_rs_flightlog --path-mode=absolute names the canonical pool
+    PATH; the on-disk index is keyed by bare lowercase basename, so the
+    raw row used to match nothing and every image went 'missing'."""
+    source = tmp_path / 'src'
+    source.mkdir()
+    (source / 'C231C0000.jpg').write_bytes(b'j')
+    module = _module()
+    dest = tmp_path / 'zone_1'
+    dest.mkdir()
+    copied, missing = module._BatchDirectory__copy_files(
+        str(source), str(dest), ['M:\\pool\\cammid\\C231C0000.jpg'])
+    assert (copied, missing) == (1, 0)
+    # The copy lands under the row's BASENAME - an absolute row must
+    # never be joined onto the camera dir (os.path.join would swallow it).
+    landed = [p for p in dest.rglob('*.jpg')]
+    assert [p.name for p in landed] == ['C231C0000.jpg']
+    assert str(dest) in str(landed[0])
+
+
+def test_two_paths_one_basename_is_a_loud_error_listing_both(tmp_path):
+    """Basename lookup cannot tell M:\\x\\a.jpg from M:\\y\\a.jpg - a
+    silent winner would copy one file under both rows' identities."""
+    source = tmp_path / 'src'
+    source.mkdir()
+    (source / 'a.jpg').write_bytes(b'j')
+    module = _module()
+    dest = tmp_path / 'zone_1'
+    dest.mkdir()
+    with pytest.raises(ValueError) as exc:
+        module._BatchDirectory__copy_files(
+            str(source), str(dest), ['M:\\x\\a.jpg', 'M:\\y\\a.jpg'])
+    msg = str(exc.value)
+    assert 'M:\\x\\a.jpg' in msg and 'M:\\y\\a.jpg' in msg
+
+
+def test_case_variant_spellings_of_one_path_are_not_a_collision(tmp_path):
+    """Windows paths are case-insensitive: two spellings of the SAME file
+    must not trip the collision guard."""
+    source = tmp_path / 'src'
+    source.mkdir()
+    (source / 'a.jpg').write_bytes(b'j')
+    module = _module()
+    dest = tmp_path / 'zone_1'
+    dest.mkdir()
+    copied, missing = module._BatchDirectory__copy_files(
+        str(source), str(dest), ['M:\\x\\a.jpg', 'M:\\X\\A.JPG'])
+    assert missing == 0

@@ -20,10 +20,42 @@ import os
 from dataclasses import dataclass, field
 
 
+def _basename_key(name) -> str:
+    """Lowercase bare basename - the match key for an image row. Flight
+    logs may name images by ABSOLUTE path (export_rs_flightlog
+    --path-mode=absolute) while component manifests carry basenames;
+    exact-string matching made every such component "no nav extent"
+    (colmap_studio FINDINGS C-20260827-06). Lowercased because Windows
+    filesystems are case-insensitive (the batcher's convention)."""
+    return os.path.basename(str(name)).lower()
+
+
+def _normalize_nav(nav: dict) -> dict:
+    """nav re-keyed by lowercase basename, refusing loudly when two
+    DIFFERENT source paths collapse to one basename - basename matching
+    cannot tell them apart (C-20260827-06)."""
+    out: dict = {}
+    raw_of: dict = {}
+    for raw, pos in nav.items():
+        key = _basename_key(raw)
+        prior = raw_of.setdefault(key, str(raw))
+        if prior.lower() != str(raw).lower():
+            raise ValueError(
+                f"nav basename collision: '{prior}' and '{raw}' both map "
+                f"to '{key}' - basename matching cannot tell them apart "
+                "(C-20260827-06)")
+        out.setdefault(key, pos)
+    return out
+
+
 def load_nav_positions(flight_log_path: str) -> dict:
     """Image basename -> (x, y, z) from a 13/4-column ;-separated flight
-    log (header ignored). Rows without a numeric position are skipped."""
+    log (header ignored). Rows without a numeric position are skipped.
+    Rows naming an absolute path (--path-mode=absolute logs) are keyed by
+    their basename (case preserved); two different paths sharing a
+    basename raise loudly (C-20260827-06)."""
     nav: dict = {}
+    raw_of: dict = {}
     with open(flight_log_path, encoding="utf-8-sig") as fh:
         first = True
         for line in fh:
@@ -38,17 +70,28 @@ def load_nav_positions(flight_log_path: str) -> dict:
             if len(parts) < 4:
                 continue
             try:
-                nav[parts[0].strip('"')] = (float(parts[1]), float(parts[2]),
-                                            float(parts[3]))
+                pos = (float(parts[1]), float(parts[2]), float(parts[3]))
             except ValueError:
                 continue
+            raw = parts[0].strip('"')
+            key = os.path.basename(raw)
+            prior = raw_of.setdefault(key.lower(), raw)
+            if prior.lower() != raw.lower():
+                raise ValueError(
+                    f"nav-log basename collision: '{prior}' and '{raw}' "
+                    f"both map to '{key.lower()}' - basename matching "
+                    "cannot tell them apart (C-20260827-06)")
+            nav[key] = pos
     return nav
 
 
 def component_extent(members: list, nav: dict) -> dict | None:
     """3D bbox + centroid of a component's member cameras. None when no
-    member has a nav position (an extent must never be invented)."""
-    pts = [nav[m] for m in members if m in nav]
+    member has a nav position (an extent must never be invented).
+    Members and nav keys are matched by lowercase basename, so an
+    absolute-path-keyed nav log still resolves basename members."""
+    nav = _normalize_nav(nav)
+    pts = [nav[k] for k in (_basename_key(m) for m in members) if k in nav]
     if not pts:
         return None
     xs, ys, zs = zip(*pts)
