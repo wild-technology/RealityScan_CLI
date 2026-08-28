@@ -74,6 +74,11 @@ echo Reading default variables
 call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
 set "AlignmentParams=%Metadata%\AlignmentParams.xml"
+:: Campaign override, same contract as AlignZone.bat (run3 2026-08-28):
+:: without this, grow re-aligns applied the REPO template's settings
+:: (Division/Ultra/50k) under a campaign that aligned with different
+:: science parameters - a recorded incident class.
+if defined RS_ALIGN_PARAMS if not "%RS_ALIGN_PARAMS%" == "" set "AlignmentParams=%RS_ALIGN_PARAMS%"
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"

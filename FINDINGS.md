@@ -2966,3 +2966,74 @@ were measured on an M5 MacBook Pro (no CUDA) unless stated.
   pipeline's FINDINGS conventions and its RS pain points (component membership opacity, no
   incremental-against-locked-poses, census-not-exit-codes) are that engine's requirements
   spec via `docs/RS_CLI_DIGEST.md`. [MAGIC] (2026-08-12) ESTABLISHED
+
+- **RS 2.2 ypr convention PINNED; roll passthrough VINDICATED; exportRegistration works
+  headless with a minimal hand-written params XML** (rs_probe2 discriminating experiment,
+  2026-08-27, RS 2.2.0.119430; full record: colmap_studio FINDINGS C-20260827-10, evidence
+  M:\rs_probe2\). RS yaw/pitch/roll = ZYX (NED) Euler: R_wc = T_ned*Rz(y)*Ry(p)*Rx(r)*C0
+  (C0 = nadir camera, image top North); CSV ypr equals the canonical extraction of RS's own
+  XMP matrix to 2e-11 deg over 120 cams in two frames. Consequences here: (a)
+  modules/georeference roll passthrough (0=level) is CORRECT - do not "fix" it toward the
+  old colmap_studio exporter, which was the wrong side and has been rewritten; (b) RS's
+  gimbal pole is pitch 90 (horizontal) - near-horizontal ROV imagery needs 1/|cos p|
+  orientation-accuracy widening, and RS-exported yaw/roll near pitch 90 smear ~60 deg for
+  ~2 deg pose deltas (yaw-roll stays tight) - do not QA solved yaw/roll columns raw there;
+  (c) align-path orientation priors are INERT even at sfmCameraPriorWeightOrientation 50 /
+  1-deg accuracies (canonical vs roll+180 cells: 60/60 both, 1.62 vs 1.84 deg median vs
+  truth) - replicates the 2026-08-07 inertness finding with the sfm block pinned; (d) CLI
+  mechanics: -exportRegistration needs ONLY <entry key="calexFileFormatId" value="{GUID}"/>
+  in a hand-written params XML (Configuration id attribute unvalidated; no GUI-saved file
+  needed - narrows the old "blocks forever" note); format {121D2018-...} (geoYaw, zyx) and
+  {0CA18733-...} (yaw) emit byte-identical angles; export on a 2-camera non-georeferenced
+  component fails 0x80004005; -update after a 2-row flight-log import fails 2181103712;
+  registration-export format GUIDs live in the install dir calibration.xml. (2026-08-27)
+  ESTABLISHED
+
+- **[ON2026] Pool-layout aligns were DEAD at the main.py layer; root cause of the
+  2026-08-09 union-wave abort** (run3 drive-start audit, 2026-08-28). The union wave's
+  first pool align died in 0.5 min with "No images found under ...pool\zones\zone_1":
+  RealityScanAlignment.queue_folder_to_process refuses any zone folder without image
+  files, and a pool zone holds only .imagelist + flight log. AlignZone.bat's
+  RS_ALIGN_POOL_DIR branch and the interface's hygiene_root both supported pool mode;
+  the QUEUEING guard predating them did not (smoke test f9b639e drove the .bat
+  directly and missed the main.py path). FIX (uncommitted, run3): accept the folder
+  when RS_ALIGN_POOL_DIR is set and it carries a .imagelist. Lesson: smoke the FULL
+  driver entry path, not the workflow layer alone. (2026-08-28) ESTABLISHED
+
+- **[ON2026] GrowZone.bat ignored RS_ALIGN_PARAMS** — grow re-aligns applied the repo
+  Metadata template (Division/Ultra/50k) regardless of campaign settings; AlignZone/
+  CalibCellAlign honor the override, GrowZone.bat lacked the line (found by reading
+  the settings-application block during run3 driver build; would have re-aligned
+  Brown3/High/20k zones under Division/Ultra/50k with exit 0). FIX (uncommitted):
+  same one-line override as AlignZone.bat. Also grow at pool layout needs a
+  restricted image universe: new grow_zone.py --zone_imagelist confines census/
+  orphans to zone members (otherwise every other pool image is an "orphan" and each
+  component pass issues tens of thousands of -selectImage calls). (2026-08-28)
+  ESTABLISHED
+
+- **[ON2026] run3 campaign facts** (2026-08-28): dive codes verified from the raw
+  expedition trees = RH0041 (06-21) + RH0042 (06-22) — run2's deliverable code
+  "RH2042" was a misspelling (PRODUCT_READINESS 19 verification done). Deliverable
+  code of record: ON2026_RH0041_RH0042. Calibration content note: the COLMAP-solved
+  PINHOLE intrinsics in ON2026_colmap2 sparse\0 are numerically IDENTICAL to the
+  manufacturer resized-corrected values (the solve fixed intrinsics), i.e. identical
+  to ladder arm C's collapsed content — run3 delivers them per-eye-grouped via the
+  validated -addImageWithCalibration channel under Brown3/0.5 m accuracies, gated by
+  a 30-pair fixture probe before any zone align. (2026-08-28) ESTABLISHED
+
+- **[ON2026] run3 fixture gate FIRED: calibration-value priors corrupt METRIC SCALE
+  under Brown3 where they no longer collapse registration; groups-only remains the
+  best arm; per-eye groups survive on NO channel** (run3 discriminating cells,
+  2026-08-28, RS3, 30-pair fixture, Brown3/High/20k + Euler log 0.5 m/10 deg, all
+  arms 60/60 + 1 component): control baseline +0.21% of the 0.16970 m rig oracle;
+  groups-only (ladder-B shape) -0.09%; full COLMAP-solved values -2.55% with solved
+  focal STEERED 24.23 -> 25.4-25.9 f35 (away from BOTH the prior and RS's own
+  free-solve ~23.13). The "solved" values are numerically identical to the
+  manufacturer resized-corrected values of collapsed ladder arm C (COLMAP had
+  intrinsics fixed). Census signatures pinned: value XMPs harvest CalibrationGroup
+  "-1" per image (ladder C identical); groups-only XMPs harvest ONE merged group id
+  (ladder B "7", run3 "2") - delivered per-eye ids never survive. RS-vs-COLMAP
+  free-solved focal disagree by -4.6% on this dome-port imagery. Campaign stopped at
+  the gate per the owner rule; arm switch is one word in
+  M:\ON2026_run3\config\calib_arm.json. Evidence:
+  M:\ON2026_run3\_agent\fixture_cells\cells_verdict.json. (2026-08-28) ESTABLISHED

@@ -343,6 +343,15 @@ def main() -> int:
     parser.add_argument('--selection_cmds', choices=('editsel', 'legacy'), default=None,
                         help='editsel: -editInputSelection inpEnabled/aligFeaturesMode '
                              '(default); legacy: -enableAlignment/-setFeatureSource')
+    parser.add_argument('--zone_imagelist', default=None,
+                        help='POOL layout only: the zone\'s .imagelist of '
+                             'canonical pool paths. Restricts the image '
+                             'universe (census/orphans) to the ZONE\'s '
+                             'members when --images_root is the shared '
+                             'pool - without this, every other pool image '
+                             'counts as an "orphan" and component passes '
+                             'try to enable tens of thousands of '
+                             'non-zone images (run3 2026-08-28).')
     parser.add_argument('--flight_log', default=None,
                         help='zone flight log to RE-IMPORT at every grow step '
                              '(owner directive 2026-08-08: the flight log is '
@@ -427,6 +436,28 @@ def main() -> int:
         os.environ.pop('RS_GROW_LOCK_ANCHOR', None)
 
     basename_index, stem_index = build_image_index(images_root)
+    if args.zone_imagelist:
+        if not os.path.isfile(args.zone_imagelist):
+            logger.error('--zone_imagelist not found: %s', args.zone_imagelist)
+            return 1
+        members = set()
+        with open(args.zone_imagelist, encoding='utf-8') as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    members.add(os.path.basename(line).lower())
+        before = len(basename_index)
+        basename_index = {b: p for b, p in basename_index.items()
+                          if b in members}
+        stem_index = {s: b for s, b in stem_index.items()
+                      if b in basename_index}
+        logger.info('zone imagelist restricts the image universe: '
+                    '%d of %d pool images', len(basename_index), before)
+        missing_members = members - set(basename_index)
+        if missing_members:
+            logger.warning('%d imagelist member(s) not found under '
+                           '%s (e.g. %s)', len(missing_members), images_root,
+                           sorted(missing_members)[:3])
     all_basenames = set(basename_index)
     if not all_basenames:
         logger.error('no images found under %s', images_root)

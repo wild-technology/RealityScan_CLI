@@ -681,7 +681,19 @@ class RealityScanAlignment(RSModule):
             if not os.path.isdir(local_input_folder):
                 raise ValueError(f"Input folder {local_input_folder} is not a directory")
 
-            if not self.__collect_images(local_input_folder):
+            # Pool layout (RS_ALIGN_POOL_DIR, FLIGHTLOG_ARCHITECTURE): a
+            # pool zone folder holds NO images - only a .imagelist of
+            # canonical pool paths (+ zone flight log). The no-images
+            # refusal below is a copy-layout guard; in pool mode a folder
+            # carrying a .imagelist is a valid zone. (2026-08-09 union
+            # wave died exactly here: "No images found under ...pool\
+            # zones\zone_1" - the .bat side supported pool mode, this
+            # queueing guard did not. run3 fix, uncommitted.)
+            pool_zone_ok = bool(os.environ.get('RS_ALIGN_POOL_DIR')) and any(
+                n.lower().endswith('.imagelist')
+                for n in os.listdir(local_input_folder))
+
+            if not self.__collect_images(local_input_folder) and not pool_zone_ok:
                 # A skipped zone must still land in the tally: it used to
                 # appear in neither 'Components' nor 'Zones Failed', so
                 # 'Component Count' silently excluded it (audit 2026-08-07).
