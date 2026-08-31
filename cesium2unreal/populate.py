@@ -187,7 +187,30 @@ def _deepest_point(site):
     return site.get("height_min", site["height"])
 
 
-def plan_cluster(members, terrain, clearance_m=0.0):
+def bounding_volume_lift(site, terrain_height):
+    """How far to raise a model so its lowest point reaches the seafloor.
+
+    Cheap and needs no extra sampling, but height_min is an extremum straight
+    off the root bounding volume: one stray vertex at the bottom of a model
+    drags its lift up and shifts the whole group with it.
+
+    The planned robust alternative, `surface_percentile`, samples a grid across
+    the model's footprint against both the terrain tileset and the model's own
+    tileset — SampleHeightMostDetailed already does exactly this, so the
+    machinery is in place — and takes a high percentile of the per-point
+    residual rather than its maximum. Ground points give the largest residuals
+    (the model surface is at its lowest there); structure sits above and gives
+    smaller ones, so a high percentile still finds the ground while a single
+    bad vertex no longer decides the answer. It costs one extra batch of
+    samples per model, which is why it is not the default.
+    """
+    return terrain_height - _deepest_point(site)
+
+
+DEPTH_ANCHORS = {"bounding_volume": bounding_volume_lift}
+
+
+def plan_cluster(members, terrain, clearance_m=0.0, lift_fn=None):
     """One rigid vertical correction for a group of overlapping models.
 
     The multibeam surface is the ground truth for depth: nothing sits below
@@ -203,8 +226,9 @@ def plan_cluster(members, terrain, clearance_m=0.0):
     those relative offsets are survey measurements, not artefacts. A rigid
     shift fixes the datum without touching the geometry between models.
 
-    terrain maps asset id -> sampled height, or None where sampling failed.
-    Returns {id: (target_centre_height, placement)}:
+    lift_fn decides how far one model must rise to meet the seafloor; see
+    DEPTH_ANCHORS. terrain maps asset id -> sampled height, or None where
+    sampling failed. Returns {id: (target_centre_height, placement)}:
 
       anchor     the member that defines the shift; rests on the seafloor
       offset     sampled member carried by the same shift, its depth relative
@@ -213,8 +237,9 @@ def plan_cluster(members, terrain, clearance_m=0.0):
                  better than leaving it on an uncorrected datum
       unsampled  no member of the cluster found terrain; left where ion put it
     """
+    lift_fn = lift_fn or bounding_volume_lift
     lifts = {
-        m["id"]: terrain[m["id"]] - _deepest_point(m)
+        m["id"]: lift_fn(m, terrain[m["id"]])
         for m in members
         if terrain.get(m["id"]) is not None
     }
@@ -314,6 +339,24 @@ def _summarise(rows):
         "max_m": max(deltas),
         "stdev_m": statistics.stdev(deltas) if len(deltas) > 1 else 0.0,
     }
+    # A group whose correction disagrees with every other group is the
+    # signature of a bad height_min — one stray vertex deciding the shift.
+    # That is the case surface_percentile anchoring exists to fix.
+    if len(deltas) > 3:
+        median = statistics.median(deltas)
+        spread = statistics.median([abs(d - median) for d in deltas]) or 1e-9
+        for row in rows:
+            if row["placement"] == "anchor" and abs(row["delta_m"] - median) > 6.0 * spread:
+                summary.setdefault("outliers", []).append(
+                    {"id": row["id"], "name": row["name"], "delta_m": row["delta_m"],
+                     "median_delta_m": median})
+        for o in summary.get("outliers", []):
+            unreal.log_warning(
+                "'%s' moved %.1f m against a median of %.1f m — check its "
+                "bounding volume for a stray vertex before trusting the group"
+                % (o["name"], o["delta_m"], o["median_delta_m"])
+            )
+
     if summary["anchored"] > 2 and summary["stdev_m"] < 1.0 and abs(summary["mean_m"]) > 2.0:
         unreal.log_warning(
             "every asset moved by %.1f m +/- %.1f m. That is a datum offset, "
@@ -322,6 +365,105 @@ def _summarise(rows):
             % (summary["mean_m"], summary["stdev_m"])
         )
     return summary
+
+
+def preflight(config_path):
+    """Check everything a run needs, and change nothing.
+
+    Run this first on a new machine or a new level. It answers, in order, the
+    questions that actually stop a run: is the plugin's Python surface there,
+    is the level set up, is the terrain reachable, and do the manifest's
+    coordinates land anywhere near the georeference. Returns True if the run
+    can proceed.
+    """
+    checks = []
+
+    def check(name, ok, detail="", hint=""):
+        """detail is always shown; hint only when the check fails."""
+        checks.append((bool(ok), name, detail if ok else (hint or detail)))
+        return ok
+
+    with open(config_path) as fh:
+        cfg = json.load(fh)
+
+    # 1. The plugin's Python surface. The sampler is the one real unknown:
+    #    its factory is BlueprintInternalUseOnly, so it reaches Python only
+    #    through call_method(), and nothing guarantees the binding exists.
+    for name in ("Cesium3DTileset", "CesiumGeoreference", "TilesetSource"):
+        check("unreal.%s" % name, hasattr(unreal, name),
+              hint="is the Cesium for Unreal plugin enabled?")
+    check("height sampler binding",
+          getattr(unreal, "CesiumSampleHeightMostDetailedAsyncAction", None) is not None,
+          hint="needs Cesium for Unreal v2.21.0+; without it the snap step "
+               "cannot run at all")
+
+    # 2. The level. Both of these are hard errors during a run.
+    georef = None
+    try:
+        georef = require_georeference()
+        origin = (georef.get_editor_property("origin_longitude"),
+                  georef.get_editor_property("origin_latitude"),
+                  georef.get_editor_property("origin_height"))
+        check("CesiumGeoreference", True, "origin %.5f, %.5f, %.1f m" % origin)
+    except RuntimeError as exc:
+        check("CesiumGeoreference", False, str(exc))
+        origin = None
+
+    terrain = None
+    try:
+        terrain = require_terrain(cfg)
+        check("terrain tileset", True, "'%s', ion asset %s"
+              % (terrain.get_actor_label(), terrain.get_editor_property("ion_asset_id")))
+        check("terrain streams from ion",
+              terrain.get_editor_property("tileset_source")
+              == unreal.TilesetSource.FROM_CESIUM_ION,
+              hint="the terrain tileset's Source is not From Cesium Ion")
+    except RuntimeError as exc:
+        check("terrain tileset", False, str(exc))
+
+    # 3. Credentials. Never print the token itself.
+    env = cfg.get("token_env", "CESIUM_ION_TOKEN")
+    check("$%s set" % env, bool(os.environ.get(env)),
+          hint="export a read-only token with assets:list and assets:read")
+
+    # 4. The manifest, and whether its coordinates are plausible.
+    manifest = None
+    cached = cfg.get("manifest")
+    if cached and os.path.exists(cached):
+        with open(cached) as fh:
+            manifest = json.load(fh)
+        sites = [m for m in manifest if "error" not in m]
+        check("manifest", bool(sites), "%d locatable, %d failed"
+              % (len(sites), len(manifest) - len(sites)))
+        if sites and origin:
+            ref = {"lat": origin[1], "lon": origin[0]}
+            far = max(sites, key=lambda m: ground_distance_m(ref, m))
+            km = ground_distance_m(ref, far) / 1000.0
+            check("sites near the georeference origin", km < 100.0,
+                  detail="furthest is '%s' at %.1f km" % (far["name"], km),
+                  hint="furthest is '%s' at %.1f km — precision degrades this "
+                       "far out; move the origin or split the level"
+                       % (far["name"], km))
+            extents = sum(1 for m in sites if "height_min" in m)
+            check("manifest carries extents", extents == len(sites),
+                  detail="%d of %d" % (extents, len(sites)),
+                  hint="only %d of %d have height_min; regenerate with the "
+                       "current ion_locate or they cannot cluster"
+                       % (extents, len(sites)))
+    else:
+        check("manifest", False,
+              hint="%r not found — run: py -3.13 -m cesium2unreal.ion_locate "
+                   "%r > %s" % (cached, cfg.get("name_pattern", "*"),
+                                cached or "manifest.json"))
+
+    for ok, name, detail in checks:
+        unreal.log("%s  %-32s %s" % ("PASS" if ok else "FAIL", name, detail))
+    failed = [name for ok, name, _ in checks if not ok]
+    if failed:
+        unreal.log_error("preflight failed: %s" % ", ".join(failed))
+    else:
+        unreal.log("preflight passed — safe to run populate.run(%r)" % config_path)
+    return not failed
 
 
 def run(config_path):
@@ -373,11 +515,16 @@ def run(config_path):
         else:
             groups = [[site] for site in sites]
         clearance = float(cfg.get("seafloor_clearance_m", 0.0))
+        anchor = cfg.get("depth_anchor", "bounding_volume")
+        if anchor not in DEPTH_ANCHORS:
+            raise RuntimeError("unknown depth_anchor %r; have %s"
+                               % (anchor, sorted(DEPTH_ANCHORS)))
+        lift_fn = DEPTH_ANCHORS[anchor]
 
         rows = []
         # Largest clusters first, so the interesting ones head the report.
         for index, members in enumerate(sorted(groups, key=lambda g: -len(g))):
-            plan = plan_cluster(members, terrain, clearance)
+            plan = plan_cluster(members, terrain, clearance, lift_fn)
 
             for site in members:
                 target, placement = plan[site["id"]]

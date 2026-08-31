@@ -36,8 +36,13 @@ Then in the Unreal editor's Python console (Output Log → Cmd → Python):
 ```python
 import sys; sys.path.append(r'C:\path\to\RealityScan_CLI')
 from cesium2unreal import populate
+populate.preflight('config.json')     # checks everything, changes nothing
 populate.run('config.json')
 ```
+
+`preflight` prints a PASS/FAIL line per check with the fix on the failures. Run
+it first on a new machine or a new level — **[SETUP.md](SETUP.md) is the
+checklist for the first run on real data.**
 
 Copy `config.example.json` to `config.json` and fill in your level path,
 terrain asset ID and name pattern. `name_pattern` is a case-insensitive shell
@@ -109,6 +114,28 @@ on depth alone would leave the second buried.
 | `cluster_models` | `false` corrects every model on its own |
 | `cluster_radius_m` | fixed separation in metres instead of footprint overlap |
 | `seafloor_clearance_m` | lift the group this far clear of the surface; `0` rests on it |
+| `depth_anchor` | how far a model must rise to meet the seafloor — see below |
+
+### Anchoring is a seam
+
+`height_min` comes off the root bounding volume, which is an extremum: one
+stray vertex at the bottom of a model drags its lift up and shifts the whole
+group. `bounding_volume` (the default) accepts that in exchange for needing no
+extra sampling.
+
+The planned `surface_percentile` samples a grid across each model's footprint
+against both the terrain tileset and the model's own — `SampleHeightMostDetailed`
+already does exactly this, so the machinery is in place — and takes a high
+percentile of the per-point residual rather than its maximum. Ground points
+give the largest residuals, since the model surface is lowest there; structure
+sits above and gives smaller ones. So a high percentile still finds the ground
+while a single bad vertex stops deciding the answer. It costs one extra batch
+of samples per model.
+
+It is not implemented. `DEPTH_ANCHORS` in `populate.py` is where it plugs in,
+and an unknown name is rejected rather than silently ignored. Until then the
+summary flags any group whose correction disagrees with the others — which is
+what tells you whether you need it.
 
 ### What the report tells you
 
@@ -165,13 +192,14 @@ py -3.13 cesium2unreal/tests/test_populate.py     # or: pytest cesium2unreal/tes
 
 `tests/fake_unreal.py` stands in for the editor, implementing the real
 ECEF→ESU geodesy rather than a stub, so the offset assertions mean something.
-Twenty-three tests cover placement, idempotency on re-run, the terrain being
+Thirty-three tests cover placement, idempotency on re-run, the terrain being
 excluded from its own population, the datum warning, both offset cases, and
 the seafloor-datum rules — that relative depths survive the correction (the
 seawall case), that one shift moves a whole group, that the most buried model
 rests on the surface, that nothing is left below it, that the binding member
 is the most buried rather than the deepest, that clearance lifts the group,
-and that a member without terrain is carried by its group. No Unreal required.
+and that a member without terrain is carried by its group — plus preflight's
+diagnostics and that it changes nothing. No Unreal required.
 
 What the tests **cannot** cover is whether the plugin's Python bindings match.
 `SampleHeightMostDetailed` is a Blueprint async node whose factory and

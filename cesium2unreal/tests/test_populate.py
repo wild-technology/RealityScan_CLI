@@ -47,6 +47,8 @@ class _LevelFixture(unittest.TestCase):
         self.terrain.set_actor_label("Bathymetry")
         self.terrain.set_editor_property("ion_asset_id", TERRAIN_ID)
         self.terrain.set_editor_property("create_physics_meshes", True)
+        self.terrain.set_editor_property("tileset_source",
+                                         fake_unreal.TilesetSource.FROM_CESIUM_ION)
         fake_unreal._Level.actors = [self.georef, self.terrain]
 
         # Seafloor at a constant -1200 m, except one hole with no coverage.
@@ -324,6 +326,119 @@ class SeafloorDatumTest(_LevelFixture):
         delta = self.rows()[302]["delta_m"]
         actor = next(a for a in self.models() if a.get_actor_label() == "wall_lower")
         self.assertAlmostEqual(actor.location.z, delta * 100.0, delta=1.0)
+
+
+class PreflightTest(_LevelFixture):
+    """Preflight must diagnose, not just fail — and must change nothing."""
+
+    def setUp(self):
+        _LevelFixture.setUp(self)
+        os.environ["CESIUM_ION_TOKEN"] = "not-a-real-token"
+        # The base fixture is built to exercise failure paths — a site far
+        # outside terrain coverage, no extents. Preflight correctly rejects it,
+        # so the passing case needs a manifest that is actually in good shape.
+        self.manifest = [
+            {"id": 101, "name": "Transect_01", "lon": ORIGIN[0], "lat": ORIGIN[1],
+             "height": -1150.0, "height_min": -1152.0, "height_max": -1148.0,
+             "radius_m": 20.0},
+            {"id": 102, "name": "Transect_02", "lon": ORIGIN[0] + 0.01,
+             "lat": ORIGIN[1], "height": -1160.0, "height_min": -1162.0,
+             "height_max": -1158.0, "radius_m": 20.0},
+        ]
+        self.cfg_path = _write({"terrain_ion_asset_id": TERRAIN_ID,
+                                "manifest": _write(self.manifest),
+                                "report": self.report_path})
+
+    def logs(self):
+        return "\n".join(m for _, m in fake_unreal.LOG)
+
+    def test_passes_on_a_correctly_set_up_level(self):
+        self.assertTrue(cesium_populate.preflight(self.cfg_path))
+        self.assertIn("preflight passed", self.logs())
+
+    def test_changes_nothing(self):
+        before = len(fake_unreal._Level.actors)
+        cesium_populate.preflight(self.cfg_path)
+        self.assertEqual(len(fake_unreal._Level.actors), before)
+        self.assertFalse(fake_unreal._Level.saved)
+
+    def test_missing_georeference_is_named(self):
+        fake_unreal._Level.actors = [self.terrain]
+        self.assertFalse(cesium_populate.preflight(self.cfg_path))
+        self.assertIn("CesiumGeoreference", self.logs())
+
+    def test_missing_token_is_named(self):
+        del os.environ["CESIUM_ION_TOKEN"]
+        self.assertFalse(cesium_populate.preflight(self.cfg_path))
+        self.assertIn("CESIUM_ION_TOKEN set", self.logs())
+
+    def test_missing_sampler_binding_is_named(self):
+        saved = fake_unreal.CesiumSampleHeightMostDetailedAsyncAction
+        del fake_unreal.CesiumSampleHeightMostDetailedAsyncAction
+        try:
+            self.assertFalse(cesium_populate.preflight(self.cfg_path))
+            self.assertIn("height sampler binding", self.logs())
+        finally:
+            fake_unreal.CesiumSampleHeightMostDetailedAsyncAction = saved
+
+    def test_a_manifest_without_extents_is_flagged(self):
+        # Manifests from before footprints existed cannot cluster.
+        stripped = [{k: v for k, v in m.items() if k != "height_min"}
+                    for m in self.manifest]
+        self.cfg_path = _write({"terrain_ion_asset_id": TERRAIN_ID,
+                                "manifest": _write(stripped),
+                                "report": self.report_path})
+        cesium_populate.preflight(self.cfg_path)
+        self.assertIn("manifest carries extents", self.logs())
+
+    def test_sites_far_from_the_origin_are_flagged(self):
+        far = [dict(m, lat=0.0, lon=0.0) for m in self.manifest]
+        self.cfg_path = _write({"terrain_ion_asset_id": TERRAIN_ID,
+                                "manifest": _write(far), "report": self.report_path})
+        self.assertFalse(cesium_populate.preflight(self.cfg_path))
+        self.assertIn("precision degrades", self.logs())
+
+
+class DepthAnchorTest(_LevelFixture):
+    """The anchor estimator is a seam; an unknown name must not silently pass."""
+
+    def test_unknown_anchor_is_rejected(self):
+        self.cfg_path = _write({"terrain_ion_asset_id": TERRAIN_ID,
+                                "manifest": _write(self.manifest),
+                                "report": self.report_path,
+                                "depth_anchor": "surface_percentile"})
+        with self.assertRaises(RuntimeError) as caught:
+            cesium_populate.run(self.cfg_path)
+        self.assertIn("bounding_volume", str(caught.exception))
+
+    def test_the_default_anchor_is_the_bounding_volume(self):
+        self.assertIs(cesium_populate.DEPTH_ANCHORS["bounding_volume"],
+                      cesium_populate.bounding_volume_lift)
+        self.assertAlmostEqual(
+            cesium_populate.bounding_volume_lift(
+                {"height": -1249.0, "height_min": -1251.0}, -1250.0),
+            1.0, places=9)
+
+    def test_a_group_correction_that_disagrees_is_flagged(self):
+        # Five separate sites, one with a bad height_min dragging its lift.
+        models = []
+        for n in range(5):
+            models.append({"id": 500 + n, "name": "site_%d" % n,
+                           "lon": ORIGIN[0], "lat": ORIGIN[1] + 0.05 * n,
+                           "height": -1200.0,
+                           "height_min": -1400.0 if n == 3 else -1202.0,
+                           "radius_m": 1.0})
+        self.cfg_path = _write({"terrain_ion_asset_id": TERRAIN_ID,
+                                "manifest": _write(models), "report": self.report_path})
+        fake_unreal.TERRAIN_FN = lambda lon, lat: -1250.0
+        cesium_populate.run(self.cfg_path)
+        outliers = self.report()["summary"].get("outliers", [])
+        self.assertEqual([o["name"] for o in outliers], ["site_3"])
+        self.assertIn("stray vertex", self.logs())
+
+    def logs(self):
+        return "\n".join(m for _, m in fake_unreal.LOG)
+
 
 
 if __name__ == "__main__":

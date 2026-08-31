@@ -9,5 +9,6 @@
   "cluster_models": true,
   "cluster_radius_m": null,
   "seafloor_clearance_m": 0.0,
+  "depth_anchor": "bounding_volume",
   "timeout_s": 300
 }

@@ -95,6 +95,8 @@ class CesiumGeoreference(Actor):
     def __init__(self, lon=0.0, lat=0.0, height=0.0):
         Actor.__init__(self, "CesiumGeoreference")
         self.origin = (lon, lat, height)
+        self._props.update(origin_longitude=lon, origin_latitude=lat,
+                           origin_height=height)
 
     def transform_longitude_latitude_height_position_to_unreal(self, llh):
         ox, oy, oz = _ecef(*self.origin)
