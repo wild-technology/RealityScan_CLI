@@ -3546,3 +3546,36 @@ c1 15.5 x 49.7 m), so the data was always there.
 Fix tries the raw column first, then its basename, so copy-layout logs that
 already carry bare names are byte-identical in behaviour. Cover:
 testing/test_component_manifest_bbox.py (suite 559 -> 566).
+
+## [NA165] 2026-08-31 - THREE flight-log consumers ignored the pool layout's
+## full-path filename column (one of them silently)
+
+CLAUDE.md states "Consumers match by NORMALIZED BASENAME" and commit 4c081ed
+is titled "Basename-normalized flight-log consumers". Three consumers were
+still comparing the RAW column, which in pool layout is a full canonical path
+by design (FLIGHTLOG_ARCHITECTURE: the zone log carries the same paths as the
+.imagelist). All three broke on NA165/H2060's 20-component single-scene align:
+
+| consumer | symptom | loud? |
+|---|---|---|
+| `component_manifest.bbox_from_flight_log` | every `bbox_utm` null | NO - warning only, and null bbox means "unknown extent" to component_analysis, which then borders it against everything and degrades merge planning |
+| `merge_zones.build_union_flight_log` | ZERO-rows refusal, merge aborted | YES - and correctly so; the guard exists because importing an empty union log ships an UNGEOREFERENCED merge with workflow_success true |
+| `scale_oracle.load_nav_positions` | every component "scale UNMEASURED - too few images shared with the nav table" | NO - one warning per component, run continues |
+
+The scale one is the dangerous shape: with `--scale_gate true` an unmeasurable
+component is REFUSED FOR MODELLING, so this silently turns into "nothing gets
+modelled" with only warnings to show for it.
+
+HOW DISCOVERED: the merge refused with "1 zone log(s) ... matched none of the
+2285 requested image(s)". Fixing that surfaced the scale one in the same log.
+After the fix, `load_nav_positions` keys 3,870 rows and component c0's 716
+members match 716/716.
+
+All three now try the raw column FIRST and fall back to its basename, so
+copy-layout logs carrying bare names are byte-identical in behaviour. Cover:
+testing/test_component_manifest_bbox.py, testing/test_pool_flightlog_consumers.py
+(suite 559 -> 572).
+
+LESSON: "pool mode" is not one flag, it is a data-shape change (full paths in
+the filename column) that every downstream consumer must honour. Grep for
+`split(';')[0]` before adding another one.

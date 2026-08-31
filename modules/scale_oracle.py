@@ -59,13 +59,24 @@ def load_solved_positions(identity_dir: str) -> dict[str, tuple]:
 
 
 def load_nav_positions(flight_log: str) -> dict[str, tuple]:
-    """{stem_lower: (x, y, alt)} from a flight_log_*_UTM.txt."""
+    """{stem_lower: (x, y, alt)} from a flight_log_*_UTM.txt.
+
+    Keyed on the BASENAME stem. Every other site here builds its stems from
+    XMP filenames (``basename`` + ``splitext``), but in pool layout the log's
+    filename column is a full canonical path (FLIGHTLOG_ARCHITECTURE), so
+    keying on ``splitext(parts[0])`` produced full-path keys that matched
+    none of them and every component reported scale UNMEASURED - "too few
+    images shared with the nav table". Observed on NA165/H2060: all 20.
+    """
     out = {}
     with open(flight_log, encoding='utf-8', errors='replace') as fh:
         for line in list(fh)[1:]:
             parts = line.split(';')
             if len(parts) > 3 and parts[1].strip():
-                out[os.path.splitext(parts[0])[0].lower()] = (
+                raw = parts[0].strip().strip('"')
+                stem = os.path.splitext(
+                    os.path.basename(raw.replace('\\', '/')))[0].lower()
+                out[stem] = (
                     float(parts[1]), float(parts[2]), float(parts[3]))
     return out
 

@@ -642,10 +642,22 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
         for line in lines[1:]:
             if not line.strip():
                 continue
-            name = line.split(';')[0].strip('"').lower()
-            if only_basenames is not None and name not in only_basenames:
+            # `only_basenames` holds BASENAMES, but in pool layout the log's
+            # filename column is a full canonical path by design
+            # (FLIGHTLOG_ARCHITECTURE), so comparing the raw column matched
+            # nothing and every pool-mode merge hit the ZERO-rows refusal
+            # below. Observed on NA165/H2060: 1 zone log, 2,285 requested
+            # images, 0 matched. Match the raw column first so copy-layout
+            # logs carrying bare names are unchanged; key the dedup on the
+            # basename, which IS the raw value in copy layout.
+            raw = line.split(';')[0].strip('"').strip()
+            raw_key = raw.lower()
+            base_key = os.path.basename(raw.replace('\\', '/')).lower()
+            if (only_basenames is not None
+                    and raw_key not in only_basenames
+                    and base_key not in only_basenames):
                 continue
-            rows.setdefault(name, line)
+            rows.setdefault(base_key, line)
 
     # A union log with NO rows is not a georeferenced merge: the workflow
     # imports it, runs -update against zero constraints, and ships an
