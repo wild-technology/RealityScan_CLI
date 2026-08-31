@@ -3579,3 +3579,37 @@ testing/test_component_manifest_bbox.py, testing/test_pool_flightlog_consumers.p
 LESSON: "pool mode" is not one flag, it is a data-shape change (full paths in
 the filename column) that every downstream consumer must honour. Grep for
 `split(';')[0]` before adding another one.
+
+## [NA165] 2026-08-31 - merge attempt 1 fused, then aborted on a broken
+## measurement channel (peel harvest EMPTY)
+
+With the three pool-mode flight-log consumers fixed, cluster_0's union log
+went from 0 to 2,285 rows and the merge ladder actually ran:
+
+    --- cluster_0 attempt 1: align_rematch over 5 components
+        (target zone_all/zone_all_c0) ---
+
+It produced `cluster_0_a1_c0..c5.rsalign` plus `cluster_0_a1.rsproj` in ~8
+minutes, then refused:
+
+    RuntimeError: cluster_0 attempt 1: peel harvest returned EMPTY but
+    ...cluster_0_a1_c0.rsalign exists - the measurement channel is broken
+    (pose sidecars were never written or never moved). Aborting the run
+    instead of mis-scoring it.
+
+Immediately before it, RealityScan reported `result code 2147942487 in 0
+seconds` = **0x80070057 E_INVALIDARG** - the exportXMP call rejected its
+arguments outright. (An earlier `2181038335` = 0x820000FF appeared during
+setup and was NOT fatal.) So the fusion happened; only the harvest that
+measures membership failed.
+
+OPEN. Not chased further because the owner capped this run at ONE merge
+evolution. The next session should start here: the peel harvest in pool mode
+exports XMP sidecars beside the POOL images (RS_ALIGN_POOL_DIR), and the
+merge scene's images come from imported components rather than a zone
+imagelist - so the harvest directory the merge peel uses may not be the one
+the merge scene's cameras actually resolve to. Check what path
+MergeZoneComponents passes to -exportXMP against RS_ALIGN_POOL_DIR.
+
+Resource peaks for the attempt, for budgeting: CPU 99%, commit 34.0 GB,
+minimum available RAM 105.7 GB, minimum free disk 234.9 GB.
