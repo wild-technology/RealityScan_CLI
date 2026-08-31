@@ -3613,3 +3613,30 @@ MergeZoneComponents passes to -exportXMP against RS_ALIGN_POOL_DIR.
 
 Resource peaks for the attempt, for budgeting: CPU 99%, commit 34.0 GB,
 minimum available RAM 105.7 GB, minimum free disk 234.9 GB.
+
+## [NA165] 2026-08-31 - scale-gate failures may be CAMERA ZOOM, not geometry
+## (owner hypothesis, NOT investigated - noted for the next session)
+
+Owner (2026-08-31): "Could also be a problem with the cameras zooming in -
+happens occasionally."
+
+Plausible and untested. The registry gives `zeuss` ONE calibration group with
+an Approximate 23 mm prior, so a mid-dive zoom change makes several focal
+lengths share one calibration - exactly the shape that yields scale error and
+the "drift or a fold" wide-IQR verdict.
+
+Circumstantial support already in hand, recorded so the next session does not
+re-derive it: the six failing components are scattered across the dive
+(14:17, 18:13, 19:32, 19:46, 19:51, 20:02) rather than forming one contiguous
+block, which fits an INTERMITTENT cause better than a single settings change.
+All six are small (42-99 cameras). The two worst are near-integer ratios -
+c11 = 4.184 and c12 = 0.482, i.e. roughly 4x and 1/2x.
+
+Scale by component (14 PASS / 6 FAIL, band 0.90-1.10):
+  0.482 c12 | 0.854 c18 | 0.870 c9 | 0.885 c8 | 1.111 c6 | 4.184 c11   FAIL
+  0.903 c16 | 0.915 c17 | 0.951 c10 | 0.966 c15 | 0.976 c7 | 0.999 c19
+  0.999 c3  | 1.005 c2  | 1.019 c13 | 1.025 c1  | 1.044 c5 | 1.045 c4
+  1.082 c0  | 1.099 c14
+
+If confirmed, the fix is per-zoom-segment calibration groups rather than one
+group for the whole dive. NOT PURSUED - owner said note it and move on.
