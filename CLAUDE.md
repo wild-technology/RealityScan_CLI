@@ -108,7 +108,7 @@ artifact locations / exact next commands.
 Help (`C:\Program Files\Epic Games\RealityScan_2.2\Help\en-US\`, which is
 the only reliably readable form of the official docs — the public site is
 JS-rendered), the install-tree XML format dictionaries, and this repo's
-empirical record. 218 command names, 740 settings keys, 84 numbered failure
+empirical record. 218 command names, 740 settings keys, 88 numbered failure
 modes. Every claim carries a provenance tag; `[CONTRADICTED]` entries state
 both what the docs claim and what was observed.
 

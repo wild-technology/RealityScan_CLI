@@ -1789,6 +1789,10 @@ current tiler** [VERIFIED-as-guidance: `publish_cesium.py` docstring,
 
 #### 17.2.1 Why depth never survived, and what fixes it
 
+(The datum itself is documented at its conceptual home,
+`06-georeferencing-flightlogs-and-scale.md` §3.5; this section is about the
+publish path that consumes it.)
+
 **[CONTRADICTED — the long-standing "Cesium ignores depth" belief is wrong.]**
 A live probe (ion asset `5171554`, `testing/probe_cesium_depth.py`,
 2026-08-31) uploaded a 435-byte OBJ box with

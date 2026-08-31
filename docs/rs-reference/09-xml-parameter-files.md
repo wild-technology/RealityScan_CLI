@@ -56,6 +56,7 @@ modeling and export in `10-reconstruction-texturing-export.md`.
    - [2.19 LiDAR scan import params](#219-lidar-scan-import-params)
    - [2.20 16-bit / HDR image import params](#220-16-bit--hdr-image-import-params)
    - [2.21 Model import params and `.rsinfo`](#221-model-import-params-and-rsinfo)
+     — including **the `<Model>` tag and how to decode `transformToModel`**
    - [2.22 Bundler and COLMAP import params](#222-bundler-and-colmap-import-params)
    - [2.23 Classification params and the `.cfd` format file](#223-classification-params-and-the-cfd-format-file)
    - [2.24 Sparse point cloud, cross-sections, contours, shapes](#224-sparse-point-cloud-cross-sections-contours-shapes)
@@ -1450,6 +1451,73 @@ Without it, a reimported model may be shifted, rotated and scaled relative to th
 The naming is exact and load-bearing: the info file must be the **model name plus** an additional
 `.rsInfo` extension. `myObject.rsInfo` will not be found for `myObject.obj`; `myObject.obj.rsInfo`
 will. [OFFICIAL: tools/export]
+
+#### 2.21.1 The `<Model>` tag — the export's placement record
+
+The Help documents the `.rsInfo` only as a re-import convenience. It is more
+than that: **it is the sole on-disk record of what coordinate system an export
+landed in, and of the transform back to it.** Any consumer outside RealityScan
+— a globe renderer, a GIS, a publish script — has nothing else to go on.
+
+A sidecar holds several sibling top-level tags and **no single root element**,
+so it is *not* well-formed XML on its own; wrap it before parsing.
+`<ModelExport>` (§1.6) is the profile bootstrap. `<Model>` is the placement
+record:
+
+```xml
+<Model globalCoordinateSystem="+proj=utm +zone=53 +datum=WGS84 +units=m +no_defs"
+   globalCoordinateSystemName="epsg:32653 - WGS 84 / UTM zone 53N"
+   exportCoordinateSystemType="2">
+  <globalCoordinateSystemWkt>PROJCS["WGS_1984_UTM_Zone_53N", …]</globalCoordinateSystemWkt>
+  <transformToModel>0 0 1 348355.8364815 1 0 0 396321.994618801 0 1 0 -587.41083970014 0 0 0 1</transformToModel>
+  <Header magic="5786959" version="1"/>
+</Model>
+```
+
+| item | notes |
+|---|---|
+| `globalCoordinateSystem` | PROJ string. **2D** — says nothing about the vertical (`06-…` §3.5) |
+| `globalCoordinateSystemName` | `epsg:NNNNN - <label>`; the practical source of an EPSG code |
+| `globalCoordinateSystemWkt` | child **element**, not an attribute |
+| `exportCoordinateSystemType` | observed `1` (LAS, identity transform) and `2` (OBJ, local frame). The repo's own presets set `3` (OBJ/FBX) and `0` (PLY) — **neither has ever been seen in a written sidecar** |
+| `transformToModel` | 16 numbers. Written as a child **element** on the OBJ sidecar and as an **attribute** on the LAS one — match both forms or read nothing |
+
+**Decoding `transformToModel`.** The 16 values have **no single obvious
+reading**, and guessing wrong relocates a mesh by hundreds of kilometres
+silently. For `NA168_H2080_20Jan.obj` the correct reading is row-major, applied
+as `M @ v`, with the output components then permuted `(1,2,0)` to give
+`(E, N, Z)` — which for that file reduces to a pure per-axis translation:
+
+```
+E = x + 396321.994618801
+N = y - 587.41083970014
+Z = z + 348355.8364815
+```
+
+Note that the constant added to the *easting* is a northing-magnitude number:
+the model frame is genuinely scrambled, so the operands do not "look right"
+even when they are. **This is why the reading must be derived and validated,
+not assumed.**
+
+How it was settled: all 178,269 vertices were transformed under every
+combination of {row-major, column-major} × {`M @ v`, `v @ M`} × all six output
+permutations, and scored by the fraction landing inside the envelope of the
+dive's own flight log. **Exactly one reading scored 1.0000; every rival scored
+0.3333.** [VERIFIED: FINDINGS 2026-08-31]
+
+Two rules for any code that consumes this:
+
+1. **Validate, do not assume.** Score candidate readings against the declared
+   CRS's area of use (and a nav envelope when one exists), and fail when zero
+   *or more than one* survives.
+2. **Reject reflections.** A reading whose composed 3×3 has a negative
+   determinant mirrors the geometry. It matters because an East/North swap is
+   invisible to a bounds check when easting and northing are of similar
+   magnitude — ~348 355 against ~396 318 on this site — but is a reflection,
+   and no rigid transform between right-handed frames can produce one.
+
+Reference implementation: `modules/cesium_placement.py::resolve_to_global`.
+Consumers: `10-…` §17.2.1, `12-…` `F-88`.
 
 ### 2.22 Bundler and COLMAP import params
 

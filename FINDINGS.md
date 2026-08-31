@@ -3342,6 +3342,34 @@ Source tag **[CESIUM]**. Established while building the ion publish path.
   asset. Cheapest probe: run one export, then `--dry-run` and read the
   reported lat/lon/depth. (2026-08-31) OPEN
 
+- **The NA168 local frame is explained: a DCC transformation preset, which the
+  repo's own export preset does NOT apply.** Found while writing
+  `06-…` §3.6. `transformdb.xml` gives every `obj`-group DCC preset
+  (`Unreal`, `Unity`, `Blender`) `rotation = -90 -90 0`, and the NA168 H2080
+  sidecar carries exactly `settingsRotation="-90 -90 0"` with
+  `exportCoordinateSystemType="2"` - so that export was made through a DCC
+  preset and landed in a rotated local frame. The repo's
+  `ModelExportParamsOBJ_NiraParts.xml` instead sets
+  `MvsExportTransformationPreset="Custom"` with `MvsExportRotation{X,Y,Z}=0.0`
+  and `MvsExportcoordinatesystemtype=3`.
+  **Consequence:** the one scrambled frame this repo has ever decoded is NOT
+  representative of what its own production preset writes, so the resolver's
+  auto-detection is not merely defensive - the two known exports disagree
+  about the frame, and a third behaviour is expected. It also means a stray
+  DCC preset is a live hazard on any hand-made export: `Unreal` on a
+  `.ply`/`.xyz`-class output is additionally a 100x enlargement, while on
+  `.obj`/`.fbx`/`.abc` it is rotation-only. (2026-08-31) ESTABLISHED
+- **Documentation of record updated for the Cesium/vertical work**
+  (2026-08-31): `06-…` gains §3.5 (the vertical datum, the per-site geoid
+  table, the PROJ ballpark trap) and §3.6 (export frames are a property of the
+  preset - read the `.rsInfo`); `09-…` gains §2.21.1 (the `<Model>` tag and
+  the `transformToModel` decoding, with the derive-don't-assume and
+  reject-reflections rules); `12-…` gains **F-85..F-88** (vertical offset
+  passing every check, PROJ's silent zero, Share-to-ion landing at the
+  surface, local-frame publish relocating by hundreds of km); `10-…` §17.2.1
+  carries the live-verified ion API contract; README gains two fast-path rows
+  and updated censuses (88 failure modes; tags re-counted). (2026-08-31)
+
 ## 2026-08-23 — onr2 stereo rig (Sony ILX-LR1 pair, 483 images), RealityScan 2.2.0.119430
 
 Source for all of these: a 17-arm session driving RealityScan from the CLI on an external

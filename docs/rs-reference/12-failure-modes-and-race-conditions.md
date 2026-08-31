@@ -224,7 +224,7 @@ multi-hour runs keep emitting lines, so it plainly does not stop the stream afte
 
 ---
 
-## 3. F-01…F-17, F-79 — Silent-success failures at the RealityScan boundary
+## 3. F-01…F-17, F-79, F-85…F-88 — Silent-success failures at the RealityScan boundary
 
 Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
 
@@ -648,6 +648,80 @@ Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
   an unpinned instance. And `dir /b "<project dir>\*.autosave"` before a `-load`.
 
 ---
+
+### F-85 — A published mesh sits N metres off vertically, and every check passes
+- **Symptom.** The asset tiles to `COMPLETE`, lands at the right latitude and longitude,
+  looks right in plan view, and is **wrong in depth by a fixed amount** — 72.7 m at NA168
+  H2080, 70.4 m in the Solomon Sea, 27.1 m the *other* way in the Gulf of Mexico.
+- **Cause.** The exported Z is a depth below the **sea surface** (`geoall.py:320` writes
+  `-abs(kalman_depth)`), i.e. an orthometric height on the geoid. Cesium — and any
+  ellipsoid-referenced consumer — reads it as height above the **WGS84 ellipsoid**. Every
+  CRS in the chain is 2D, so nothing ever declares which. The gap is the geoid undulation N.
+  [VERIFIED: FINDINGS 2026-08-31] See `06-…` §3.5.
+- **Detected by.** Decoding `root.transform` from the published asset's own `tileset.json`
+  and comparing the implied height against `-depth + N`. Nothing inside RealityScan can see
+  it: the error is a rigid translation along the ellipsoid normal, so scale oracles, merge
+  censuses and visual inspection are all blind to it.
+- **Mitigation.** `h = H + N` with `H = -depth`, per site, before upload
+  (`modules/cesium_placement.py`). Never a project-wide constant — N moves ~23.6 m along
+  the Hawaiian chain alone.
+- **Detection test.** Republish and read the tileset back; the residual must be under 1 m.
+  *If the residual equals N, the correction was computed and then dropped.*
+
+### F-86 — PROJ reports a successful vertical transform and applies ZERO correction
+- **Symptom.** `Transformer.from_crs('EPSG:9518','EPSG:4979').transform(lon, lat, -1200)`
+  returns `-1200.000` — unchanged — with no exception and no warning.
+- **Cause.** The geoid grid (`us_nga_egm08_25.tif`, ~80 MB) is absent, so PROJ falls back to
+  a *"ballpark vertical transformation, without ellipsoid height to vertical height
+  correction"*, which is `+proj=noop` on the vertical. pyproj does not enable network grid
+  access by default, so **the default posture on a fresh machine is the silent no-op.**
+  [VERIFIED: FINDINGS 2026-08-31]
+- **Detected by.** `Transformer.description` contains `ballpark`; or
+  `TransformerGroup(...).unavailable_operations` is non-empty and names the missing grid.
+- **Mitigation.** Build every vertical transformer with `allow_ballpark=False`, which raises
+  `ProjError` instead. Enable `PROJ_NETWORK=ON` or install the grid with
+  `projsync --file us_nga_egm08_25.tif`.
+- **Detection test.** Transform a point at a known-non-zero undulation and assert the delta
+  is non-zero — e.g. `(-157.08, 18.81)` must return roughly `+6.6 m`. *A clean `0.000` is
+  the fallback's signature, not a correct answer.*
+
+### F-87 — "Share to Cesium ion" produces an asset at the sea surface
+- **Symptom.** A deep-water site appears on the globe at roughly ellipsoidal height 0.
+  Measured on three pre-existing assets: **+2.1 m**, **+0.0 m**, **+23.7 m**.
+- **Cause.** Not a bug — documented behaviour. "Model does not have to be georeferenced to
+  be uploaded, since it is possible to upload a model and later define its approximate
+  position" [OFFICIAL: tools/cesiumion]. The Share button ships no placement, so the asset
+  lands wherever it is hand-placed. The exact `+0.0 m` on one asset is the signature of a
+  height that was defaulted rather than carried.
+- **Detected by.** `GET /v1/assets/<id>/endpoint` → the signed `tileset.json` →
+  decode `root.transform`'s translation from ECEF. No human or globe required.
+- **Mitigation.** Publish through the REST API with `options.position`. **ion is not the
+  problem** — a probe asked for `-512.46 m` and read back `-512.46 m`, error `-0.000 m`
+  (asset `5171554`). And note there is **no way to reposition after tiling**:
+  `PATCH /v1/assets/{id}` accepts only name/description/attribution, so a wrong placement
+  means re-uploading from source.
+- **Detection test.** Any deep-water asset whose read-back height is within a few metres of
+  zero was never georeferenced. [VERIFIED: FINDINGS 2026-08-31]
+
+### F-88 — Publishing on the flight-log CRS alone relocates the asset by hundreds of kilometres
+- **Symptom.** A mesh uploaded with a correct `EPSG:326xx` lands in open ocean, far from the
+  dive.
+- **Cause.** **Exported vertices are not necessarily in the declared CRS.** The NA168 H2080
+  OBJ has a vertex bbox of X −47972…−47960, Y 396903…396915, Z −348956…−348926 while the
+  site is really at E ~348355, N ~396318, −585 m — the export applied a DCC transformation
+  preset (`settingsRotation="-90 -90 0"`, `exportCoordinateSystemType="2"`) and the frame is
+  local. The `.rsInfo`'s `transformToModel` is what puts it back.
+  [VERIFIED: FINDINGS 2026-08-31] See `06-…` §3.6.
+- **Detected by.** Transform the vertices and test them against the CRS's own area of use;
+  a wrong reading falls outside it. A dive's flight-log envelope is the tighter oracle.
+- **Mitigation.** Read the frame from the sidecar and **derive** the correct reading of the
+  16-value matrix rather than assuming one — it has no single obvious layout. Reject any
+  reading whose composed 3×3 has a **negative determinant**: on this site easting (~348 355)
+  and northing (~396 318) are each plausible as the other, so an East/North swap passes a
+  CRS-bounds check, but a single axis swap is a reflection and no rigid transform between
+  right-handed frames can produce one. Fail when zero, or more than one, reading survives.
+- **Detection test.** `publish_cesium.py --dry-run` prints the derived lat/lon/depth in
+  seconds. *If it does not match where the dive was, stop.*
 
 ## 4. F-18…F-26, F-82 — Instrument blindness: when the oracle is the thing that broke
 

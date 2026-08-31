@@ -1138,6 +1138,109 @@ applied unintentionally is an instant 100× (or 39.37×) scale error in the deli
 
 ---
 
+### 3.5 The VERTICAL datum — what the exported Z actually means
+
+**This is the half of georeferencing that no coordinate-system setting in
+RealityScan expresses, and getting it wrong is invisible inside the
+application.**
+
+Every CRS this pipeline uses is **two-dimensional**. The flight-log params
+carry `+proj=utm +zone=53 +datum=WGS84 +units=m +no_defs`; the `.rsInfo`
+written on export carries the same string and a matching
+`epsg:32653 - WGS 84 / UTM zone 53N`. A `326xx`/`327xx` code defines easting
+and northing and says **nothing whatever about the third coordinate**. The Z
+rides through the whole chain — flight log → scene → export → sidecar —
+undeclared.
+
+What that Z actually is, in this pipeline:
+
+| stage | what happens to Z | where |
+|---|---|---|
+| ROV nav | `kalman_depth`, metres **below the sea surface**, positive down | vehicle telemetry |
+| flight-log build | `DEPTH = -abs(kalman_depth)` — sign flipped to negative-down | `geoall.py:320` |
+| camera offset | `adjusted_altitude = altitude - down_m` (mount lever arm) | `geoall.py:161` |
+| written | as the `Alt` column (`ALTITUDE_EST`) | `geoall.py:816` |
+| imported | Z of a 2D UTM CRS — no vertical datum declared | `FlightLogParams.xml` |
+| exported | unchanged; `MvsExportMoveZ=0.0`, `MvsExportScaleZ=1.0` | every repo preset |
+
+A pressure depth is measured from the **instantaneous sea surface**, which
+approximates mean sea level, which approximates the **geoid**. It is an
+*orthometric* height. It is **not** a height above the WGS84 ellipsoid.
+
+Nothing in RealityScan converts between them, and nothing needs to while the
+data stays inside RealityScan — every measurement, scale check and merge is
+differential, so a uniform vertical offset is invisible. The moment the model
+leaves for a globe renderer, it is not.
+
+**Conversion.** `h = H + N`, where `h` is ellipsoidal height, `H` orthometric
+(here `H = -depth`), and `N` the geoid undulation at that lat/lon:
+
+| site | N (EGM2008) | effect of ignoring it |
+|---|---:|---|
+| Papahānaumokuākea (−161, 24) | **+4.50 m** | model 4.5 m too deep |
+| Oahu (−158, 21.4) | **+15.85 m** | 15.9 m too deep |
+| Titanic site (−49.9, 41.7) | **+5.15 m** | 5.2 m too deep |
+| Gulf of Mexico (−90, 27) | **−27.05 m** | 27.1 m too **shallow** |
+| Solomon Sea / UTM 57S (156, −9) | **+70.37 m** | 70.4 m too deep |
+| NA168 H2080 (133.63, 3.58) | **+72.69 m** | 72.7 m too deep |
+
+UTM 57S is the zone the shared `FlightLogParams.xml` template carries, so the
+worst case is not hypothetical. Global range is roughly −106 m to +85 m, and N
+varies ~23.6 m along the Hawaiian chain alone — **it is a per-site lookup, never
+a project constant.** [VERIFIED: FINDINGS 2026-08-31]
+
+The sign rule that matters: `N` is *added* to the negative depth, so a positive
+undulation makes the ellipsoidal height **less negative** — the wreck sits
+*shallower* relative to the ellipsoid than its depth suggests. Reversing that
+sign doubles the error rather than removing it.
+
+**Computing N.** `modules/cesium_placement.py::geoid_separation` via pyproj,
+`EPSG:9518` (WGS 84 + EGM2008 height, identical in PROJ to the compound
+`EPSG:4326+3855`) → `EPSG:4979`. Two traps:
+
+- **PROJ returns a SILENT ZERO when the grid is missing.**
+  `Transformer.from_crs('EPSG:9518','EPSG:4979')` succeeds offline and hands
+  back Z unchanged, having quietly selected a *"ballpark vertical
+  transformation, without ellipsoid height to vertical height correction"*. No
+  exception, no warning. Always pass `allow_ballpark=False`, which raises
+  instead. [VERIFIED: FINDINGS 2026-08-31]
+- **Only EGM96 and EGM2008 are usable.** PROJ ships grid transformations for
+  `EPSG:5773` and `EPSG:3855` only. `EPSG:5714` (MSL height) needs an NGA grid
+  that is not redistributable, and `EPSG:5715` (MSL *depth*) has no
+  transformation to any ellipsoidal CRS at all — use it to *label* input data,
+  never to route the arithmetic. The EGM2008 grid is `us_nga_egm08_25.tif`
+  (~80 MB, cdn.proj.org), fetched only with `PROJ_NETWORK=ON` or `projsync`.
+
+**Where the error shows up.** Only downstream, and only where something
+interprets the third coordinate against the ellipsoid — Cesium ion being the
+case this repo hit. It is a pure rigid translation along the ellipsoid normal:
+it does not tilt, scale or distort the mesh, so no scale oracle, no merge
+census and no visual inspection inside RealityScan will ever catch it. See
+`10-reconstruction-texturing-export.md` §17.2.1 and `12-…` `F-85`.
+
+### 3.6 What the export actually does to the frame — read the `.rsInfo`, do not assume
+
+`MvsExportTransformationPreset` and `settingsRotation` are not cosmetic. The
+`obj`-group DCC presets in `transformdb.xml` (§3.4) carry
+`rotation = -90 -90 0`, and a mesh exported under one lands in a **rotated,
+translated local frame**, not in the project CRS — even though the `.rsInfo`
+beside it still names that CRS.
+
+Observed, on the same pipeline's data:
+
+| export | `MvsExportTransformationPreset` | `settingsRotation` | `exportCoordinateSystemType` | frame |
+|---|---|---|---|---|
+| `NA168_H2080_20Jan.obj` (manual/GUI) | *(DCC preset)* | `-90 -90 0` | `2` | **local**, vertices ~350 km from the site |
+| `H2024_sub.las` (manual/GUI) | — | `0 0 0` | `1` | global, identity `transformToModel` |
+| repo `ModelExportParamsOBJ_NiraParts.xml` | `Custom` | rotations `0.0` | `3` | **never yet observed on disk** |
+
+So an export's frame is a property of the *preset it was made with*, and the
+repo's own production preset has never written a sidecar anyone has inspected.
+The only safe reading is the one in the file: parse `<transformToModel>` and
+validate it (§9 and `09-xml-parameter-files.md` §1.6.1) rather than trusting
+that "georeferenced export" means "vertices in the CRS".
+[VERIFIED: FINDINGS 2026-08-31]
+
 ## 4. Ground control points and control points
 
 **No GCP or control point has ever been imported through this CLI.** Everything in this
