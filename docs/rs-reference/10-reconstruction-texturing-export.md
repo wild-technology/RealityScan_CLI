@@ -1777,7 +1777,9 @@ Nira artifact [VERIFIED-by-inspection: `ExportDeliverables.bat` header].
 A model **does not have to be georeferenced** to be uploaded; its approximate
 position can be defined later [OFFICIAL: tools/cesiumion]. Two documented
 routes: the GUI Share button, or exporting Cesium 3D Tiles (`.json`) via the
-Level of Detail button and uploading through ion's "Add data".
+Level of Detail button and uploading through ion's "Add data". Hierarchical LoD
+export preserves placement only "provided that the model being exported is
+geo-referenced" [OFFICIAL: tools/lodexport].
 
 **Cesium staff guidance recorded here: upload the RAW mesh (OBJ recommended) so
 ion's Reality Tiler processes it — ion hosts a pre-tiled 3D Tiles export as-is
@@ -1785,28 +1787,92 @@ without reprocessing. Multi-texture meshes (e.g. 4×16K) are supported by the
 current tiler** [VERIFIED-as-guidance: `publish_cesium.py` docstring,
 2026-07-29].
 
-`publish_cesium.py` implements ion's documented REST flow:
+#### 17.2.1 Why depth never survived, and what fixes it
+
+**[CONTRADICTED — the long-standing "Cesium ignores depth" belief is wrong.]**
+A live probe (ion asset `5171554`, `testing/probe_cesium_depth.py`,
+2026-08-31) uploaded a 435-byte OBJ box with
+`position=[133.634688, 3.584574, -512.46]` and read it back from the asset's
+own `tileset.json` at **h = −512.46 m, error −0.000 m**. ion neither refuses
+nor clamps heights below the ellipsoid. Two *other* faults produced every
+sea-surface asset on this account:
+
+1. **The Share button does not georeference at all** — the Help says so
+   outright — so the asset lands wherever it is hand-placed, i.e. about sea
+   level. Read back live, the three pre-existing assets sit at ellipsoidal
+   heights **+2.1 m** (`2017323`), **+0.0 m** (`2335997`) and **+23.7 m**
+   (`2336618`, described "Created in RealityCapture by Capturing Reality"),
+   all deep-water sites [VERIFIED: FINDINGS 2026-08-31].
+2. **Even when placement IS carried, the vertical datum is wrong.** The
+   project CRS is 2D (`+proj=utm +zone=53 +datum=WGS84 +units=m +no_defs`) and
+   declares no vertical datum, while the Z it carries is the flight log's
+   `ALTITUDE_EST` — negative metres below the **sea surface** (`geoall.py:320`
+   writes `-abs(kalman_depth)`). Cesium reads every height as metres above the
+   **WGS84 ellipsoid**. Nothing in the chain converts between them, so the
+   asset sinks or floats by the geoid undulation N: **+72.69 m** at the NA168
+   H2080 site, +70.4 m in the Solomon Sea, −27.1 m in the Gulf of Mexico,
+   +4.5 m at Papahanaumokuakea. The correction is `h = H + N` with `H = −depth`
+   [VERIFIED: FINDINGS 2026-08-31].
+
+`publish_cesium.py` (rewritten 2026-08-31) closes both. It reads the export's
+`.rsInfo` for the CRS and `transformToModel`, resolves the mesh into that
+global CRS, converts the anchor's sea-surface depth to an ellipsoidal height
+through EGM2008, rewrites the mesh into a local East-North-Up frame about that
+anchor, and passes the anchor as `options.position`:
 
 ```
 1. POST /v1/assets           type=3DTILES, options.sourceType=3D_CAPTURE,
-                             options.targetVersion=1.1, options.textureFormat=KTX2,
-                             options.inputCrs=<EPSG:xxxxx>   (omit for local coords)
+                             options.position=[lon, lat, h_ellipsoidal],
+                             options.textureFormat=KTX2,
+                             options.geometryCompression=DRACO
 2. upload the files to the returned S3 location (12 h credentials)
 3. POST the onComplete notification
 4. poll GET /v1/assets/<id> until COMPLETE / ERROR / DATA_ERROR
+5. VERIFY: decode root.transform from the finished tileset and assert it
+   matches the requested lon/lat/height, and that the tightBoundingBox
+   metadata matches the mesh extents
 ```
 
-Uploaded extensions: `.obj .mtl .fbx .dae .gltf .glb .jpg .jpeg .png .bmp .tga
-.dds .bin`. Auth: an ion access token with `assets:write` + `assets:read`, via
-`--token` or `CESIUM_ION_TOKEN`. Dependencies `requests`, `boto3`.
+Step 5 is not optional decoration — ion reports COMPLETE for an asset in the
+wrong place, so placement is confirmed by census, never by status.
+
+**Live-verified API facts** (OpenAPI spec `https://ion.cesium.com/openapi.yaml`;
+the `cesium.com/learn/ion/rest-api/` page is a JS shell that fetches empty,
+the same trap as the Epic docs):
+
+| fact | value |
+|---|---|
+| `3DCaptureOptions` fields | exactly `sourceType`, `position`, `inputCrs`, `geometryCompression`, `textureFormat` |
+| `position` | `[longitude, latitude, height]`, EPSG:4326, height in metres **above the ellipsoid**; **longitude first** |
+| `position` vs `inputCrs` | position is "ignored if the source data already contains georeferencing information" — they are ALTERNATIVES, never sent together |
+| `textureFormat` (3D_CAPTURE) | `AUTO`, `WEBP`, `KTX2` (KTX2 is **not** legal for `3D_MODEL`) |
+| `geometryCompression` | `NONE`, `DRACO`, `MESHOPT`, `QUANTIZATION`; default `DRACO` |
+| `targetVersion` | **REMOVED from the schema** — the pre-2026-08-31 script sent `1.1`; it is gone |
+| repositioning after tiling | **not possible** — `PATCH /v1/assets/{id}` accepts only name/description/attribution |
+| `3D_MODEL` + `position` | staff-acknowledged bug: tiling fails. Use `3D_CAPTURE` |
+| local frame orientation | **Z-up East-North-Up, axis order preserved** — a 20×8×3 m probe returned 20×8×3 m |
+| geometry extents | read `root.metadata.properties.tightBoundingBox`, **not** `root.boundingVolume.box` (that is the padded octree root cell — it read 20×20×20 m for the 20×8×3 m probe) |
+
+Auth: an ion token with `assets:write` + `assets:read`, via `--token` or
+`CESIUM_ION_TOKEN`. Dependencies `requests`, `boto3`, `pyproj` — all three were
+missing from `requirements.txt` until 2026-08-31, so the script could not run.
+
+**PROJ trap:** `Transformer.from_crs('EPSG:9518','EPSG:4979')` succeeds offline
+and returns Z **unchanged**, having silently chosen a "ballpark vertical
+transformation". Every transformer in `modules/cesium_placement.py` passes
+`allow_ballpark=False`, which raises instead. The EGM2008 grid
+(`us_nga_egm08_25.tif`, ~80 MB) comes from cdn.proj.org and needs
+`PROJ_NETWORK=ON` or a local `projsync`.
 
 ```bat
 py -3.13 publish_cesium.py --name "IN-401 hull" ^
     --dir F:/na156_h2024_v2/exports/cluster_0_a2_c0/obj ^
-    --input-crs EPSG:32604 --description "NA156 H2024 hull" --poll
+    --flight-log F:/na156_h2024_v2/raw_images/flight_log_4N_UTM.txt ^
+    --description "NA156 H2024 hull" --poll --verify
 ```
 
 ### 17.3 Sketchfab
+
 
 `-uploadToSketchfab <APIToken>` is the only scriptable publish command. The GUI
 dialog offers Mesh and Texture quality presets `Original`, `High`, `Medium`,
@@ -1821,13 +1887,15 @@ running both in one command sequence. Never exercised here.
 
 ### 17.4 Batch driver
 
-`publish_batch.py --workspace <ws> --prefix "<name>" [--input-crs EPSG:…]
+`publish_batch.py --workspace <ws> --prefix "<name>" [--flight-log <log>]
 [--components …] [--dry-run]` loops `exports/<component>/obj` — the format
 **both** platforms recommend for photogrammetry — and drives
 `publish_cesium.py` / `publish_nira.py` per component. Each destination
 activates only when its credential env var is present (`CESIUM_ION_TOKEN`,
 `NIRACLIENT_DIR`); `--dry-run` previews every command without uploading.
-Results land in `<workspace>/publish_report.json`
+It resolves the cruise flight log itself and forwards it as the INDEPENDENT
+nav check on each mesh placement, and runs every Cesium publish with
+`--verify`. Results land in `<workspace>/publish_report.json`
 [VERIFIED-by-inspection: `publish_batch.py`].
 
 ---

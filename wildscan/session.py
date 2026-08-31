@@ -706,16 +706,17 @@ def build_commands(session: Session) -> list[StageCommand]:
         argv = [sys.executable, str(REPO / "publish_batch.py"),
                 "--workspace", session.results_root,
                 "--prefix", session.label or ws.root.name]
-        # The exports ARE georeferenced - ModelExportParamsOBJ_NiraParts
-        # sets MvsExportIsGeoreferenced with scale 1.0 and no offset, i.e.
-        # raw UTM metres - so uploading them with no CRS silently places
-        # the asset in the wrong part of the world. publish_batch resolves
-        # the EPSG from the workspace's own flight log when this is
-        # omitted; pinned here for the same reason --loss_tolerance is
-        # (audit 2026-08-07).
-        crs = workspace_input_crs(ws)
-        if crs:
-            argv += ["--input-crs", crs]
+        # Placement comes from each mesh's own .rsInfo sidecar, which records
+        # what the exporter actually did. The flight log is pinned here as the
+        # INDEPENDENT nav check on that reading - and pinned rather than left
+        # to publish_batch for the same reason --loss_tolerance is: the portal
+        # states what it ran (audit 2026-08-07). Before 2026-08-31 this passed
+        # --input-crs, which the exports needed because they carry raw UTM
+        # metres; that flag is gone, and the vertical it could never express
+        # was the reason every published wreck sat at the sea surface.
+        log = workspace_flight_log(ws)
+        if log:
+            argv += ["--flight-log", str(log)]
         if not (os.environ.get("CESIUM_ION_TOKEN")
                 or os.environ.get("NIRACLIENT_DIR")):
             argv.append("--dry-run")
@@ -726,9 +727,13 @@ def build_commands(session: Session) -> list[StageCommand]:
     return commands
 
 
-def workspace_input_crs(ws: Workspace) -> str | None:
-    """``'EPSG:32654'`` for the workspace's imagery, or None for a
-    local-frame campaign (no zone tag anywhere)."""
+def workspace_flight_log(ws: Workspace) -> Path | None:
+    """The workspace's zone-tagged flight log, or None for a local-frame
+    campaign (no zone tag anywhere).
+
+    The merge output is searched first: the exported components were built
+    against the merge's union log.
+    """
     from modules.flight_logs import crs_for_flight_log  # noqa: PLC0415
     candidates = list(_find_flight_logs(ws.raw_images)) or \
         list(_find_flight_logs(ws.root))
@@ -736,10 +741,20 @@ def workspace_input_crs(ws: Workspace) -> str | None:
     if merge:
         candidates = sorted(merge.glob("flight_log*_UTM.txt")) + candidates
     for path in candidates:
-        crs = crs_for_flight_log(str(path))
-        if crs:
-            return crs
+        if crs_for_flight_log(str(path)):
+            return path
     return None
+
+
+def workspace_input_crs(ws: Workspace) -> str | None:
+    """``'EPSG:32654'`` for the workspace's imagery, or None.
+
+    No longer what places an asset - that comes from each mesh's `.rsInfo`
+    sidecar - but still the quickest way to state a workspace's zone.
+    """
+    from modules.flight_logs import crs_for_flight_log  # noqa: PLC0415
+    log = workspace_flight_log(ws)
+    return crs_for_flight_log(str(log)) if log else None
 
 
 def write_camera_records(session: Session) -> Path | None:

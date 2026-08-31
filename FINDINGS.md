@@ -3097,6 +3097,251 @@ were measured on an M5 MacBook Pro (no CUDA) unless stated.
   M:\ON2026_run3\config\calib_arm.json. Evidence:
   M:\ON2026_run3\_agent\fixture_cells\cells_verdict.json. (2026-08-28) ESTABLISHED
 
+## [CESIUM] 2026-08-31 - vertical datum: exported Z is MSL depth, not ellipsoidal height
+
+Source tag **[CESIUM]**. Established while building the ion publish path.
+
+- **The pipeline's vertical is an ORTHOMETRIC (sea-surface / MSL) height, not
+  an ellipsoidal one.** `geoall.py:320` reads the ROV Kalman depth and stores
+  `DEPTH = -abs(kalman_depth)`, i.e. negative-down metres below the
+  instantaneous sea surface; `apply_camera_position_offset` then subtracts the
+  camera's `down_m` mount offset (`geoall.py:161`), and the result is written
+  as the `ALTITUDE_EST` column of the flight log (`geoall.py:816`). A pressure
+  depth is measured from the sea surface, which approximates MSL, which
+  approximates the GEOID - it is NOT a height above the WGS84 ellipsoid.
+  (2026-08-31) ESTABLISHED
+- **That Z survives into the exported OBJ unchanged, as raw UTM metres.** Both
+  OBJ profiles set `MvsExportIsGeoreferenced=0x1` with `MvsExportMove{X,Y,Z}=0.0`
+  and `MvsExportScale{X,Y,Z}=1.0`, so no shift or scale is applied on export.
+  `modules/flight_logs.py::crs_for_flight_log` supplies the HORIZONTAL CRS
+  (`EPSG:326xx`/`327xx`) and `publish_batch.py::resolve_input_crs` passes it to
+  the uploader - but `EPSG:326xx` is a 2D projected CRS, so nothing in the
+  chain ever declares what the third coordinate means. Any consumer that reads
+  it as 3D (Cesium ion does) treats an MSL depth as an ellipsoidal height.
+  (2026-08-31) ESTABLISHED
+- **Error magnitude = the geoid undulation N, and it is not small.** Measured
+  with EGM2008 via pyproj (`EPSG:9518` -> `EPSG:4979`): Papahanaumokuakea
+  (-161, 24) N = **+4.50 m**; Oahu (-158, 21.4) N = **+15.85 m**; Gulf of
+  Mexico (-90, 27) N = **-27.05 m**; Solomon Sea / UTM 57S (156, -9) N =
+  **+70.37 m** - and UTM 57S is the zone the shared `FlightLogParams.xml`
+  template carries. Global range is about -106 m to +85 m. Omitting the
+  correction sinks (or floats) the whole asset by N metres, uniformly.
+  Correct arithmetic: `h = H + N`, where `H = -depth`. (2026-08-31) ESTABLISHED
+- **PROJ applies a SILENT ZERO correction when the geoid grid is absent.**
+  `Transformer.from_crs('EPSG:9518','EPSG:4979')` succeeds offline and returns
+  the input Z UNCHANGED, selecting "ballpark vertical transformation, without
+  ellipsoid height to vertical height correction". No exception, no error - a
+  textbook silent-success mode. The required grid `us_nga_egm08_25.tif` is not
+  in the pyproj wheel; PROJ only fetches it when network access is explicitly
+  enabled (`PROJ_NETWORK=ON` / `pyproj.network.set_network_enabled(True)`), and
+  a `TransformerGroup` then reports the good operations as
+  `unavailable_operations`. **Any geoid code here must assert the chosen
+  operation is not a ballpark fallback and fail loudly if it is** - verify by
+  census, never by exit status. (2026-08-31) ESTABLISHED
+- **`requests` and `boto3` - the two hard dependencies of `publish_cesium.py` -
+  are NOT installed on this box and are absent from `requirements.txt`.** The
+  script as committed could never have run here; it exits at `require_deps()`.
+  `pyproj` 3.7.2 / PROJ 9.5.1 IS present (pulled in by geopandas).
+  (2026-08-31) ESTABLISHED
+
+- **The three assets already published to this ion account sit at the SEA
+  SURFACE, not at survey depth.** Read back live from the account (token
+  scopes `assets:read` + `assets:list`, 2026-08-31) by fetching
+  `GET /v1/assets/<id>/endpoint`, then the signed `tileset.json`, and decoding
+  `root.transform` (a column-major 4x4 whose translation is the ECEF origin of
+  the tileset's local frame):
+
+  | asset | id | lon | lat | h (ellipsoidal) | N (EGM2008) |
+  |---|---:|---:|---:|---:|---:|
+  | `NA149_H1953_CliffFace`   | 2017323 | -164.14844 |  8.29153 | **+2.1 m** | +16.71 |
+  | `NA156_H2019_Rock_Coral`  | 2335997 | -157.08013 | 18.81447 | **+0.0 m** |  +6.58 |
+  | `NA156_H2011_Goosefish`   | 2336618 | -156.74050 | 21.29892 | **+23.7 m** | +11.03 |
+
+  The decode was validated before being believed: the rotation block is
+  orthonormal (`R@R.T - I` max error 4.7e-16), has `det(R) = +1`, and matches
+  the canonical ENU-to-ECEF rotation for the decoded lon/lat to 4.7e-16 - so
+  it is a pure East-North-Up frame and `h` is genuinely the height the model
+  hangs at. These are deep-water ROV sites; every one of them is placed within
+  ~24 m of the ellipsoid. **Horizontal placement survived; the vertical did
+  not.** `2335997`'s h of exactly 0.00 m is the signature of a height that was
+  defaulted rather than carried. `tileset.json` also exposes
+  `asset.extras.ion = {"georeferenced": true, "movable": true}`, so ion does
+  record a georeferenced flag independent of whether the height is meaningful.
+  Cause not determined from the API alone (candidates: local-frame/"shifted
+  project output" export, or the GUI "Share to Cesium ion" path, which asset
+  2336618's description - "Created in RealityCapture by Capturing Reality" -
+  shows was used at least once). (2026-08-31) ESTABLISHED
+- **`root.transform` + `tileset.json` is a working, human-free VERIFICATION
+  ORACLE for placement.** After any upload, the asset's own tileset states
+  where ion put it, to sub-millimetre precision, without a human looking at a
+  globe. Any publish path here must use it: assert the decoded lon/lat is
+  within tolerance of the survey centroid AND that `h` is within tolerance of
+  `-depth + N`. This is the census that replaces trusting an upload's exit
+  status. (2026-08-31) ESTABLISHED
+
+- **The `.rsInfo` sidecar is the export's placement record, and it is
+  authoritative.** `<model>.<ext>.rsInfo` (written whenever
+  `MvsMeshExportInfoFile=true`, which every repo preset sets) carries a
+  `<Model>` tag with `globalCoordinateSystem` (PROJ string),
+  `globalCoordinateSystemName` (`"epsg:32653 - WGS 84 / UTM zone 53N"`),
+  `globalCoordinateSystemWkt` (full WKT), `exportCoordinateSystemType`, and a
+  16-value `<transformToModel>` matrix. The publish path should read the CRS
+  from HERE rather than re-deriving it from the flight-log filename - the
+  sidecar states what the exporter actually did. Evidence:
+  `F:\NA168\Zeuss_NA168_H2080\NewModels\NA168_H2080_20Jan.obj.rsInfo`.
+  (2026-08-31) ESTABLISHED
+- **Exported OBJ vertices are NOT necessarily in the global CRS - the NA168
+  H2080 export sits in a scrambled local frame ~350 km from its true
+  position.** Vertex bbox X -47972..-47960, Y 396903..396915,
+  Z -348956..-348926, while the site is really at East ~348355, North ~396318,
+  depth ~-585 m. The sidecar's `exportCoordinateSystemType="2"` and
+  `settingsRotation="-90 -90 0"` are the signature. **Uploading such an OBJ
+  with only a horizontal CRS - exactly what `publish_cesium.py --input-crs`
+  does today - places the asset hundreds of kilometres away.**
+  (2026-08-31) ESTABLISHED
+- **`transformToModel` decoded, settled empirically against independent nav.**
+  For `NA168_H2080_20Jan.obj` the 16 values are
+  `0 0 1 348355.8364815  1 0 0 396321.994618801  0 1 0 -587.41083970014  0 0 0 1`.
+  Read as ROW-MAJOR with the translation in the last column and applied as
+  `M @ v`, the output components come out ordered **(Z, E, N)**; permuting by
+  `(1,2,0)` gives `(E, N, Z)`. Net effect for this file is a pure per-axis
+  translation: `E = x + 396321.994618801`, `N = y - 587.41083970014`,
+  `Z = z + 348355.8364815`.
+  **How it was settled:** all 178,269 OBJ vertices were transformed under every
+  combination of {row-major, column-major} x {`M@v`, `v@M`} x all six output
+  permutations, and scored by the fraction landing inside the envelope of the
+  dive's own flight log (`raw_images/flight_log_53N_UTM.txt`, 28,456 valid
+  rows: East 348265.00-349295.21, North 396250.01-396914.12,
+  Alt -1030.91..-532.16). **Exactly one interpretation scored 1.0000; every
+  rival scored 0.3333.** Transformed model bbox: E 348349.5-348362.2,
+  N 396315.4-396327.2, Alt -600.5..-569.9 - a ~13 x 12 x 31 m site wholly
+  inside the dive envelope. (2026-08-31) ESTABLISHED
+- **Therefore the uploader must AUTO-DETECT the frame, never assume one.**
+  `exportCoordinateSystemType` has been observed as `1` (LAS: identity
+  `transformToModel`, already global -
+  `D:\NA156\H2024\mapping\H2024_sub.las.rcInfo`) and `2` (OBJ: local frame plus
+  a non-trivial transform). The repo's own OBJ presets set
+  `MvsExportcoordinatesystemtype` to `0` (`ModelExportParamsObj_Metric`) and
+  `3` (`ModelExportParamsOBJ_NiraParts`), neither of which has yet been seen in
+  a written sidecar, so further behaviours are possible. The safe design is to
+  apply each candidate interpretation and accept only the one whose output
+  falls inside the declared CRS's valid range - and to FAIL LOUDLY when zero,
+  or more than one, candidate qualifies. (2026-08-31) ESTABLISHED
+
+- **RESOLVED: Cesium ion honours below-ellipsoid heights EXACTLY. The depth
+  was never being sent.** Live probe (asset `5171554`, 2026-08-31,
+  `testing/probe_cesium_depth.py`): a 435-byte OBJ box uploaded with
+  `sourceType=3D_CAPTURE` and `position=[133.634688, 3.584574, -512.46]`
+  tiled to COMPLETE and read back from its own `tileset.json` at
+  **h = -512.46 m, error -0.000 m**. This settles the owner's standing
+  complaint that "Cesium appears to ignore depth". ion neither refuses nor
+  clamps a negative height; the historical sea-surface placements come from
+  the depth never reaching the API. RealityScan's own Help is explicit about
+  why: "Model does not have to be georeferenced to be uploaded, since it is
+  possible to upload a model and later define its approximate position"
+  (`Help\en-US\tools\cesiumion.htm`) - the Share button uploads
+  ungeoreferenced and the position is set by hand afterwards, at roughly sea
+  level. Asset `2336618`, sitting at h = +23.7 m, is described "Created in
+  RealityCapture by Capturing Reality". (2026-08-31) ESTABLISHED
+- **The ion local frame for a positioned 3D_CAPTURE upload is Z-up
+  East-North-Up, axis order preserved.** The probe box was deliberately
+  asymmetric - 20 m East x 8 m North x 3 m Up - and came back as
+  `tightBoundingBox` half-axes `(10,0,0) (0,4,0) (0,0,1.5)` centred on the
+  origin: 20 x 8 x 3 m in the order sent, no permutation, no scaling. So a
+  mesh localised into ENU metres needs NO axis swap and NO rotation before
+  upload. (2026-08-31) ESTABLISHED
+- **`root.boundingVolume.box` is NOT the geometry - it is the tiler's padded
+  octree root cell.** For the 20 x 8 x 3 m probe it read 20 x 20 x 20 m
+  (a cube, centre `(0, 6, 8.5)`), which would have been misread as an axis
+  permutation. The true extents live in
+  `root.metadata.properties.tightBoundingBox` (schema class `tile`, semantic
+  `TILE_BOUNDING_BOX`). Any shape check must read the metadata, not the
+  bounding volume - this bug was written and then caught by the probe.
+  (2026-08-31) ESTABLISHED
+- **ion API contract as of 2026-08-31, from the live OpenAPI spec at
+  `https://ion.cesium.com/openapi.yaml`** (the `cesium.com/learn/ion/rest-api/`
+  page is a JS shell and fetches empty, the same trap as the Epic docs):
+  `3DCaptureOptions` has exactly FIVE fields - `sourceType`, `position`,
+  `inputCrs`, `geometryCompression`, `textureFormat`. `position` is
+  "The origin of the tileset in [longitude, latitude, height] format in
+  EPSG:4326 coordinates and height in meters", **longitude first**, and is
+  "ignored if the source data already contains georeferencing information" -
+  so `position` and `inputCrs` are alternatives, never to be sent together.
+  `textureFormat` for 3D_CAPTURE is [AUTO, WEBP, KTX2] (KTX2 is NOT legal for
+  3D_MODEL); `geometryCompression` is [NONE, DRACO, MESHOPT, QUANTIZATION],
+  default DRACO. **`targetVersion` no longer exists in any request schema** -
+  the repo's previous `publish_cesium.py` sent `targetVersion: '1.1'`, now
+  removed. `PATCH /v1/assets/{id}` accepts ONLY name/description/attribution,
+  so **there is no supported way to reposition an asset after tiling** -
+  placement must be right at creation. (2026-08-31) ESTABLISHED
+- **A staff-acknowledged ion bug makes sourceType choice load-bearing:**
+  `3D_MODEL` + `position` fails tiling, while `3D_CAPTURE` + `position`
+  completes. 3D_CAPTURE is in any case the documented type for "An OBJ,
+  COLLADA, or glTF model created through photogrammetry processes", and is
+  what this repo sends. (2026-08-31) ESTABLISHED
+
+- **END-TO-END VERIFIED: a depth-correct asset now exists on the account.**
+  `NA168 H2080` published by the rewritten `publish_cesium.py` as ion asset
+  **`5171556`** (2026-08-31, 18 files / 74.3 MB, tiled COMPLETE). Independent
+  read-back of its own `tileset.json` - decoded outside the publishing code -
+  gives lon 133.634688, lat 3.584574, **h = -512.46 m ellipsoidal**; with the
+  local EGM2008 N of +72.69 m that is **-585.16 m below the sea surface**,
+  which falls inside the dive's own nav depth range (-1030.91 .. -532.16 m).
+  The uploader's own gate agreed: horizontal 0.00 m, vertical -0.00 m, and
+  extents 12.7 x 11.7 x 30.6 m asked against 12.7 x 11.7 x 30.6 m reported.
+  Contrast the three pre-existing assets on the same account at +2.1, +0.0 and
+  +23.7 m. (2026-08-31) ESTABLISHED
+- **The two failure modes behind "Cesium ignores depth", now separated.**
+  Neither is ion's doing:
+  1. **`Share to Cesium ion` never georeferences.** [OFFICIAL: tools/cesiumion]
+     "Model does not have to be georeferenced to be uploaded, since it is
+     possible to upload a model and later define its approximate position."
+     The asset lands where it is hand-placed - about sea level.
+  2. **The Cesium 3D Tiles LoD export DOES carry placement** - [OFFICIAL:
+     tools/lodexport] "Provided that the model being exported is
+     geo-referenced, the geospatial location of the model is preserved" - but
+     the project CRS is 2D (`+proj=utm +zone=53 +datum=WGS84 +units=m
+     +no_defs`) and declares NO vertical datum, while the Z it carries is a
+     depth below the sea surface. Cesium reads it as height above the
+     ellipsoid, so the model lands N metres out (+72.69 m at NA168). And
+     because ion hosts a pre-tiled 3D Tiles export as-is without reprocessing,
+     there is no later stage at which that could be corrected.
+  The fix for both is the same and lives outside RealityScan: convert the
+  vertical ourselves and pass `options.position`. (2026-08-31) ESTABLISHED
+
+- **Export-stage readiness for the publish path: two of three requirements are
+  pinned, the third is UNVERIFIED, and the stage has never run here.** Audited
+  2026-08-31 against `ExportDeliverables.bat` and its three presets:
+  - `MvsMeshExportInfoFile=true` in all three, so the `.rsInfo` placement
+    record IS written. Now guarded by a test - dropping it would not fail the
+    export, it would silently make every later upload unplaceable.
+  - `MvsExportIsGeoreferenced=0x1` and `MvsExportMove{X,Y,Z}=0.0` /
+    `MvsExportScale{X,Y,Z}=1.0` in all three, so no hidden shift or scale is
+    applied. Also now test-guarded: a non-zero Move would displace the
+    geometry WITHOUT touching the `.rsInfo` the placement is derived from,
+    which is undetectable downstream.
+  - **`MvsExportcoordinatesystemtype=3` (OBJ and FBX) and `0` (PLY) are the
+    open risk.** The Help's dialog options in order are Grid plane / Project
+    Output / Shifted project output / Same as XMP, and the `0..3` indexing of
+    that list is `[INFERRED]`, never confirmed. Under that reading the repo
+    exports as "Same as XMP" (3) and "Grid plane" (0) - **neither is "Project
+    Output"** (1), the one that would guarantee the project CRS. And **no
+    workflow `.bat` pins a project or output coordinate system at all**
+    (grep for `coordinatesystem` across `RS_CLI/Scripts/` returns nothing),
+    so the export CRS rests entirely on scene state left by the flight-log
+    import.
+  - **No `exports/` directory exists on any volume**, so `ExportDeliverables`
+    has never produced output on this machine and the chain is untested end to
+    end. The single `.rsInfo` verified (NA168 H2080) carries
+    `exportCoordinateSystemType="2"`, which is NOT what either repo preset
+    sets - it came from a manual/GUI export, not from this pipeline.
+  **Consequence is bounded, not silent:** `modules/cesium_placement.py` reads
+  whatever the sidecar declares and REFUSES when the CRS is absent or no
+  reading of `transformToModel` validates, so the failure mode on a first real
+  export is a loud stop at `publish_cesium.py --dry-run`, not a misplaced
+  asset. Cheapest probe: run one export, then `--dry-run` and read the
+  reported lat/lon/depth. (2026-08-31) OPEN
+
 ## 2026-08-23 — onr2 stereo rig (Sony ILX-LR1 pair, 483 images), RealityScan 2.2.0.119430
 
 Source for all of these: a 17-arm session driving RealityScan from the CLI on an external

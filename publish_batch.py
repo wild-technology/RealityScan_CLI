@@ -14,7 +14,7 @@ Results land in <workspace>/publish_report.json so WildScan can show them.
 
 Usage:
     py -3.13 publish_batch.py --workspace F:/na156_h2024_v2 \
-        --prefix "IN-401" [--input-crs EPSG:32604] [--dry-run]
+        --prefix "IN-401" [--flight-log <log>] [--dry-run]
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ REPO = Path(__file__).resolve().parent
 logger = logging.getLogger('publish_batch')
 
 
-def resolve_input_crs(workspace: Path) -> str | None:
-    """``'EPSG:32654'`` from the workspace's own flight log, or None.
+def resolve_flight_log(workspace: Path) -> Path | None:
+    """The workspace's own zone-tagged flight log, or None.
 
     Searches the merge output (whose union log is what the exported
     components were built against) before raw_images/ and the root, and
@@ -52,8 +52,22 @@ def resolve_input_crs(workspace: Path) -> str | None:
     try:
         assert_one_zone([str(p) for p in tagged], str(workspace))
     except ValueError as exc:
-        raise SystemExit(f'cannot resolve an input CRS: {exc}') from None
-    return crs_for_flight_log(str(tagged[0]))
+        raise SystemExit(f'cannot resolve a flight log: {exc}') from None
+    return tagged[0]
+
+
+def resolve_input_crs(workspace: Path) -> str | None:
+    """``'EPSG:32654'`` from the workspace's own flight log, or None.
+
+    Kept as a cross-check only. The CRS that actually places a mesh now
+    comes from its ``.rsInfo`` sidecar, which records what the exporter did
+    rather than what the flight-log filename implies.
+    """
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from modules.flight_logs import crs_for_flight_log
+    log = resolve_flight_log(workspace)
+    return crs_for_flight_log(str(log)) if log else None
 
 
 def run(argv: list[str], dry_run: bool) -> dict:
@@ -79,8 +93,10 @@ def main() -> int:
     parser.add_argument('--workspace', required=True)
     parser.add_argument('--prefix', required=True,
                         help='asset-name prefix, e.g. the wreck name')
-    parser.add_argument('--input-crs', default=None,
-                        help='EPSG of the georeferenced exports')
+    parser.add_argument('--flight-log', default=None,
+                        help='flight log for this cruise. Its nav envelope '
+                             'is an independent check on how each mesh is '
+                             'placed (default: resolved from the workspace)')
     parser.add_argument('--components', nargs='*', default=None,
                         help='subset of component names (default: all exported)')
     parser.add_argument('--dry-run', action='store_true')
@@ -90,24 +106,21 @@ def main() -> int:
     if not exports.is_dir():
         raise SystemExit(f'no exports directory under {args.workspace}')
 
-    # The exports are georeferenced: ModelExportParamsOBJ_NiraParts sets
-    # MvsExportIsGeoreferenced with scale 1.0 and no offset, i.e. raw UTM
-    # metres. Publishing them with no CRS silently places the asset in the
-    # wrong part of the world, and nothing in the portal path supplied one
-    # (audit 2026-08-07). Resolve it from the workspace's own flight log
-    # when --input-crs was not given, and REFUSE when a zone-tagged log
-    # exists but no CRS could be derived from it.
-    input_crs = args.input_crs
-    if not input_crs:
-        input_crs = resolve_input_crs(Path(args.workspace))
-        if input_crs:
-            logger.info('input CRS resolved from the workspace flight log: '
-                        '%s', input_crs)
-        else:
-            logger.warning(
-                'no zone-tagged flight_log*_UTM.txt under %s - publishing '
-                'WITHOUT an input CRS (correct only for a local-frame '
-                'campaign). Pass --input-crs to be explicit.', args.workspace)
+    # publish_cesium now takes the CRS from each mesh's own .rsInfo sidecar,
+    # which records what the exporter actually did rather than what a
+    # filename implies. The flight log is still worth passing: its nav
+    # envelope is an INDEPENDENT check on the transformToModel reading, and
+    # a disagreement between the two is exactly the signal we want.
+    flight_log = Path(args.flight_log) if args.flight_log else \
+        resolve_flight_log(Path(args.workspace))
+    if flight_log:
+        logger.info('flight log for nav cross-check: %s (%s)',
+                    flight_log, resolve_input_crs(Path(args.workspace)))
+    else:
+        logger.warning(
+            'no zone-tagged flight_log*_UTM.txt under %s - publishing without '
+            'the independent nav check. Placement will rest on the .rsInfo '
+            'sidecar alone. Pass --flight-log to be explicit.', args.workspace)
 
     cesium_token = os.environ.get('CESIUM_ION_TOKEN')
     nira_dir = os.environ.get('NIRACLIENT_DIR')
@@ -136,9 +149,12 @@ def main() -> int:
         entry: dict = {'component': comp.name, 'asset_name': name}
         if cesium_token or args.dry_run:
             argv = [sys.executable, str(REPO / 'publish_cesium.py'),
-                    '--name', name, '--dir', str(comp / 'obj'), '--poll']
-            if input_crs:
-                argv += ['--input-crs', input_crs]
+                    '--name', name, '--dir', str(comp / 'obj'),
+                    '--poll', '--verify']
+            if flight_log:
+                argv += ['--flight-log', str(flight_log)]
+            if args.dry_run:
+                argv.append('--dry-run')
             entry['cesium'] = run(argv, args.dry_run)
         if nira_dir or args.dry_run:
             argv = [sys.executable, str(REPO / 'publish_nira.py'),

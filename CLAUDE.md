@@ -183,7 +183,9 @@ Exceptions that must NOT be renamed:
 - `run_models.py` — per-component model generation, scale-gated.
 - `publish_nira.py` / `publish_cesium.py` / `publish_batch.py` —
   deliverable publishers. Nira wants OBJ (not FBX) and refuses PLY point
-  clouds; Cesium ion takes raw OBJ + 3D_CAPTURE.
+  clouds. Cesium ion takes raw OBJ as `sourceType=3D_CAPTURE`, placed by
+  `options.position` — see `modules/cesium_placement.py` below, and never
+  publish without `--verify`.
 
 **RealityScan execution — the ONLY place RealityScan is executed**
 
@@ -281,6 +283,18 @@ Exceptions that must NOT be renamed:
 - `modules/align_fingerprint.py` — align-input fingerprinting, so retries,
   resumes and merges are nav-aware.
 - `modules/export_deliverables.py` — the Python side of the export stage.
+- `modules/cesium_placement.py` — where a mesh belongs on the WGS84 globe.
+  Reads the export's `.rsInfo` for the CRS and `transformToModel`, DERIVES
+  which reading of that matrix is correct (validated against the CRS area of
+  use, the dive's nav envelope, and a determinant test that rules out
+  mirrored readings), then converts the anchor's SEA-SURFACE depth to an
+  ELLIPSOIDAL height through EGM2008 and localises the mesh into East-North-Up
+  metres. **The vertical is the whole point:** `geoall.py` writes
+  `-abs(kalman_depth)`, i.e. a depth below the sea surface, and Cesium reads
+  every height as above the ellipsoid — the gap is the geoid undulation, up to
+  +72.7 m on this repo's own data. PROJ silently applies a ZERO correction
+  when the geoid grid is missing, so every transformer here passes
+  `allow_ballpark=False`.
 - `modules/file_metadata_parser.py` — image metadata extraction.
 - `module_base/settings_store.py` — persists last-entered prompt answers to
   `rs_settings.json` (repo root, gitignored) and offers them as defaults.
