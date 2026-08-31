@@ -1,7 +1,7 @@
 # COLMAP unified fact base — FROZEN COPY (received from owner 2026-07-24)
 
 PROVENANCE: pasted by the owner into the RealityScan_CLI merge session on
-2026-07-24. Canonical home is the colmap_studio repo on the BIMBOX machine
+2026-07-24. Canonical home is the colmap_studio repo on the HONEYBADGER machine
 (2× RTX 5090 box); the itsmagicIswear parent log lives at
 `C:\Users\jonat\Desktop\CoyoteThings\itsmagicIswear\FINDINGS.md` (frozen)
 on that machine. **Do not append here** — this copy exists so the
@@ -29,7 +29,7 @@ This file is the raw fact base feeding the eventual documentation guide;
 RealityScan material lives in `docs/REALITYSCAN_NOTES.md` (different engine,
 different workflow — kept separate by design).
 
-**Machine context (all entries):** BIMBOX — 2× RTX 5090 (sm_120), Threadripper
+**Machine context (all entries):** HONEYBADGER — 2× RTX 5090 (sm_120), Threadripper
 7980X (64c/128t), Windows 11, no admin. COLMAP 4.1.1 official CUDA
 (`C:\Users\jonat\colmap\bin\colmap.exe`) + self-built CASPAR_ENABLED
 (`C:\Users\jonat\colmap-caspar\colmap.exe`), both commit a0d785f (2026-07-17).

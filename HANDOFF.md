@@ -1,5 +1,129 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-08-07 — ON2026 MODEL DELIVERED + NAV PREP BLOCKED, read this first
+
+Different dataset and different lineage from the H2024 line below: ON2026
+RH0042/RH0043 Voyis stereo, 38,948 images, `M:\ON2026 COLMAP processing\rs\`.
+Nothing running. Rebased onto `9fcd876` and **PUSHED** 2026-08-07
+(origin/main = d68f070); clean-sweep complete, 175 tests green.
+
+**⚠ STRANDED COMMITS ON THE OTHER MACHINE (blocking doc work here).** A
+Honeybadger-side session committed `085b89c` (a `docs/rs-reference/`
+manual: 14 files, 27,703 lines, +5 FINDINGS entries) and `e4a4d10`
+(full CLAUDE.md rewrite + FROZEN header on the NA167 session notes) —
+**never pushed**. Verified absent from origin and from both local
+checkouts (2026-08-07). Until that push lands: make NO further edits to
+`CLAUDE.md` or the NA167 notes header; route any "canonical CLI
+reference" content toward the incoming `docs/rs-reference/`; expect a
+conflict-bearing rebase of this branch's 7 commits when it arrives.
+That session also holds an un-integrated **D7 refutation** of the
+merge-mechanism identity-fusing claim — local merge docs are
+pre-D7 and the claim must be treated as CONTESTED until the evidence
+arrives. Claim-by-claim status: `testing/VERIFICATION_BACKLOG.md` §A.
+**First action for any session reading this: ask the owner to push from
+the Honeybadger box.**
+
+### THE DELIVERABLE
+
+`M:\ON2026 COLMAP processing\rs\final\` — 96.5 GB, two exports of one model:
+
+| artifact | detail |
+|---|---|
+| `ON2026_final.obj` | 9.37 GB, **30,160,616 verts / 60,322,228 faces**, scale 100 (Unreal preset) |
+| `metric\ON2026_final_metric.obj` | same mesh at **true scale** — `.rsInfo` `settingsScale="1 1 1"`, vertex 0 `-1.7990 11.0154 0.4367` vs the Unreal build's `-179.8996 1101.5427 43.6697` |
+| textures | 4 × diffuse + 4 × normal, each **8192 × 8192** (per set) |
+| `ON2026_final.rsproj` | 17.2 MB + 48.5 GB data |
+| `ON2026_premodel_checkpoint.rsproj` | +38.7 GB — rollback point taken **before** any model step |
+
+Recipe: texture 4×8k → 4× simplify/clean → unwrap → reproject → export →
+save, 4 h, `lastError:0` throughout, final `rev:147`. Driven by
+`ModelToFinal.bat`, which **attaches** to a running instance — necessary
+because the scene was reconstructed interactively in a GUI session and
+every other workflow opens by calling `startRealityScan.bat`, whose
+`-newScene -deleteAutosave` would have destroyed 9 h of reconstruction.
+
+**The texture was built on UNCORRECTED imagery** — colour correction
+aborted all four attempts and never completed (no completion line in the
+app log). That is a quality ceiling, not a defect in the run. Re-texturing
+from the checkpoint is the fix if it matters.
+
+### DECISION IN FORCE (owner, pending)
+
+Three questions block the nav re-run; nothing on that track can start
+until they are answered:
+
+1. **Where does the updated nav come from?** Nothing newer than the 08-04
+   logs exists on `M:`. Candidates: generate from raw Subsonus/DVL/INS
+   under `M:\ON2026\RH00xx`; an existing file elsewhere; or Voyis vSLAM.
+2. **Is the ON2026 local Euclidean frame ENU or NED?** Decides whether YPR
+   needs converting. Settle it against the bundle-adjusted poses already
+   in `ON2026_final.rsproj`.
+3. **Validation scope** — smoke fixture A/B, full-zone A/B, or straight to
+   the full 38,948 run.
+
+**DECIDED (owner, 2026-08-07):** `ModelToFinal.bat` now matches
+`GenerateModel.bat` on both formerly-open recipe calls — default texture
+preset is `4x8k` (the 2026-07-31 8K cap; `highpoly` = 2×16K remains
+available explicitly) and simplify is `SimplifySmooth_80per_Params.xml`
+(80%/pass, 0.80⁴ ≈ 41% of input triangles). Note the 2026-08-04 ON2026
+deliverable predates this and was simplified at 70%/pass (≈ 24%).
+
+### READ BEFORE PROPOSING ANY ORIENTATION CELL
+
+The `[ON2026]` entries in the repo-root `FINDINGS.md` supersede an earlier,
+wrong analysis produced in this session. Specifically:
+
+- ON2026's orientation accuracies are 90° on all 38,948 rows because
+  `--ori-acc` defaults to 90 in `colmap_studio/pipeline/export_rs_flightlog.py`
+  — **not** because anything is broken.
+- The accuracy A/B has **already been run and lost**: colmap_studio
+  C-20260730-09 (2,262 images) makes 0.02 m / 90° the production winner;
+  tight 10° orientation priors were actively worse. Do not propose it
+  fresh — the open question is whether TRUE roll changes that.
+- The pitch-convention "conflict" is now RECONCILED as two DIFFERENT
+  degeneracies (see the updated `[ON2026]` entry): 1.3% = exporter-side,
+  near-vertical views, already mitigated in the exporter; 24.9% = frames
+  near pitch 90 (horizontal), which is RealityScan's own candidate YPR
+  singularity (middle rotation of intrinsic Roll→Pitch→Yaw), the same
+  degeneracy the H2023 line flags for Port at ~88°. The 24.9% reading is
+  contingent on the unpinned Euler-order import settings — still OPEN, not
+  established.
+- The standing gate elsewhere in this log still applies: pin Euler order
+  and camera mount in `FlightLogParams.xml` before any further cell.
+
+### LOOSE ENDS, RANKED
+
+1. Answer the three questions above.
+2. ~~One template, two frames, no guard~~ **FIXED later the same day
+   (177a81a)**: `write_flight_log_params` takes `frame=`, the shared
+   template is UTM again, `FlightLogParamsLocal.xml` carries ON2026's
+   local frame, and `ensure_frame_match` hard-fails a mismatched pair.
+   (`ab_orientation_priors.py` now lives in `archive/campaign_drivers/`.)
+3. Re-texture ON2026 from the checkpoint if colour correction matters.
+4. Two ON2026 model paths now coexist: `ModelToFinal.bat` (attach to a live
+   scene) and `testing/run_on2026_wreck.py:172` → `GenerateModel.bat`
+   (headless from an on-disk scene, no `RS_HEADLESS` in its ENV block).
+   Different lineages; keep them labelled.
+5. `testing/NA167_SESSION_NOTES.md` has duplicate B10/B11 entries
+   (pre-existing upstream, left alone) while `CLAUDE.md` says "B1–B11".
+
+### Exact next commands
+
+Re-inspect the flight-log variants behind the `[ON2026]` nav entries:
+
+```
+cd "M:\ON2026 COLMAP processing"
+py -3 -c "import csv,statistics as st; rows=[r for r in csv.reader(open('rs/flight_log_zones.txt',newline=''),delimiter=';') if len(r)>=13][1:]; print('n',len(rows)); [print(n, st.median(float(x[i]) for x in rows)) for n,i in [('pitch',8),('roll',9),('yaw_acc',10)]]"
+```
+
+Finish a model on an instance you did NOT boot (attaches; never resets a
+scene; `*` = first available instance):
+
+```
+set "RS_SAVE_PATH=<out>\<name>.rsproj"
+modules\realityscan_interface\RS_CLI\Scripts\ModelToFinal.bat "*" "<outdir>" <name> 4x8k true objmetric false false
+```
+
 ## 2026-07-29 — H2024 COMPLETE + DELIVERABLE TOOLING, read this first
 
 **Committed and pushed**: `656915b` (pipeline fixes, tests 115→143) and the
@@ -196,8 +320,11 @@ py -3.13 -m pytest testing -q
 ```
 
 ```bash
-py -3.13 testing/run_h2024_v2.py --skip_merge
+py -3.13 archive/campaign_drivers/run_h2024_v2.py --skip_merge
 ```
+*(path updated 2026-08-07: campaign drivers moved to
+`archive/campaign_drivers/` in the consolidation; historical narrative
+above left as written)*
 
 To re-run the merge only (aligns are skipped when components exist), edit the
 `merged5` output name in `run_merge` first so nothing is overwritten.
@@ -743,7 +870,7 @@ P1 — research follow-ups queued by the reconciliation:
 5. **Batcher common-image-pool change** (imagelists or hardlinks
    instead of per-zone copies) so future dives merge by identity.
 6. Copy the LilyJean/COLMAP fact base off Honeybadger
-   (C:\Users\jonat\itsmagicIswear\FINDINGS.md — absent here); then the
+   (C:\Users\jonat\Desktop\CoyoteThings\itsmagicIswear\FINDINGS.md — PRESENT on this machine as of 2026-08-07); then the
    Q-05 CLAHE reconciliation matrix (docs/COLMAP_CROSSOVER.md).
 7. Zone_1 +37 census delta attribution (merge effect vs
    census-mapping nuance) — open from the growth run.
@@ -1080,7 +1207,7 @@ Other findings from the first runs:
 
 ## PENDING RECONCILIATION with LilyJean/COLMAP findings (filed 2026-07-23)
 
-The LilyJean fact base (`C:\Users\jonat\itsmagicIswear\FINDINGS.md`, 34 dated/
+The LilyJean fact base (`C:\Users\jonat\Desktop\CoyoteThings\itsmagicIswear\FINDINGS.md`, 34 dated/
 sourced entries) reached the OPPOSITE preprocessing verdict from this pipeline:
 on 3,607 LilyJean stereo pairs, both adaptive enhancement and fixed backscatter
 subtraction reduced COLMAP registration ~30% vs originals (F-20260721-02,
@@ -1100,7 +1227,9 @@ Also relevant from that fact base for this repo:
   reconciling architecture if CLAHE ends up texture-only.
 - Staff caution against over-masking (F-20260723-31) and Ultra detector
   sensitivity manufacturing noise points (F-20260723-26) — relevant to
-  `masking.py` and AlignmentParams choices on turbid imagery.
+  AlignmentParams choices and any future masking step on turbid imagery
+  (the repo has no masking step: `masking.py` was a misnamed timestamp
+  renamer, since renamed `timestamp_rename.py` 2026-08-07).
 - No stereo-rig support in RealityScan (staff-confirmed through Aug 2025,
   F-20260723-27): Voyis-rig scale must come from GCPs/distance constraints/
   locked XMP — consistent with this repo's per-rig XMP-priors caution (the

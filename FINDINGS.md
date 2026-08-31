@@ -4,8 +4,8 @@ One entry per established fact, WITH how it was discovered. Append new
 findings at the bottom of the relevant section with a date. Refuted
 hypotheses stay, marked SUPERSEDED.
 
-CONSOLIDATION NOTE (2026-07-24): this file now merges TWO research
-lines that ran in parallel from commit 6069d95:
+CONSOLIDATION NOTE (2026-07-24, extended 2026-08-07): this file merges
+THREE research lines:
 
 - **[H2023]** — NA156 H2023 production line (this machine): settings
   evaluation, camera registry, zone aligns, within-zone growth,
@@ -16,10 +16,298 @@ lines that ran in parallel from commit 6069d95:
   Deep docs: `testing/FINDINGS.md` (frozen numbered log, do not append),
   `testing/MERGE_STRATEGY_REPORT.md`, `testing/MERGE_TEST_PLAN.md`,
   `testing/NA167_SESSION_NOTES.md`.
+- **[ON2026]** — ON2026 RH0042/RH0043 Voyis stereo line (2026-08-04/07):
+  attaching to a GUI-launched instance, the model-to-final half, and the
+  nav/orientation groundwork for a re-run. Deep docs:
+  `testing/NA167_SESSION_NOTES.md` §3 (operation ids, error codes, exit
+  codes). Cross-line: this line's priors are COLMAP-derived and its
+  accuracy matrix lives in the external `colmap_studio` fact base
+  (cells C-20260730-05/09, C-20260803-01), which upstream code already
+  cites — read it before proposing any orientation cell here.
 
 Entries below carry their source tag. Cross-line reconciliations are
 tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
+
+## [ON2026] 2026-08-12 - delegated COMPONENT ops silently no-op against
+## the live GUI instance (night campaign, 3x census-verified)
+
+Against the GUI-visible RSGUI instance holding the loaded workbench,
+BOTH -selectComponent "<name>" + -deleteSelectedComponent AND the
+name-free -selectMaximalComponent -> -deleteSelectedComponent ->
+(promote) -> delete -> -importComponent -> -save sequence exit 0,
+report no errors, and change NOTHING - three post-delete censuses
+byte-identical to baseline, including one attempt with the census
+context reproduced exactly (deselect + exportXMP hydration first;
+that preamble theory is REFUTED). The identical peel sequence WORKS
+inside the census .bat on the same instance (successive rounds shrink,
+harvests prove in-memory deletion) - the difference between the
+working and non-working contexts is still UNDIAGNOSED; what is
+established is that a save after the "deletions" persists the
+unchanged scene. Every failure is silent (exit 0, empty errors file) -
+the census verify + exclusion fallback (exclude the victim's members
+from all enable lists and verdicts; leave the component for a GUI
+delete) is the production-safe handling. Fourth member of the
+silently-broken-delegated-command class (-setPriorCalibrationGroup,
+-setPriorLensGroup, -setDownscaleForDepthMaps, component ops on a
+GUI instance).
+
+UPDATE (same night, headless RS2 twin): the delete is NOT GUI-specific.
+A full -selectMaximalComponent/-deleteSelectedComponent x2 +
+-importComponent(hull) + -save on a HEADLESS RS2 instance holding a
+COPY of the scene - with REAL memory movement (commit 93->110 GB
+during the 11.8 GB hull re-import, so the ops did execute in memory) -
+still reloaded to a byte-identical 24-component census with the victim
+present. So component deletion executes in memory (the census peel
+proves it every round) but does NOT PERSIST through -save+reload from
+the delegated CLI, on any instance. The census "works" only because it
+peels in-memory and DISCARDS the result by reloading; a workflow that
+SAVES the peeled state does not keep it. PRODUCTION RULE: never rely on
+CLI component deletion as a persistent edit - exclude the component's
+members at the driver level (solve-level deletion: drop from baseline +
+enable lists) and leave the object for an interactive GUI delete. The
+delete-reimport-save dance is retired.
+
+Same night, two rollback-machinery findings while attaching to a LIVE
+scene: scene_checkpoint's restore rmtree died on the GUI-held .lock
+BEFORE touching data (dotfiles sort first) but AFTER deleting the
+.rsproj file (bundle clear removes the project file first - the scene
+"vanished" while its companion dir stayed intact; single-file copy
+from the checkpoint completed the restore). checkpoint/restore are now
+lock-tolerant end to end; integrity checks must cover the .rsproj
+FILE, not just the companion folder.
+
+## [ON2026] 2026-08-09 - pause/flush/resume recovery recipe (owner-
+## directed cache flush before the hull merge)
+
+- Sanctioned flush works headless: boot a throwaway instance bound to
+  the target cache, -newScene, -save scratch, -clearCache, -quit
+  (Scripts/FlushCache.bat). Freed 26 GB from M:\rs_cache post-align
+  (plus 10 GB deleting the two finished TEST caches outright); cache
+  is small after aligns - the depth-map growth that killed three hull
+  models comes at MODEL time, so pre-model is the right flush point.
+- schtasks /end does NOT kill the driver python or its .bat/RS
+  children - enumerate and stop them explicitly (Win32_Process
+  CommandLine identifies which cmd/python belong to the run; leave
+  server.py and the watchdog alone).
+- After hard-killing a mid-operation RS instance, the NEXT boot cycle
+  produced an instance that answered as running but ignored -quit,
+  blocking run_batch_script's own shutdown path for 15 min before it
+  gave up; a stale RS1.lock (dead PID) additionally insta-failed the
+  first relaunch. RECOVERY RECIPE (validated): stop ALL RealityScan
+  PIDs + any lingering -waitCompleted clients, delete Errors/*.lock
+  and errors_/results_ markers for the instance, then relaunch - the
+  third attempt started clean on the first try.
+
+## [ON2026] 2026-08-09 - calibration ladder VERDICT: the manufacturer
+## prior CONTENT collapses registration; do not adopt
+
+Clean A/B/C ladder on the zone_1 copy (RS2, own cache, explicit
+-addImageWithCalibration delivery - both 2026-08-08 confounds removed;
+one variable per rung; censuses in _agent\calib_ladder\ladder_verdict.json):
+
+- A control (no calibration input): 3,528/3,626 = 97.3%, 1 comp,
+  residual median 4.54 cm, p95 10.96 cm.
+- B groups-only XMPs (CalibrationGroup/DistortionGroup 5/6, NO values):
+  3,542 = 97.7%, 1 comp, median 1.80 cm, p95 6.10 cm. The explicit
+  delivery mechanism is EXONERATED (it carried all 3,626 images to a
+  best-in-ladder solve). Residual halving is suggestive but n=1, and
+  the exported group census finished as ONE group in both A ("0") and
+  B ("7") - flight-log import auto-grouping (ifKGrp) appears to stomp
+  prior groups, so B's mechanism-of-action is unclear. Optional
+  replication queued before believing the residual gain.
+- C full manufacturer priors (focal35 24.2345, PPU/PPV, division,
+  DistortionCoeficients "0 0 0 0 0 0", approximate): 1,645 = 45.4% -
+  COLLAPSE, reproducing the original failed sidecar cell (1,623)
+  almost exactly. Solved focal median steered to 24.213 with wild
+  outliers (3.6-92.4).
+
+CONCLUSION: the 2026-08-08 collapse was caused by the PRIOR VALUES
+themselves, not sidecar hygiene and not cache concurrency. The
+owner-specified manufacturer resized-corrected intrinsics, delivered
+as approximate priors, are HARMFUL to ON2026 staged-imagery
+registration (2x replicated, two delivery mechanisms). Mirrors
+NA167 #4 (Zeuss prior content 96.3->89.6) at far greater severity.
+DECISION: production stays calibration-prior-free; P5 (flight-log
+calibration columns) downgraded - no reason to ship value-carrying
+columns proven harmful. Suspect ranking for the harm, untested:
+zero-pinned distortion coefficients under approximate prior >
+PPU/PPV > focal (solved-free focals already sit near 24.17).
+
+## [ON2026] 2026-08-08 - flight-log probes P1/P3/P4 (6-image fixture,
+## RSPROBE + M:\rs_cache_probe; steps5/6.log + censuses under
+## _agent\calib_ladder\probe\out)
+
+- **P3 - row matching is EXACT-PATH when a path is given, basename when
+  bare**: a full-path log pointing at same-basename COPIES in a
+  different folder FAILED the import (loud, per-row); the same log with
+  the scene's true paths imported OK; a bare-basename log imported OK.
+  Full-path rows therefore bind deterministically to the ONE canonical
+  file - the semantics the pool zone layout requires - and there is NO
+  silent basename fallback for path rows.
+- **P1/P1b - the params' gpsLogFileFormat GUID is DECORATIVE on 2.2**:
+  imports under a params file naming a RANDOM GUID both succeeded AND
+  demonstrably applied (align landed on the +200/+300 priors of the
+  log imported under the random GUID). The custom {B438A617} registry
+  entry is NOT load-bearing on RS 2.2 - our 13-col file parses
+  registry-independently. Shipping consequence: no flightlogs.xml
+  patching needed on customer installs; the REST of the params (CRS,
+  YPR order, separator, ignore-first-line) still matters.
+- **P4 - re-importing a flight log onto an ALREADY-ALIGNED scene works
+  and -update re-places the components to the NEW priors without
+  re-aligning**: export-before sat at the first log's positions
+  (10/20), import of a +50-shifted log + -update moved every camera to
+  the shifted priors (60/70). The owner's per-step-reload assumption
+  is VERIFIED: importing the flight log at each workflow step
+  genuinely re-pins georeferencing on live components (rigid update;
+  intra-component geometry untouched).
+
+## [ON2026] 2026-08-08 - flight-log deep research (4-agent doc/binary
+## sweep; full detail in docs/FLIGHTLOG_ARCHITECTURE.md)
+
+- **Flight-log rows CAN carry prior calibration** - FocalLength,
+  PrincipalU/V, Skew, AspectRatio, RadialDistortion1-4,
+  TangentialDistortion1-2 are documented trajectory variables
+  (defineimportformat.htm); the 2.2 exe additionally understands
+  F35MM/FPIX/FNORM unit variants and header aliases (K1-K4, T1/T2,
+  IMG/NAME/IMAGE). No per-row calibration-GROUP column; grouping is
+  the import dialog's none/one-group/by-focal-length option (ifKGrp).
+- **The Image column is documented as full-path-legal** ("Image name
+  including the whole path and the format extension"); basename
+  matching semantics are UNDOCUMENTED (probe needed). Unmatched rows
+  warn "image '$(name)' not found in the current scene" - rows match
+  images already IN the scene; a flight log never adds images.
+- **{B438A617-...}, our 13-col format, is NOT a factory format** - it
+  lives only in the hand-patched RS 2.0 flightlogs.xml + repo copy;
+  absent from stock 2.2/2.1 registries, this box's user registry,
+  ProgramData, and AppData - yet production 2.2 imports our logs
+  correctly (accuracy columns demonstrably consumed: the ori A/B
+  changed solves). Most plausible: header-alias parsing. SHIPPING
+  RISK until probed on a clean install; flightlogs.xml is documented
+  user-editable as the sanctioned custom-format channel.
+- **ifUsePosAcc/ifUseOriAcc exist in NO 2.x binary** (and ifKmode only
+  in 2.0) - our params template carries dead keys; per-row accuracies
+  work anyway. ifKGrp/csvFLSep/csvFLIgn etc. are undocumented
+  everywhere; meanings recovered from the exe's ImportFlightLogCommand
+  key cluster (csvFLSep=separator, csvFLIgn=ignore-first-line,
+  ifKGrp=calibration auto-grouping).
+- **The two flight-log help pages CONTRADICT each other on Euler
+  axes** (defineimportformat.htm says yaw-around-Y; flightlogimport.htm
+  says NED roll=X/pitch=Y/yaw=Z, ZYX right-to-left). Trust only the
+  empirical roll validation (C-20260803-01), never these pages.
+- **Cross-zone merge no-fuse ROOT CAUSE confirmed**: merge fusion
+  requires the SAME image path in both components; Batch Directory's
+  overlap COPIES make per-zone paths distinct, so overlapping
+  components share zero cameras and -mergeComponents "succeeds"
+  without fusing. Fix direction: canonical image pool + full-path
+  flight-log rows (owner directive 2026-08-08).
+- **appGroupCalibrationByExif documented (bool, default false)**; the
+  exe also carries AppForceEqualCalibration and AppPreferExif
+  (= the "Prefer Exif over XMP" GUI toggle, inferred) - import-time
+  state that same-name sidecar auto-import silently depends on.
+- **Cache keys documented**: appAutoClearCache (default 7 days,
+  clears on exit), appCacheImageMetadata (crmeta.db beside images),
+  appCopyImportedComponentsToCache; NOTHING documents cache
+  invalidation on changed inputs. No stale-cache correctness incident
+  on record (the 2026-08-08 confound was cross-instance cache
+  CONCURRENCY; the hull-model killer was cache-disk exhaustion).
+
+## [ON2026] 2026-08-08 - calibration-CLI probe results (6-image fixture,
+## RSPROBE instance; steps + censuses in _agent\calib_ladder\probe)
+
+- **`-setPriorCalibrationGroup` / `-setPriorLensGroup` are silently
+  NON-FUNCTIONAL from the delegated CLI** - every delegated invocation
+  returns success, but after -align the exported cameras show
+  CalibrationGroup="-1" and six DISTINCT solved focals (per-image
+  self-calibration), under BOTH selection forms: full-path
+  -selectImage + union (the form GrowZone.bat uses live) and regex
+  -selectImage. The solved-focal-equality oracle is what proved it -
+  exit codes and the errors channel said nothing. Cell B of the
+  calibration ladder failed on this (0x8000FFFF on the setPrior after
+  a regex+union select; with union dropped every command "passed" and
+  still nothing stuck).
+- **`-selectImage <regexp> union` is additionally hazardous**: with a
+  regex argument the union-mode call left the selection in a state
+  where the NEXT command errored 0x8000FFFF (probe V1), while the
+  mode-less regex form "succeeded". Path+union (GrowZone) remains fine.
+- **`-addImageWithCalibration <img> <xmp>` WORKS end-to-end** (probe 4:
+  registry XMPs, groups 5/6, approximate 24.2345): exported cameras
+  echo CalibrationGroup 5/6, solved focals are IDENTICAL within each
+  eye (24.1982 L / 24.1966 R) and deviate ~0.036 mm from the prior -
+  i.e. per-eye grouping engaged AND the approximate prior was honored,
+  not fixed. Batched via -execRSCMD (one command per line, plain
+  paths); RealityScan.log shows per-add "Added 1 images." lines.
+- **Exported XMPs write CalibrationPrior="exact" regardless of the
+  input prior** - the export field reflects export mode (B7 semantics),
+  NOT the prior that drove the solve. Never census prior MODE from
+  exports; census GROUP ECHO and solved-focal equality instead.
+- **`-exportXMP` is silently gated by the minimum component size** -
+  a 6-image scene that fragmented 3+3 exported NOTHING (all commands
+  "OK") until -setMinComponentSize 2; same silent-nothing class as the
+  selection-export trap. Any XMP census loop must pin min component
+  size first.
+- **`-exportGlobalSettings` emits a binary .rsconfig** (TBES header),
+  not readable XML - useless for key discovery. The documented -set
+  key table (tutorials/setkeyvaluetable.htm) is the readable source;
+  it lists `appGroupCalibrationByExif` (add-time auto-grouping) and
+  the GUI shows "Prefer Exif over XMP" (import-time precedence) -
+  both are add/import-time state that same-name sidecar auto-import
+  silently depends on, consistent with the owner's field
+  unreliability report.
+
+## [ON2026] 2026-08-08 - sidecar AUTO-IMPORT retired as a delivery
+## mechanism; explicit CLI commands exist for everything sidecars did
+
+Owner field finding (2026-08-08, GUI + prior campaigns): same-name XMP
+sidecar auto-pairing is UNRELIABLE in practice, while the flight-log
+workflow - hard-coded file paths explicitly imported at each step -
+has been consistently reliable. Our own log agrees: NA167 #3 (sidecars
+silently never loaded, wrong extension), H2023 harvest-gap (17.5% of
+images silently sidecar-less), and the 2026-08-08 hygiene collision
+below are all failures of the IMPLICIT pairing pathway, not of the
+calibration content.
+
+Doc mining (RS 2.2 Help, appbasics/allcommands.htm + tools/xmpalign.htm)
+found explicit commands covering everything sidecars delivered:
+- `-addImageWithCalibration <imagePath> <xmpPath>` - import an image
+  WITH its calibration XMP by whole paths; the files need not share a
+  name or a folder (xmpalign.htm says so explicitly). This is the
+  hard-coded-paths form of calibration priors.
+- `-selectImage <regexp>` + `-setPriorCalibrationGroup <n>` /
+  `-setPriorLensGroup <n>` - per-eye grouping with NO files at all
+  (-1 = ungroup). Also `-setConstantCalibrationGroups`,
+  `-setCalibrationGroupByExif`, `-removeCalibrationGroups`.
+- `-loadColmap <file> [params.xml]` - RS imports a COLMAP project
+  DIRECTLY (any of the three text files, optional transform config).
+  Untested; candidate to replace the whole flight-log bridge one day -
+  needs its own test-plan cell before any production use.
+- `-importTrajectory` is the documented name of flight-log import in
+  2.2 (`-importFlightLog` still works as the legacy alias we use).
+
+DECISION: calibration priors, when adopted, ride explicit commands
+(groups via selectImage+setPrior*, values via addImageWithCalibration
+from a SEPARATE xmp directory + manifest), never same-name sidecar
+auto-import. camera_registry XMP GENERATION is unchanged - the content
+is reused; only the delivery changes. [ON2026] (2026-08-08)
+
+## [ON2026] 2026-08-08 - calibration-sidecar hygiene collision (test cell)
+
+Per-eye APPROXIMATE calibration sidecars (manufacturer resized-corrected
+values; groups L=0/R=1) on a zone_1 copy collapsed registration to 44.8%
+(1,623/3,626) with meter-scale prior residuals - but NOT because
+calibration priors are wrong: camera_registry's sidecar hygiene
+(sanitize/harvest + ensure_calibration_sidecars) assumes it owns every
+image-adjacent .xmp, swept the hand-placed calibration files into the
+identity harvest, and could not regenerate them (VOYIS is not a registry
+family): '1623 image(s) of unknown camera type left without a
+calibration sidecar'. While engaged, the priors steered solved focals to
+within 0.005-0.013 of the manufacturer 24.2345 (closer than
+self-calibration). Discovered by the owner-directed parallel test cell;
+verdict + numbers in M:\ON2026_run2\_agent\calib_verdict.json.
+FOLLOW-UP: register the VOYIS family (calibration content from
+modules/cameras.json on2026_voyis) so hygiene regenerates rather than
+destroys, then re-test on a quiet instance. Production run2 stays
+sidecar-free (95-99% registration, consistent).
 
 ## RealityScan 2.2 CLI behavior
 
@@ -2389,6 +2677,425 @@ MERGE ATTEMPT's snapshot, and which artifact.
   pointer makes the stale rule load-bearing for future sessions.
   (2026-08-04) OPEN — needs an owner decision: annotate the notes in place,
   or repoint CLAUDE.md hard rule 9 at `docs/rs-reference/`.
+
+## ON2026 model-to-final + nav prep (2026-08-04/07)
+
+Model half of ON2026 (RH0042/RH0043 Voyis stereo, 38,948 images) driven to
+final deliverables against a GUI-launched instance, plus the groundwork for
+a re-run with updated nav. Source tag **[ON2026]**.
+
+### CLI behavior
+
+- **`*` is a valid instance argument meaning "first available instance",
+  so a GUI/Epic-Launcher RealityScan with no `-setInstanceName` IS
+  CLI-drivable.** Accepted by `-delegateTo`, `-waitCompleted`, `-getStatus`,
+  `-pauseInstance`, `-unpauseInstance`, `-abortInstance` (local Help,
+  `appbasics/allcommands.htm`). Verified against a live GUI session:
+  `-getStatus RS1` -> exit 5, `-getStatus *` -> exit 0, same process.
+  Ambiguous the moment two instances run, so use explicit names for
+  multi-GPU and reserve `*` for attaching to one interactive session.
+  [ON2026] (2026-08-04) ESTABLISHED
+
+- **`-getStatus` prints an undocumented progress line on stdout, and it is
+  the ONLY error channel for an instance the pipeline did not boot.**
+  `id:0x5051 progress:11.1% runtime:575.04sec endEstimation:4579.16sec rev:93 lastError:0`
+  Capture by redirecting (RealityScan is a GUI-subsystem binary and does not
+  reliably attach to a parent console); both `for /f` pipe capture and file
+  redirection work from cmd. An instance not booted by `startRealityScan.bat`
+  never ran the ErrorWriter hook, so `errors_<instance>.txt` does not exist
+  for it and the usual `:run` marker gate is blind. Operation ids observed:
+  `0xffffffff` idle, `0x6` exportSelectedModel, `0x7` calculateTexture,
+  `0x5035` save, `0x5051` Normal Detail reconstruction. Full table in
+  `testing/NA167_SESSION_NOTES.md` Section 3. [ON2026] (2026-08-04) ESTABLISHED
+
+- **`lastError` is a SIGNED 32-bit decimal, and it is STICKY while the
+  instance is idle.** Add 2^32 to read as hex: `-2113863583` -> `0x82010061`.
+  After a failed `-save`, four consecutive idle polls at `id:0xffffffff` all
+  reported the dead code; it cleared the instant the retried save started.
+  A gate on `lastError != 0` alone therefore blames the NEXT command for the
+  PREVIOUS command's error. The stickiness itself is ESTABLISHED and
+  unchanged; the GATE DESIGN described in the original version of this
+  entry ("captures `rev:` before delegating and treats non-zero
+  `lastError` as failure only if `rev` also advanced, rev incrementing
+  once per completed operation") is **SUPERSEDED (2026-08-07 battery)**:
+  rev tracks scene MUTATIONS, not operations, so a failed non-mutating
+  command leaves rev unchanged and that gate continued past real
+  failures. The shipped gate baselines `lastError` BEFORE delegating -
+  see the battery entry below.
+  [ON2026] (2026-08-04) ESTABLISHED (gate half superseded 2026-08-07)
+
+- **`err:7185` "Provided arguments don't match any overload for command
+  '<cmd>'" means a path got split on spaces, not that the command is
+  wrong.** A `-save "M:\ON2026 COLMAP processing\...\x.rsproj"` issued via
+  PowerShell `Start-Process -ArgumentList @(...)` (ARRAY form) failed
+  instantly; the array form does not quote elements containing spaces for
+  this binary, so RealityScan saw three arguments. Target directory was
+  writable (write-test passed). Fix: pass `-ArgumentList` as a single STRING
+  with the path explicitly quoted. Same class as the cmd/.bat splitting trap,
+  arriving through PowerShell. [ON2026] (2026-08-04) ESTABLISHED
+
+- **`startRealityScan.bat` destroys a live scene if called against one:
+  line 20 issues `-newScene -deleteAutosave` whenever `-getStatus` finds an
+  instance already running.** Still true on `origin/main`. Every other
+  workflow script opens by calling it, including `GenerateModel.bat` and
+  `ExportDeliverables.bat`, so there was no existing safe path to finish a
+  mesh reconstructed interactively in the GUI. `ModelToFinal.bat` exists for
+  exactly that case: it attaches via a bare `-getStatus` guard and never
+  calls that script. Corollary: do NOT route it through
+  `RealityScanCLI.run_batch_script`, which shuts down any running instance
+  before launching. [ON2026] (2026-08-04) ESTABLISHED
+
+- **With simplification on, the UNWRAP preset - not the texture preset -
+  decides the exported model's UV layout.** The exported model is the
+  simplified one and is unwrapped fresh, so a caller asking for 4 x 8192
+  silently got one 16384 page from `Unwrapping_Simplified.xml`
+  (`unwrapMaximalTexCount=1`, `unwrapMaxTexResolution=16384`). Equal texel
+  budget, but 16k exceeds the maximum texture size many engines accept.
+  Verified in the artifact after pairing the presets: four `*_diffuse.jpg`,
+  each exactly 8192x8192. [ON2026] (2026-08-04) ESTABLISHED
+
+- **The app log is not a durable record: `%LOCALAPPDATA%\Temp\RealityScan.log`
+  is truncated when an instance boots.** Watched it happen mid-session - a
+  log carrying every operation id and error code from a 14-hour run was
+  reduced to two "Loading Project completed" lines by the next boot.
+  Independently re-confirms [NA167 #16]. Copy the log immediately after any
+  failure, and keep codes in `testing/NA167_SESSION_NOTES.md` Section 3.
+  [ON2026] (2026-08-07) ESTABLISHED
+
+### Nav / orientation priors
+
+- **Every ON2026 flight-log variant carries yaw/pitch/roll accuracy of
+  exactly 90.0 deg on all 38,948 rows.** Column statistics over five logs
+  (`flight_log_zones.pre_rollfix.txt`, `rs_rollfix/`, `rs_zup/`,
+  `roll0_backup`, current): min = median = max = 90.0 in all three
+  orientation-accuracy columns, while the angle VALUES differ substantially
+  (yaw medians 101/101/167/101/161; pitch 93/93/105/93/75; roll
+  0/-50/2/-50/-176; the current log's altitude median is -0.505 against
+  +0.54 for the four earlier ones). EXPLAINED, not accidental: the generator
+  is `colmap_studio/pipeline/export_rs_flightlog.py`, `--ori-acc` default
+  90.0. Do NOT extend this into "the roll-fix and Z-up experiments are
+  therefore void" - that rider is refuted: the roll fix was settled by an
+  independent oracle (colmap_studio C-20260803-01, fabricated roll=0.00 was
+  wrong by ~93 deg), not by an alignment A/B. [ON2026] (2026-08-07) ESTABLISHED
+
+- **OPEN / OWNER DECISION - the ON2026 pitch column has two incompatible
+  readings and they disagree about where the degeneracy sits.** This entry
+  records the conflict deliberately rather than picking a side.
+  (a) RealityScan's own convention is staff-confirmed above (OndrejTrhan:
+  "Pitch = 0, image is looking down"), i.e. 0 = nadir, 90 = horizontal,
+  intrinsic Roll -> Pitch -> Yaw, YPR interpreted in NED.
+  (b) The exporter that WROTE the column implements the same 0 = nadir
+  scale (docstring lines 192-194) and was validated to 0.4 deg median
+  against RealityScan's solved rotations on 2,260 images
+  (colmap_studio C-20260803-01); it places the singularity at NEAR-VERTICAL
+  and measures exposure as **1.3%** of ON2026 within 5 deg of vertical.
+  (c) Measuring the same column for proximity to |pitch| = 90 instead gives
+  **24.9%** (9,697/38,948 rows; median 75.34, p05 55.18, p95 107.59), and
+  roll additionally wraps the branch cut, holding both -180.000 and
+  +180.000.
+  Same dataset, two bands. An earlier version of this entry asserted the
+  24.9% reading as established on the assumption of aerospace YPR; that
+  assumption is contradicted by (a). SUPERSEDED same day by the
+  reconciliation below.
+  RECONCILED (2026-08-07, owner question prompted the re-read): the two
+  figures measure DIFFERENT degeneracies at opposite ends of the pitch
+  range, and are not competing readings of one singularity.
+  - **1.3% (near-vertical)** is the EXPORTER-side degeneracy: its yaw is
+    "heading of the view direction" and its roll is referenced to
+    horizontal, so both definitions collapse for a straight-down view.
+    The exporter already mitigates it - `ypr_acc = min(180, max(ori_acc,
+    MEASURED/sin_p))` widens the accuracy on exactly those rows.
+  - **24.9% (near pitch 90 = horizontal)** is the candidate IMPORT-side
+    degeneracy in RealityScan's OWN parameterisation: staff-confirmed
+    composition is intrinsic Roll -> Pitch -> Yaw with pitch the middle
+    rotation, and any such sequence is singular at middle = +/-90 - which
+    in the 0-=-nadir scale is a HORIZONTAL view. This is the same
+    degeneracy the [H2023] line already flags ("Port's pitch sits at
+    ~88 deg, within 2 deg of the 90 deg degeneracy where roll and yaw
+    axes collapse in this parameterisation"). A wall-inspecting ROV
+    lives there: 24.9% of ON2026 rows within 5 deg of pitch 90.
+  The import-side reading stays CONTINGENT on the unpinned Euler-order
+  import settings (`ifKGrp`/`ifKmode`, established entry above) - the
+  standing gate applies: pin Euler order and camera mount in
+  `FlightLogParams.xml` before any further orientation cell. If the pin
+  confirms the staff composition, the practical consequence is the
+  mirror-image of the exporter's mitigation: orientation priors for
+  near-HORIZONTAL frames deserve the 1/|cos(pitch-90)|-style widening on
+  import, or simply the conservative 90-deg floor already in force.
+  [ON2026] (2026-08-07) OPEN - narrowed to the Euler-order pin
+
+- **The 0.020 position accuracy in the ON2026 logs is a constant CLI
+  default, not measured per-sample sigma** (`--pos-acc` default 0.02 in
+  `export_rs_flightlog.py`). Constant on all 38,948 rows across x/y/alt.
+  Do NOT infer "real per-sample sigma would be an improvement": 0.02 m
+  validated at 6.3 mm median prior residual and WON the accuracy matrix
+  (colmap_studio C-20260730-05/09, 2,262 images: 0.02 m / 90 deg is the
+  production winner; tight 10 deg orientation priors were actively worse).
+  Scope matters - ON2026 priors are COLMAP-derived, the NA156 line's are
+  nav-derived, and `PRIORS_DISTORTION_TEST_PLAN.md` records tight position
+  priors FRAGMENTING components on that line. [ON2026] (2026-08-07) ESTABLISHED
+
+- **`modules/flight_logs.py` cannot express a local-Euclidean frame - it
+  only ever emits UTM - and the shared `FlightLogParams.xml` now carries a
+  local-frame value, so one template serves two mutually exclusive campaign
+  frames with no guard.** `write_flight_log_params` rewrites only
+  `CoordinateSystemFlightLog` / `CoordinateSystemFlightLogType`, always as
+  `+proj=utm +zone=N[ +south]` / `epsg:326xx|327xx` (byte-identical
+  base -> origin/main). Provenance: `M:\ON2026 COLMAP processing\rs\FlightLogParamsLocal.xml`
+  is byte-identical to `origin/main:.../Metadata/FlightLogParams.xml` - the
+  hand-made local file was promoted into git in `902fcf7` (2026-08-03).
+  Meanwhile `testing/ab_orientation_priors.py:115` calls
+  `write_flight_log_params` on that same geocent template and converts it
+  BACK to UTM. The function also leaves every accuracy-governing key
+  untouched (`ifUsePosAcc`, `ifUseOriAcc`, `ifCSopt`, `ifuuInh`,
+  `ifuuInhEn`); for `ifKGrp`/`ifKmode` see the established entry above.
+  [ON2026] (2026-08-07) RESOLVED same day (commit 177a81a): frame
+  parameter + second template + ensure_frame_match guard; the cited
+  ab_orientation_priors.py now lives in archive/campaign_drivers/.
+  The accuracy-governing keys remain unpinned (tracked with C1/C6).
+
+### Defect in this session's own work
+
+- **`ModelExportParamsObj_Metric.xml` shipped as dead config.** The metric
+  (scale 1.0) OBJ export that fixed the 100x Unreal-preset scale was
+  performed as a MANUAL one-off `-exportSelectedModel` invocation; the code
+  path was never changed. `ModelToFinal.bat` hardcodes
+  `ModelExportParamsObj.xml` (scale 100.0) for `export_format=obj` and its
+  parser accepts only `obj|fbx|glb|none`, so no invocation could reach the
+  metric file and the next automated obj run would reproduce the defect.
+  Caught by adversarial review of the rebase, not by the run. Wired as
+  `objmetric` in the follow-up commit. Lesson: a fix demonstrated by hand
+  is not a fix until a code path reaches it. [ON2026] (2026-08-07) ESTABLISHED
+
+### Live battery on the smoke scene (2026-08-07, clean slate)
+
+- **`rev` tracks scene MUTATIONS, not operations - a failed command can
+  complete without advancing it.** Probe on a freshly loaded 8-camera
+  smoke scene: `-selectModel "NoSuchModel"` -> rev 11 -> 11, lastError
+  -2147024809 (0x80070057 E_INVALIDARG, the known benign select-miss
+  code), AND the ErrorWriter trigger logged a process completion for it.
+  Refutes the earlier working assumption "rev increments once per
+  completed operation" and with it the original ModelToFinal gate design:
+  a genuinely failed non-mutating command was indistinguishable from a
+  stale carried-over error and the workflow would have CONTINUED past it.
+  Gate rebuilt same day: lastError baselined BEFORE delegating; a change
+  to non-zero is a fresh failure regardless of rev; the stale-warn path
+  needs the identical pre-existing code AND an unchanged rev.
+  [ON2026] (2026-08-07) ESTABLISHED
+
+- **ModelToFinal.bat verified live end-to-end in attach mode, including
+  both stale-marker gate arms and the owner's new defaults.** Battery on
+  the zone_9 smoke scene, own instance RS1: (4a) stale non-empty
+  errors_RS1.txt + RS_TARGET==RS_INSTANCE -> first :run aborted exit 1
+  (gate fires); (4b) same stale marker + attach via `*` -> gate skipped
+  (foreign-marker fix), full chain ran in 143 s: texture at the 4x8k
+  DEFAULT (empty preset argument), 80% simplify chain, unwrap, reproject,
+  `objmetric` export - artifact .rsInfo reads `settingsScale="1 1 1"` -
+  and save to RS_SAVE_PATH; verified shutdown. The sticky C5 error code
+  did NOT false-abort 4b: lastError cleared when the next operation
+  started, as established. [ON2026] (2026-08-07) ESTABLISHED
+
+- **Windows trap (registry-worthy): a `start`-launched GUI child inherits
+  captured stdout/stderr pipes - subprocess capture on the BOOT SCRIPT
+  deadlocks even after timeout-kill.** startRealityScan.bat launches the
+  instance via `start ""`; with subprocess.run(capture_output=True) the
+  pipe never reaches EOF while the instance lives, and Python's
+  communicate() blocks forever after the timeout kills only the .bat.
+  Observed as a silent 10-minute hang with the instance idling at 0.3 GB.
+  Boot invocations must run with stdout/stderr detached to files or
+  DEVNULL, never pipes. [ON2026] (2026-08-07) ESTABLISHED
+
+- **Three small CLI facts from the Euler-pin P0 probe (no-align scene,
+  32 images, flight log imported).** (1) `-exportXMP` with no alignment
+  in the scene is a SILENT NO-OP SUCCESS - rc 0, nothing written - the
+  same do-nothing-quietly family as `-mergeComponents` with nothing to
+  merge [NA167 #23]. (2) `-exportXMPForSelectedComponent` with no
+  component sets lastError -2147467259 (0x80004005 E_FAIL) - new error-
+  table entry: "no component to export". (3) `rev` increments on
+  `-addFolder` (0 -> 1) and `-importFlightLog` (1 -> 2) - consistent with
+  rev counting scene mutations. [ON2026] (2026-08-07) ESTABLISHED
+
+- **Under fresh-boot settings, orientation priors do not influence
+  alignment on the smoke fixture - a yaw/roll-scrambled log at 0.5 deg
+  accuracy registered the same as the correct one (8/32 vs 6/32).**
+  Scope limit, stated deliberately: the cells delegated a plain `-align`
+  WITHOUT applying AlignmentParams' `-set` block, so which prior-weight
+  settings were in force is UNKNOWN (the persisted-settings question).
+  What this establishes is narrower but real: importing a 13-column log
+  with tight orientation accuracies does not BY ITSELF make orientation
+  priors act on the solve - the sfm* prior settings decide, and any
+  orientation experiment that does not pin them explicitly is not
+  measuring what it thinks it is. This retroactively weakens any
+  historical cell that imported orientations without pinning the block.
+  [ON2026] (2026-08-07) ESTABLISHED (narrow scope)
+
+- **`-load` restores a scene with NO model selected - and the attach
+  drivers' whole scenario is finishing a loaded scene.** Live gate B9,
+  four attempts, one variable each: `-calculateTexture` against a
+  freshly loaded scene fails 0x80004005 E_FAIL in 0 s (new error-table
+  row: "texture with nothing selected"); passing the model name through
+  ModelToFinal's %9 fixes it (finish_model.py --source-model). Second
+  attempt proved the OWN-instance marker gate fires on a previous run's
+  ErrorWriter entries - correct behaviour, but it means attach-to-own-
+  instance needs pre-run marker clearing (queued as backlog B11); third
+  attempt established that `progress_<inst>.txt` is HELD OPEN by the
+  live instance (-writeProgress) and only the ErrorWriter-appended
+  errors/results files are clearable while it runs. Final run: exit 0,
+  147 s, full chain, artifacts verified. The attach monitor also
+  surfaces STALE marker lines as if current - diagnose attach failures
+  from the workflow log, not the relayed marker text.
+  [ON2026] (2026-08-07) ESTABLISHED
+
+- **The rerouted export path verified live: ExportDeliverables.bat via
+  modules/export_deliverables.py -> run_batch_script produced all three
+  deliverable legs (OBJ-by-parts, FBX, dense colored PLY - 13 files) in
+  56 s on the smoke component, cleared a deliberately planted stale
+  errors_RS1.txt pre-run, wrote the resource CSV, and shut down
+  verified.** The wildscan portal now has zero paths around the
+  execution layer. [ON2026] (2026-08-07) ESTABLISHED
+
+## Cross-line import: [MAGIC] — ItsMagicISwear Apple-silicon engine line (2026-08-13)
+
+A sibling project (`ItsMagicISwear`, local repo on the owner's Mac: a native Apple-silicon
+photogrammetry engine) ran a research pass + same-day benchmarks on NA173 zone_4 that produce
+facts directly relevant to THIS pipeline's future. Source fact base: that repo's `FINDINGS.md`
+(M-20260812-15..22) and `docs/TECHNIQUE_SELECTION.md`. Entries below carry [MAGIC]; numbers
+were measured on an M5 MacBook Pro (no CUDA) unless stated.
+
+- **The COLMAP research line's fact base is a generation stale: COLMAP 4.1.1 absorbed
+  GLOMAP as `colmap global_mapper` and ships a learned frontend built in** (ALIKED
+  extraction + LightGlue matching via bundled ONNX, `--FeatureExtraction.type ALIKED_N16ROT`,
+  `--FeatureMatching.type ALIKED_LIGHTGLUE`), plus `pose_prior_mapper` accepting per-image
+  position priors with full 3x3 covariance. Standalone GLOMAP was archived 2026-03-09 with
+  its prior path broken end-to-end (glomap issue #142) — "COLMAP vs GLOMAP" is no longer a
+  meaningful comparison; the unified 4.1 binary is the thing to re-baseline against on
+  HONEYBADGER before trusting any C-2026072x-derived comparison. Discovered: brew install
+  colmap 4.1.1 + `-h` dumps + adversarially-verified research pass. [MAGIC] (2026-08-12)
+  ESTABLISHED
+
+- **First COLMAP-x-CLAHE datum, and it flips the expected sign for the COLMAP side of Q-05:
+  CLAHE (2.0, 8x8, LAB-L — the exact Stage-0.5 recipe) HELPED COLMAP on NA173 ROV imagery.**
+  200 contiguous zone_4 camlower frames, SIMPLE_RADIAL single camera, sequential-15 matching,
+  registration by full reconstruction (per the F-20260723-03 metric lesson): SIFT raw 90/200
+  (45%) -> SIFT+CLAHE 126/200 (63%) with global_mapper. Note the LilyJean cells that
+  established "enhancement hurts COLMAP" tested adaptive enhancement and fixed backscatter
+  subtraction, NOT plain CLAHE — so Q-05's reconciliation matrix gains a cell rather than a
+  contradiction: preprocessing sign depends on the (imagery, exact enhancer, stack) triple,
+  and CLAHE-on-ROV-video-frames helps COLMAP too, not only RealityScan. [MAGIC] (2026-08-12)
+  ESTABLISHED
+
+- **CLAHE's benefit extends to the learned stack on this imagery — and the learned stack
+  raw beats classical+CLAHE.** Same 200-frame cell, global_mapper registration:
+  ALIKED+LightGlue raw 127/200 (63.5%); ALIKED+LightGlue+CLAHE **149/200 (74.5%)** — best in
+  matrix, with ALIKED at its default 2,048-feature budget vs SIFT's 8,192. Incremental mapper
+  stayed flat at 88–94 in every variant: on 1 fps ROV imagery the global mapper is uniformly
+  better, consistent with F-20260723-07. If the COLMAP line is revived on HONEYBADGER, the
+  first cell to run is ALIKED+LightGlue+CLAHE+global_mapper. Caveat for that run: on the Mac
+  build the bundled ONNX matcher ran ~7x slower than SIFT matching (1,111 s vs 161 s for the
+  same pairs; likely CPU execution provider) — verify which ONNX EP the Windows CUDA build
+  uses before timing conclusions. [MAGIC] (2026-08-12) ESTABLISHED
+
+- **Nav-derived pair gating removes ~97–98% of matching work at 1 fps — the flight log alone
+  is a sufficient retrieval stage.** zone_4 full log (1,912 images, median inter-frame
+  spacing 0.285 m): exhaustive 1,826,916 pairs; sequential window 15 = 28,560 (1.56%);
+  3 m XY radius = 60,947 (3.34%); their union ~3–4% while covering forward overlap and
+  cross-track loop closures. Relevant wherever vocab-tree matching has been a cost or
+  stability problem (cf. C-20260721-11/12): position-based gating from the 13-column log
+  needs no vocab tree at all. Caveat: gating depends on RELATIVE nav error between nearby
+  frames (smooth Kalman drift), not the 10 m absolute column — validate radius per cruise.
+  [MAGIC] (2026-08-12) ESTABLISHED
+
+- **Working recipe for injecting 13-column-log pose priors into a COLMAP 4.1.1 database**
+  (the schema is the new rig/frame one): SQLite insert into `pose_priors` with
+  corr_data_id=image_id, corr_sensor_type=0 (CAMERA), coordinate_system=1 (CARTESIAN),
+  position as 3xfloat64 blob, position_covariance as 9xfloat64 blob (diag from the accuracy
+  columns), gravity NULL. Positions MUST be local-frame (centroid-subtracted UTM) — the
+  C-20260721-01 float32-UTM poisoning applies. `pose_prior_mapper` consumed them and ran;
+  registration was unchanged vs plain incremental (88/200 both) — position priors anchor
+  georeferencing but do not rescue correspondence-starved registration, matching this
+  pipeline's own experience that the match layer, not the prior layer, is the binding
+  constraint. COLMAP still has no attitude-prior input; the 13-column log's orientation
+  columns remain unconsumed there. [MAGIC] (2026-08-12) ESTABLISHED
+
+- **Context pointer: a learned-first engine is viable on Apple silicon.** VGGT-1B (feed-
+  forward multi-view transformer) ran zero-shot on an M5/32 GB via torch-MPS: 128 frames per
+  pass at 518 px in 20.6 GB, poses within 0.22 m mean of nav on raw turbid zone_4 imagery.
+  The sibling project's v1 stack (ALIKED+LightGlue, MapAnything chunks, prior-native global
+  solver, COLMAP 4.x interop) is recorded in its `docs/TECHNIQUE_SELECTION.md`; this
+  pipeline's FINDINGS conventions and its RS pain points (component membership opacity, no
+  incremental-against-locked-poses, census-not-exit-codes) are that engine's requirements
+  spec via `docs/RS_CLI_DIGEST.md`. [MAGIC] (2026-08-12) ESTABLISHED
+
+- **RS 2.2 ypr convention PINNED; roll passthrough VINDICATED; exportRegistration works
+  headless with a minimal hand-written params XML** (rs_probe2 discriminating experiment,
+  2026-08-27, RS 2.2.0.119430; full record: colmap_studio FINDINGS C-20260827-10, evidence
+  M:\rs_probe2\). RS yaw/pitch/roll = ZYX (NED) Euler: R_wc = T_ned*Rz(y)*Ry(p)*Rx(r)*C0
+  (C0 = nadir camera, image top North); CSV ypr equals the canonical extraction of RS's own
+  XMP matrix to 2e-11 deg over 120 cams in two frames. Consequences here: (a)
+  modules/georeference roll passthrough (0=level) is CORRECT - do not "fix" it toward the
+  old colmap_studio exporter, which was the wrong side and has been rewritten; (b) RS's
+  gimbal pole is pitch 90 (horizontal) - near-horizontal ROV imagery needs 1/|cos p|
+  orientation-accuracy widening, and RS-exported yaw/roll near pitch 90 smear ~60 deg for
+  ~2 deg pose deltas (yaw-roll stays tight) - do not QA solved yaw/roll columns raw there;
+  (c) align-path orientation priors are INERT even at sfmCameraPriorWeightOrientation 50 /
+  1-deg accuracies (canonical vs roll+180 cells: 60/60 both, 1.62 vs 1.84 deg median vs
+  truth) - replicates the 2026-08-07 inertness finding with the sfm block pinned; (d) CLI
+  mechanics: -exportRegistration needs ONLY <entry key="calexFileFormatId" value="{GUID}"/>
+  in a hand-written params XML (Configuration id attribute unvalidated; no GUI-saved file
+  needed - narrows the old "blocks forever" note); format {121D2018-...} (geoYaw, zyx) and
+  {0CA18733-...} (yaw) emit byte-identical angles; export on a 2-camera non-georeferenced
+  component fails 0x80004005; -update after a 2-row flight-log import fails 2181103712;
+  registration-export format GUIDs live in the install dir calibration.xml. (2026-08-27)
+  ESTABLISHED
+
+- **[ON2026] Pool-layout aligns were DEAD at the main.py layer; root cause of the
+  2026-08-09 union-wave abort** (run3 drive-start audit, 2026-08-28). The union wave's
+  first pool align died in 0.5 min with "No images found under ...pool\zones\zone_1":
+  RealityScanAlignment.queue_folder_to_process refuses any zone folder without image
+  files, and a pool zone holds only .imagelist + flight log. AlignZone.bat's
+  RS_ALIGN_POOL_DIR branch and the interface's hygiene_root both supported pool mode;
+  the QUEUEING guard predating them did not (smoke test f9b639e drove the .bat
+  directly and missed the main.py path). FIX (uncommitted, run3): accept the folder
+  when RS_ALIGN_POOL_DIR is set and it carries a .imagelist. Lesson: smoke the FULL
+  driver entry path, not the workflow layer alone. (2026-08-28) ESTABLISHED
+
+- **[ON2026] GrowZone.bat ignored RS_ALIGN_PARAMS** — grow re-aligns applied the repo
+  Metadata template (Division/Ultra/50k) regardless of campaign settings; AlignZone/
+  CalibCellAlign honor the override, GrowZone.bat lacked the line (found by reading
+  the settings-application block during run3 driver build; would have re-aligned
+  Brown3/High/20k zones under Division/Ultra/50k with exit 0). FIX (uncommitted):
+  same one-line override as AlignZone.bat. Also grow at pool layout needs a
+  restricted image universe: new grow_zone.py --zone_imagelist confines census/
+  orphans to zone members (otherwise every other pool image is an "orphan" and each
+  component pass issues tens of thousands of -selectImage calls). (2026-08-28)
+  ESTABLISHED
+
+- **[ON2026] run3 campaign facts** (2026-08-28): dive codes verified from the raw
+  expedition trees = RH0041 (06-21) + RH0042 (06-22) — run2's deliverable code
+  "RH2042" was a misspelling (PRODUCT_READINESS 19 verification done). Deliverable
+  code of record: ON2026_RH0041_RH0042. Calibration content note: the COLMAP-solved
+  PINHOLE intrinsics in ON2026_colmap2 sparse\0 are numerically IDENTICAL to the
+  manufacturer resized-corrected values (the solve fixed intrinsics), i.e. identical
+  to ladder arm C's collapsed content — run3 delivers them per-eye-grouped via the
+  validated -addImageWithCalibration channel under Brown3/0.5 m accuracies, gated by
+  a 30-pair fixture probe before any zone align. (2026-08-28) ESTABLISHED
+
+- **[ON2026] run3 fixture gate FIRED: calibration-value priors corrupt METRIC SCALE
+  under Brown3 where they no longer collapse registration; groups-only remains the
+  best arm; per-eye groups survive on NO channel** (run3 discriminating cells,
+  2026-08-28, RS3, 30-pair fixture, Brown3/High/20k + Euler log 0.5 m/10 deg, all
+  arms 60/60 + 1 component): control baseline +0.21% of the 0.16970 m rig oracle;
+  groups-only (ladder-B shape) -0.09%; full COLMAP-solved values -2.55% with solved
+  focal STEERED 24.23 -> 25.4-25.9 f35 (away from BOTH the prior and RS's own
+  free-solve ~23.13). The "solved" values are numerically identical to the
+  manufacturer resized-corrected values of collapsed ladder arm C (COLMAP had
+  intrinsics fixed). Census signatures pinned: value XMPs harvest CalibrationGroup
+  "-1" per image (ladder C identical); groups-only XMPs harvest ONE merged group id
+  (ladder B "7", run3 "2") - delivered per-eye ids never survive. RS-vs-COLMAP
+  free-solved focal disagree by -4.6% on this dome-port imagery. Campaign stopped at
+  the gate per the owner rule; arm switch is one word in
+  M:\ON2026_run3\config\calib_arm.json. Evidence:
+  M:\ON2026_run3\_agent\fixture_cells\cells_verdict.json. (2026-08-28) ESTABLISHED
 
 ## 2026-08-23 — onr2 stereo rig (Sony ILX-LR1 pair, 483 images), RealityScan 2.2.0.119430
 

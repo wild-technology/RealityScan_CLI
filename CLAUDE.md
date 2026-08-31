@@ -33,7 +33,7 @@ Baseline before touching anything:
 py -3.13 -m pytest testing -q
 ```
 
-167 tests, ~12 s. If they do not pass on a clean checkout, stop and report
+498 tests, ~30 s. If they do not pass on a clean checkout, stop and report
 — you have inherited a broken tree and anything you build on it is suspect.
 
 ## Working practices for any session
@@ -124,6 +124,17 @@ The few facts worth carrying in context without a lookup:
   instance picks up the queued command — hence the double-wait in `:run`.
 - `-getStatus <instance>` → errorlevel 0 iff the instance exists, but
   "gone" precedes process teardown by seconds (file handles outlive it).
+  It also prints a live progress line on stdout (capture by redirecting;
+  RealityScan is a GUI-subsystem binary): `id:<op> progress:<pct>
+  runtime:<s> endEstimation:<s> rev:<n> lastError:<code>`. `rev:` tracks
+  scene MUTATIONS, not operations.
+- **`*` is a valid instance argument** meaning "first available instance",
+  accepted by `-delegateTo`, `-waitCompleted`, `-getStatus`,
+  `-pauseInstance`, `-unpauseInstance` and `-abortInstance`. A GUI or
+  Epic-Launcher RealityScan has no `-setInstanceName` and answers no named
+  lookup, but IS reachable via `*`. Ambiguous once two instances run — use
+  explicit names for multi-GPU, `*` only to attach to a single interactive
+  session.
 - App settings use `app*` key names. The legacy `RealityCapture*` names are
   dead.
 - Exit codes: 0 = success; with `appQuitOnError=true` the error's decimal
@@ -200,10 +211,29 @@ Exceptions that must NOT be renamed:
     FBX-by-parts + ultra-dense colored PLY), `SaveProjectCopy`.
   - Boot/env: `startRealityScan`, `SetVariables`. Boot honors
     `RS_HEADLESS=0` for a GUI-visible instance.
-  - Supporting/testing: `GrowZone`, `AlignImageList` (`.imagelist` input),
-    `SequentialAlignGrow` (incremental add→log→align), `ProbeLockAlign` /
-    `ProbeSubsetAlign` / `ProbeSubsetAlign2`, `AlignImagesFromFolder`
-    (DEPRECATED; kept for `testing/run_zone9_tests.py`).
+  - Supporting/testing: `GrowZone`, `NightGrow` (attach-only seed growth;
+    `%1` = target instance), `GuiWorkbench`, `ComputeModel`,
+    `CalibCellAlign`, `FlushCache` (sets retention 0 during the clear —
+    the 7-day default kept 918 GB), the `ProbeCalibGroups*` /
+    `ProbeFlightlog*` / `ProbeExportSettings` probes, and
+    `AlignImagesFromFolder` (DEPRECATED; kept for
+    `testing/run_zone9_tests.py`). `AlignImageList`, `SequentialAlignGrow`
+    and the `ProbeSubsetAlign*` / `ProbeLockAlign` probes now live in
+    `archive/legacy_scripts/`.
+  - **`ModelToFinal` is the one exception to the `:run` boot pattern.** It
+    finishes a mesh that ALREADY exists (texture → simplify → unwrap →
+    reproject → export → save) and **attaches** to a running instance
+    instead of booting one: it deliberately does NOT call
+    `startRealityScan.bat`, because that script issues
+    `-newScene -deleteAutosave` when `-getStatus` finds an instance already
+    running, which would destroy the very scene it was asked to finish. It
+    delegates to `%RS_TARGET%` (not `%RS_INSTANCE%`), accepts `*` as the
+    instance, and gates on the `lastError:` + `rev:` fields of `-getStatus`
+    rather than `errors_<instance>.txt` — that marker file only exists for
+    an instance booted by `startRealityScan.bat`, so a GUI or Epic-Launcher
+    instance never writes one. `finish_model.py` is its driver. Use
+    `GenerateModel` for the normal path where the pipeline owns the
+    instance and computes the mesh itself.
 - `RS_CLI/Errors/ErrorWriter.bat` — invoked by RealityScan itself
   (`appProcessAction=ExecuteProgram`); appends every completion to
   `results.log`, failures to `errors.txt`. `ErrorWriterLaunch.vbs` is the
@@ -224,6 +254,11 @@ Exceptions that must NOT be renamed:
   ONLY way any stage locates a log on disk) and per-cruise CRS generation
   (`write_flight_log_params`: UTM zone parsed from the log's filename tag →
   EPSG → FlightLogParams XML; never hand-edit the template's zone).
+  Consumers match by NORMALIZED BASENAME. Architecture and the P1/P3/P4
+  probe closures: `docs/FLIGHTLOG_ARCHITECTURE.md`.
+- `modules/calibration_sidecars.py` — per-eye approximate calibration XMPs
+  from manufacturer values, plus the sensor registry. The A/B/C ladder
+  verdict (prior content collapses registration) is in `FINDINGS.md`.
 - `modules/preprocess_images/` — canonical CLAHE / white-balance transforms
   + the pre-alignment preprocessing module (default CLAHE 2.0/8×8,
   validated on zone_9 — baseline aligns to nothing on this imagery).
@@ -234,10 +269,18 @@ Exceptions that must NOT be renamed:
   gives one trajectory row two physical files.
 - `modules/scale_oracle.py` — metric-scale measurement and the 0.90–1.10
   acceptance band. Fused components need the correspondence-free method
-  (`testing/run_h2024_fused_models.py`), since merge-scene XMP exports are
-  ordinal.
+  (`archive/campaign_drivers/run_h2024_fused_models.py`), since merge-scene
+  XMP exports are ordinal.
 - `modules/component_analysis.py`, `modules/component_manifest.py` —
   component census, membership, and border logic.
+- `modules/workspace_census.py` — workspace-level census: what components,
+  models and exports exist on disk for a project, and the name mapping
+  persisted at capture time.
+- `modules/feature_merge.py` — 3D extents, feature-box assignment, and
+  merge planning that reports what it can and cannot glue.
+- `modules/align_fingerprint.py` — align-input fingerprinting, so retries,
+  resumes and merges are nav-aware.
+- `modules/export_deliverables.py` — the Python side of the export stage.
 - `modules/file_metadata_parser.py` — image metadata extraction.
 - `module_base/settings_store.py` — persists last-entered prompt answers to
   `rs_settings.json` (repo root, gitignored) and offers them as defaults.
@@ -245,12 +288,50 @@ Exceptions that must NOT be renamed:
 
 **Standalone / retired**
 
-- `geoall.py`, `poses2flightlog.py`, `decimator.py`, `masking.py`,
+- `geoall.py`, `poses2flightlog.py`, `decimator.py`, `timestamp_rename.py`,
   `organize_by_date.py` — data prep; they do not invoke RealityScan.
 - `archive/colmap/` — retired COLMAP scripts; do not resurrect into the
   active pipeline.
+- `archive/campaign_drivers/`, `archive/legacy_scripts/` — finished
+  campaign drivers and superseded workflows, kept as citation targets for
+  `FINDINGS.md`. Read for provenance; do not wire back in.
 
 ---
+
+## When an AI agent is DRIVING (owner said "run this against that dataset")
+
+MANDATORY — full contract in `docs/AGENT_OPERATIONS.md`; on conflict this
+section wins. Every rule traces to a recorded incident.
+
+1. **No writes before the charter.** Run the intake (docs/
+   RUN_CHARTER.template.md): ask the user — never infer — where the
+   ORIGINALS are, where the NAV is, where OUTPUTS go, and what is
+   PROTECTED. Owner signs off; then work.
+2. **Source data is read-only, forever.** This pipeline writes sidecars
+   into input folders — an agent aligns only from trees it created
+   (hardlinks/copies) or with explicit consent.
+3. **Protected paths** (charter list) are never touched, cleaned, or
+   reorganized. Deliverables are never overwritten — collisions are
+   stop-and-ask.
+4. **Agent working files live in ONE place**: `<results_root>/_agent/`.
+   Never in the repo, never beside source data. It is the only tree the
+   agent may delete freely.
+5. **Own instance, own processes.** Charter-named RS instance (never the
+   user's), own cache. Never kill/quit/delegate-to anything the agent
+   did not start; identify by PID+cmdline first.
+6. **Long runs are scheduler-owned** (schtasks + CRLF launcher, never a
+   harness shell — job objects killed 14.4 h once), with a written
+   budget declaration and liveness-tested monitors BEFORE launch.
+7. **Frames and fingerprints**: honor FRAME_WARNING markers and
+   align_inputs.json; never mix coordinate frames; components without a
+   current-nav fingerprint are not "done".
+8. **Every science argument explicit** — no rs_settings inheritance
+   unattended. **Owner gates (`confirmed: false`) are stops, never flags
+   to flip.**
+9. **Destructive ops need per-instance user approval**: anything outside
+   the agent workspace, force-pushes, killing user processes, app-global
+   RealityScan settings (they leak into the user's GUI), raising safety
+   ceilings.
 
 ## Hard rules
 

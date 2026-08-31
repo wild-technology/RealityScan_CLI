@@ -65,14 +65,25 @@ echo Waiting until the RealityScan instance %RS_INSTANCE% is ready
 set /a startTries=0
 :waitStart
 %RealityScan% -getStatus %RS_INSTANCE% >nul 2>&1
-IF /I "%ERRORLEVEL%" NEQ "0" (
-    set /a startTries+=1
-    if %startTries% GEQ 120 (
-        echo ERROR: RealityScan instance %RS_INSTANCE% did not become ready within 120 seconds
-        exit /b 1
-    )
-    ping -n 2 127.0.0.1 >nul
-    goto :waitStart
-)
+IF /I "%ERRORLEVEL%" == "0" goto :ready
+set /a startTries+=1
+:: Two Windows traps at once, both in the repo's own registry, both on the
+:: BOOT GATE - where a mis-propagated failure means every later :run fires
+:: at a nonexistent instance (audit 2026-08-07):
+::  1. `exit /b N` inside a multi-statement parenthesized block returns 0 to
+::     the process caller. MergeZoneComponents.bat and ModelToFinal.bat both
+::     route around it via a label, and say so; this was the one holdout.
+::  2. %startTries% inside the enclosing IF block expands at PARSE time,
+::     i.e. before the `set /a` on that pass takes effect, so the cap fired
+::     one iteration late. Flattening the block removes both.
+if %startTries% GEQ 120 goto :startTimeout
+ping -n 2 127.0.0.1 >nul
+goto :waitStart
+
+:startTimeout
+echo ERROR: RealityScan instance %RS_INSTANCE% did not become ready within 120 seconds
+exit /b 1
+
+:ready
 
 :eof

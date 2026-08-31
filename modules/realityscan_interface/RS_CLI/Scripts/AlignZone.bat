@@ -46,6 +46,15 @@ set "min_component_size=%~6"
 if "%min_component_size%" == "" set "min_component_size=50"
 
 if not exist "%input_dir%" ( echo ERROR: input directory not found: %input_dir% & exit /b 1 )
+
+:: POOL layout (owner directive 2026-08-08/09, FLIGHTLOG_ARCHITECTURE):
+:: RS_ALIGN_POOL_DIR set = the zone holds NO images, only a .imagelist
+:: of canonical pool paths + a full-path flight log. Images are added
+:: from the list, and the identity harvest sweeps the POOL (exportXMP
+:: writes sidecars beside the source images). Unset = byte-identical
+:: legacy behavior.
+set "harvest_dir=%input_dir%"
+if defined RS_ALIGN_POOL_DIR if not "%RS_ALIGN_POOL_DIR%" == "" set "harvest_dir=%RS_ALIGN_POOL_DIR%"
 if not exist "%AlignmentParams%" ( echo ERROR: AlignmentParams.xml not found: %AlignmentParams% & exit /b 1 )
 if not exist "%output_dir%" mkdir "%output_dir%"
 
@@ -63,6 +72,7 @@ if errorlevel 1 exit /b 1
 echo Creating new scene
 call :run -newScene || goto :fail
 
+if defined RS_ALIGN_POOL_DIR if not "%RS_ALIGN_POOL_DIR%" == "" goto :addViaList
 echo Adding images to project
 :: Subfolder recursion is NOT the default in this 2.2 build: without
 :: appIncSubdirs a zone tree whose images live in per-camera or
@@ -71,6 +81,15 @@ echo Adding images to project
 :: -set, FIFO-ordered before the queued addFolder, no wait needed.
 %RealityScan% -delegateTo %RS_INSTANCE% -set "appIncSubdirs=true"
 call :run -addFolder "%input_dir%" || goto :fail
+goto :imagesAdded
+
+:addViaList
+set "zone_list="
+for %%F in ("%input_dir%\*.imagelist") do set "zone_list=%%~fF"
+if not defined zone_list ( echo ERROR: pool mode but no .imagelist in %input_dir% & goto :fail )
+echo Adding images from %zone_list% (pool: %RS_ALIGN_POOL_DIR%)
+call :run -add "%zone_list%" || goto :fail
+:imagesAdded
 
 if not "%flight_log_dir%" == "" (
     echo Importing flight log
@@ -82,10 +101,22 @@ echo Applying alignment settings from AlignmentParams.xml
 :: it is silently ignored), so apply the sfm*/lis* keys via -set first.
 :: Delegated commands queue FIFO, so the sets execute before the align;
 :: they are instant and need no completion wait.
+:: The count is the point. If the XML attribute order changes, or an
+:: RS_ALIGN_PARAMS variant yields no matching tokens, this loop applied
+:: ZERO settings and -align then succeeded on whatever the instance last
+:: held - contradicting this file own header, silently, with exit code 0
+:: (audit 2026-08-07). set /a inside the block is safe under plain
+:: expansion because the total is only READ after the loop.
+set /a applied_settings=0
 for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%AlignmentParams%") do (
     echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"sfm" /c:"lis" >nul
-    if not errorlevel 1 %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+    if not errorlevel 1 (
+        %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+        set /a applied_settings+=1
+    )
 )
+if %applied_settings% EQU 0 goto :noSettings
+echo Applied %applied_settings% alignment setting(s) from %AlignmentParams%
 
 echo Aligning images - this may take a long time
 call :run -align || goto :fail
@@ -133,7 +164,14 @@ if %comp_index% GEQ 20 goto :identityDone
 if not exist "%output_dir%\identity_r%comp_index%" mkdir "%output_dir%\identity_r%comp_index%"
 call :run -deselectAllImages || goto :fail
 call :run -exportXMP || goto :fail
-powershell -NoProfile -Command "Get-ChildItem -LiteralPath '%input_dir%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%comp_index%' -Force"
+:: $ErrorActionPreference=Stop plus try/catch: Move-Item failures are
+:: NON-TERMINATING, so powershell.exe exited 0 on a partial harvest and
+:: this step had no errorlevel check at all. Membership is
+:: stems(identity_r<K>) minus stems(r<K+1>), so an under-harvest shifts
+:: members BETWEEN components - and the merge camera-count attribution
+:: is built on those numbers (audit 2026-08-07).
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Get-ChildItem -LiteralPath '%harvest_dir%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%comp_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
+if errorlevel 1 ( echo ERROR: identity harvest move failed & goto :fail )
 set "have_poses="
 for %%F in ("%output_dir%\identity_r%comp_index%\*.xmp") do set have_poses=1
 if not defined have_poses goto :identityDone
@@ -150,6 +188,12 @@ echo Identity capture finished after %comp_index% component(s)
 echo Shutting down RealityScan instance %RS_INSTANCE% - NO save after identity loop
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
+
+:noSettings
+echo ERROR: ZERO alignment settings were applied from %AlignmentParams%.
+echo   The file exists but no sfm*/lis* key/value pair could be parsed from it.
+echo   Aligning on instance defaults is not reproducible - see this file header.
+goto :fail
 
 :fail
 echo ERROR: zone workflow failed - see %ErrorsFile% and the RealityScan log

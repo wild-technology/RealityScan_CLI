@@ -64,8 +64,15 @@ def make_workspace(tmp_path, *, stage: str) -> Workspace:
         for i in range(4):
             (raw / f"img_{i:03d}.jpg").write_bytes(b"j")
     if upto >= 2:
+        # Cover ALL four images: the census's coverage rule (2026-08-07,
+        # workspace_census._detect_georeference) reports 'partial' when the
+        # log covers under half of raw_images - a 1-row log here made the
+        # 'georeference is done' premise of the resume tests false. The
+        # rule is deliberate (silence-is-not-success); the fixture was
+        # stale, dormant while textual was uninstalled on this box.
         (ws / "raw_images" / "flight_log_4Q_UTM.txt").write_text(
-            "filename;X (East);Y (North);Alt\nimg_000.jpg;1;2;3\n",
+            "filename;X (East);Y (North);Alt\n"
+            + "".join(f"img_{i:03d}.jpg;1;2;3\n" for i in range(4)),
             encoding="utf-8")
     if upto >= 3:
         for zone in ("zone_1", "zone_2"):
@@ -322,6 +329,73 @@ def test_post_stages_are_separate_gated_commands(tmp_path):
     assert "--pair_gate overlap" in merge
     assert "--loss_tolerance 0.0025" in merge
     assert "--scale_gate true" in merge
+
+
+def test_export_runs_through_the_python_driver(tmp_path):
+    """Hard rule 1: every RealityScan launch goes through RealityScanCLI.
+    The export stage used to Popen the .bat via raw ["cmd","/c",...] - no
+    lock, no marker hygiene, no verified shutdown, and the booted GUI
+    inherited the runner's stdout pipe (WINDOWS TRAP 2026-08-07)."""
+    ws = make_workspace(tmp_path, stage="model")
+    s = _session(tmp_path, ["export"])
+    s.results_root = str(ws.root)
+    export = build_commands(s)[0]
+    assert export.stage == "Export Deliverables"
+    assert export.needs_realityscan
+    assert "cmd" not in export.argv, "raw cmd /c launches are banned"
+    assert export.argv[0] == sys.executable
+    assert export.argv[1].endswith("export_deliverables.py")
+    joined = " ".join(export.argv)
+    assert "--project" in joined
+    assert str(ws.assembly_project()) in export.argv
+    assert str(ws.exports) in export.argv
+    assert str(ws.exports / "components.names") in export.argv
+    assert str(ws.root / "logs") in export.argv, (
+        "driver logs belong in the workspace logs/ dir like every stage")
+    assert export.env.get("PYTHONIOENCODING") == "utf-8"
+
+
+def test_export_driver_goes_through_the_execution_layer(tmp_path, monkeypatch):
+    """run_export must delegate to RealityScanCLI.run_batch_script with the
+    .bat's own three-argument contract - never spawn cmd itself."""
+    from modules import export_deliverables as ed
+
+    calls = {}
+
+    class FakeCLI:
+        def __init__(self, logger, settings=None, instance_name=None):
+            pass
+
+        def run_batch_script(self, script_name, args, log_dir, **kwargs):
+            calls["script"] = script_name
+            calls["args"] = list(args)
+            calls["log_dir"] = log_dir
+
+            class R:
+                success = True
+            return R()
+
+    monkeypatch.setattr(ed, "RealityScanCLI", FakeCLI)
+    # Keep the test hermetic: run_export overlays realityscan_env onto
+    # os.environ (env wins in production); a real overlay would leak
+    # RS_* into every later test in this process.
+    monkeypatch.setattr(ed, "realityscan_env", lambda store: {})
+
+    project = tmp_path / "Assembly.rsproj"
+    project.write_bytes(b"p")
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    names = exports / "components.names"
+    names.write_text("zone_1_c0\n", encoding="utf-8")
+
+    res = ed.run_export(str(project), str(exports), str(names),
+                        settings=FakeStore())
+    assert res.success
+    assert calls["script"] == "ExportDeliverables.bat"
+    assert calls["args"] == [str(project), str(exports), str(names)], (
+        "argument order is the .bat contract: project, out dir, name list")
+    assert calls["log_dir"] == str(tmp_path / "logs"), (
+        "default log dir is <exports parent>/logs - the workspace logs/")
 
 
 def test_publish_defaults_to_dry_run_without_credentials(tmp_path, monkeypatch):

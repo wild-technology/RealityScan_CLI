@@ -1,3 +1,9 @@
+:: SUPERSEDED (archived 2026-08-07). Inverse-ordering hardening-probe for
+:: cells U1/U19/U2, RESOLVED (testing/ALIGN_MERGE_HARDENING_PLAN.md:15-21
+:: status update, 2026-07-23 9-boot probe session): selectImage = literal
+:: paths only (U1), editInputSelection works (U19), align honors
+:: enable/disable (U2). Kept for reference only - not wired into any
+:: workflow.
 @echo off
 setlocal
 :: HARDENING PROBE variant (U1/U2/U19): inverse ordering - keep everything

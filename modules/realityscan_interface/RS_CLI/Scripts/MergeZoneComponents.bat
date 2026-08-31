@@ -128,10 +128,10 @@ if defined list_mode (
 
 :: Apply optional -set overrides (instant; delegated FIFO guarantees they
 :: execute before the merge/align below). key:value -> key=value.
-if not [%6] == [] call :applySet "%~6"
-if not [%7] == [] call :applySet "%~7"
-if not [%8] == [] call :applySet "%~8"
-if not [%9] == [] call :applySet "%~9"
+if not [%6] == [] ( call :applySet "%~6" || goto :fail )
+if not [%7] == [] ( call :applySet "%~7" || goto :fail )
+if not [%8] == [] ( call :applySet "%~8" || goto :fail )
+if not [%9] == [] ( call :applySet "%~9" || goto :fail )
 goto :afterSets
 
 :applySet
@@ -139,7 +139,19 @@ set "kv=%~1"
 set "kv=%kv::==%"
 echo Setting %kv%
 %RealityScan% -delegateTo %RS_INSTANCE% -set "%kv%"
+:: A rejected ladder setting (sfmMergeGeoreferencedComponents,
+:: sfmForceComponentRematch, sfmImagesOverlap) used to leave the rung
+:: running on instance DEFAULTS while the log still printed
+:: "Setting <key>=<value>" - silently changing the mechanism under
+:: test (audit 2026-08-07). exit /b via a label, never inside a
+:: parenthesized block (Windows trap registry).
+if errorlevel 1 goto :applySetFailed
 exit /b 0
+
+:applySetFailed
+echo ERROR: RealityScan REJECTED setting %kv% - refusing to run this
+echo   rung on instance defaults.
+exit /b 1
 
 :afterSets
 
@@ -243,7 +255,11 @@ if errorlevel 1 goto :fail
 call :run -exportSelectedComponentDir "%output_dir%" || goto :fail
 if not exist "%output_dir%\%merged_name%_c%peel_index%.rsalign" goto :after_export
 call :run -exportXMPForSelectedComponent || goto :fail
-powershell -NoProfile -Command "Get-ChildItem -LiteralPath '%RS_MERGE_IMAGES_ROOT%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%peel_index%' -Force"
+:: The errorlevel check below was ineffective on its own: Move-Item
+:: failures are NON-TERMINATING, so powershell.exe exited 0 on a
+:: partial harvest (audit 2026-08-07). $ErrorActionPreference=Stop
+:: plus try/catch makes the failure real.
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Get-ChildItem -LiteralPath '%RS_MERGE_IMAGES_ROOT%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%peel_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
 if errorlevel 1 ( echo ERROR: harvest move failed & goto :fail )
 call :run -deleteSelectedComponent || goto :fail
 set /a peel_index+=1

@@ -61,6 +61,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 
@@ -190,6 +191,46 @@ RESOURCE_SAMPLE_SECONDS = 30.0
 SHUTDOWN_VERIFY_TIMEOUT_SECONDS = 900
 STATUS_CALL_TIMEOUT_SECONDS = 60
 
+# ---------------------------------------------------------------------------
+# Workflow-argument validation (the ONE boundary, hard rule 1)
+# ---------------------------------------------------------------------------
+# Python's list2cmdline quotes an argument only when it contains WHITESPACE,
+# and cmd re-parses even a quoted argument, so these characters are silently
+# eaten, split on, or executed when a path or name crosses into a .bat.
+# Measured with an echo-only .bat (audit 2026-08-07), every case rc=0:
+#   'D:\NA167 Wreck & Debris\exports' -> ARG1='D:\NA167 Wreck ', the rest RUN
+#   'D:\NA167^b\exports'              -> 'D:\NA167b\exports'  (caret eaten)
+#   'D:\dive\a=b\exports'             -> split; every later positional shifts
+#   'D:\dive\with,comma\final'        -> split
+# CLAUDE.md hard rule 8 names this trap for delimited DATA; nothing enforced
+# it for PATHS, which is exactly what a fresh user supplies ("NA167, dive 2",
+# "Wreck & Debris" are ordinary expedition folder names).
+#
+# ':' and '\' are absent deliberately - every argument here is a Windows
+# path. '%' and '!' ARE included: %VAR% expands at parse time and ! expands
+# under EnableDelayedExpansion, which several workflow scripts set.
+CMD_METACHARACTERS = frozenset('&^|<>()=,;%!"`')
+
+
+def assert_bat_safe(args, script_name: str = '') -> None:
+    """Refuse to hand cmd an argument it would silently corrupt.
+
+    Raises ValueError naming the argument, the offending characters and the
+    two legitimate ways across the boundary (rename, or pass by file/env
+    var). Called by BOTH run_batch_script and run_attach_script, so every
+    driver - finish_model, export_deliverables, run_models, merge_zones,
+    grow_zone and anything written later - is covered by one check.
+    """
+    for index, arg in enumerate(args, start=1):
+        bad = sorted(set(str(arg)) & CMD_METACHARACTERS)
+        if bad:
+            raise ValueError(
+                f'{script_name or "workflow"} argument {index} contains cmd '
+                f'metacharacter(s) {bad} that cmd splits, eats or EXECUTES '
+                f'silently (the process still returns 0): {arg!r}. '
+                'Rename the folder/component, or pass the value through a '
+                'file or an environment variable (CLAUDE.md hard rule 8).')
+
 
 def set_project_save_env(zone_images_root: str, label: str) -> str:
     """Arm the daily project-save schema for the workflow scripts.
@@ -317,12 +358,88 @@ class RealityScanCLI:
             pass
         return self.wait_for_instance_shutdown()
 
+    @staticmethod
+    def _parse_status_line(raw: str) -> dict:
+        """Parse a -getStatus live line into a dict.
+
+        The line looks like::
+
+            id:save progress:100.0% runtime:5 endEstimation:0 rev:147 lastError:0
+
+        ``rev``/``lastError``/``runtime``/``endEstimation`` are returned as
+        ints when they parse (``lastError`` is a SIGNED 32-bit decimal, e.g.
+        -2113863583 for a failed -save); everything else stays a string
+        (``progress`` keeps its literal ``%``). The unparsed line is kept
+        under ``raw``.
+        """
+        status = {'raw': raw}
+        for token in raw.split():
+            key, sep, value = token.partition(':')
+            if not sep or not key:
+                continue
+            if key in ('rev', 'lastError', 'runtime', 'endEstimation'):
+                try:
+                    status[key] = int(value)
+                    continue
+                except ValueError:
+                    pass
+            status[key] = value
+        return status
+
+    def get_instance_status(self, instance: str = None) -> dict | None:
+        """Snapshot ``<exe> -getStatus <instance>`` as a parsed dict.
+
+        Returns None when the instance does not exist (non-zero errorlevel),
+        the dict from :meth:`_parse_status_line` when it does, and
+        ``{'raw': '', 'timeout': True}`` when -getStatus hangs (instance
+        exists but is unresponsive - same conservative reading as
+        :meth:`is_instance_running`).
+
+        stdout goes to a temporary FILE, never a pipe (WINDOWS TRAP recorded
+        2026-08-07): startRealityScan.bat launches the GUI-subsystem
+        instance via ``start ""`` and that child INHERITS any captured
+        stdout/stderr pipe handles, keeping the pipe alive for the
+        instance's whole life - so pipe capture anywhere near a boot path
+        can block readers indefinitely. A file handle detaches cleanly, and
+        using it here too keeps every -getStatus capture on the safe
+        pattern.
+        """
+        exe = self.find_executable()
+        instance = instance or self.instance_name
+        fd, tmp_path = tempfile.mkstemp(prefix='rs_status_', suffix='.txt')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as out:
+                try:
+                    result = subprocess.run(
+                        [exe, '-getStatus', instance],
+                        stdout=out, stderr=subprocess.DEVNULL,
+                        timeout=STATUS_CALL_TIMEOUT_SECONDS,
+                        creationflags=_NO_WINDOW,
+                    )
+                except subprocess.TimeoutExpired:
+                    return {'raw': '', 'timeout': True}
+            if result.returncode != 0:
+                return None
+            with open(tmp_path, 'r', encoding='utf-8', errors='replace') as f:
+                raw = f.read().strip()
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        return self._parse_status_line(raw)
+
     # ------------------------------------------------------------------
     # Locking (one orchestrator per instance name)
     # ------------------------------------------------------------------
 
-    def _lock_path(self) -> str:
-        return os.path.join(ERRORS_DIR, f'{self.instance_name}.lock')
+    def _lock_path(self, instance: str = None) -> str:
+        # '*' (attach mode's "first available instance") is not a legal
+        # filename character; all wildcard attaches share one lock, which is
+        # the right scope anyway - '*' is ambiguous by nature, so two
+        # concurrent wildcard drivers could race for the same instance.
+        inst = (instance or self.instance_name).replace('*', 'WILDCARD')
+        return os.path.join(ERRORS_DIR, f'{inst}.lock')
 
     @staticmethod
     def _pid_alive(pid: int) -> bool:
@@ -345,9 +462,10 @@ class RealityScanCLI:
         except OSError:
             return False
 
-    def _acquire_lock(self) -> None:
+    def _acquire_lock(self, instance: str = None) -> None:
+        inst = instance or self.instance_name
         os.makedirs(ERRORS_DIR, exist_ok=True)
-        lock_path = self._lock_path()
+        lock_path = self._lock_path(inst)
 
         if os.path.isfile(lock_path):
             try:
@@ -358,7 +476,7 @@ class RealityScanCLI:
 
             if holder_pid and self._pid_alive(holder_pid):
                 raise RuntimeError(
-                    f'RealityScan instance "{self.instance_name}" is already '
+                    f'RealityScan instance "{inst}" is already '
                     f'being driven by PID {holder_pid} (lock: {lock_path}). '
                     'Use a different instance_name to run workflows in '
                     'parallel, or wait for the other run to finish.'
@@ -371,16 +489,16 @@ class RealityScanCLI:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
             raise RuntimeError(
-                f'RealityScan instance "{self.instance_name}" was locked by '
+                f'RealityScan instance "{inst}" was locked by '
                 'another orchestrator while this one was starting up. '
                 'Use a different instance_name to run workflows in parallel.'
             )
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(str(os.getpid()))
 
-    def _release_lock(self) -> None:
+    def _release_lock(self, instance: str = None) -> None:
         try:
-            os.remove(self._lock_path())
+            os.remove(self._lock_path(instance))
         except OSError:
             pass
 
@@ -391,11 +509,16 @@ class RealityScanCLI:
     # Marker files are namespaced per instance so parallel instances (e.g.
     # one per GPU) can never read each other's state.
 
-    def _marker(self, kind: str) -> str:
+    def _marker(self, kind: str, instance: str = None) -> str:
+        # The wildcard instance ('*', attach mode) owns no marker files and
+        # '*' is not a legal filename character; map it to a name no real
+        # instance can have, so the monitor's isfile() checks simply miss
+        # and every read degrades to ''.
+        inst = (instance or self.instance_name).replace('*', 'WILDCARD')
         names = {
-            'progress': f'progress_{self.instance_name}.txt',
-            'errors': f'errors_{self.instance_name}.txt',
-            'results': f'results_{self.instance_name}.log',
+            'progress': f'progress_{inst}.txt',
+            'errors': f'errors_{inst}.txt',
+            'results': f'results_{inst}.log',
         }
         return os.path.join(ERRORS_DIR, names[kind])
 
@@ -425,8 +548,8 @@ class RealityScanCLI:
                         )
                     time.sleep(2)
 
-    def _read_marker(self, kind: str) -> str:
-        path = self._marker(kind)
+    def _read_marker(self, kind: str, instance: str = None) -> str:
+        path = self._marker(kind, instance)
         if not os.path.isfile(path):
             return ''
         try:
@@ -454,15 +577,41 @@ class RealityScanCLI:
         script_path = os.path.join(SCRIPTS_DIR, script_name)
         if not os.path.isfile(script_path):
             raise FileNotFoundError(f'Workflow script not found: {script_path}')
+        assert_bat_safe(args, script_name)
+        # BOOT mode owns an instance's whole lifecycle: it -quits any
+        # instance answering that name and startRealityScan.bat's
+        # already-running branch then issues '-newScene -deleteAutosave'.
+        # '*' means "first available instance" and a GUI/Epic-Launcher
+        # RealityScan answers it - so booting against '*' destroys a
+        # multi-hour interactive reconstruction with no prompt (the ON2026
+        # near-miss class, HANDOFF 2026-08-07). Attach mode was hardened
+        # against exactly this; the boot path never was (audit 2026-08-07).
+        # It is reachable by typing '*' at the instance_name prompt or by
+        # exporting RS_INSTANCE=*.
+        bad_instance = set(self.instance_name) & set('*?<>:"/\\|')
+        if bad_instance or not self.instance_name.strip():
+            raise RuntimeError(
+                f'Refusing to BOOT RealityScan as instance '
+                f'{self.instance_name!r}: an instance name must be a plain '
+                f'token (no {sorted(bad_instance) or "empty name"}). "*" in '
+                'particular means "first available instance" and would let '
+                'this boot -quit and then -newScene -deleteAutosave a GUI '
+                'session\'s live scene. Set realityscan.instance_name (or '
+                'RS_INSTANCE) to a real name such as RS1; to FINISH a scene '
+                'another session created, use attach mode '
+                '(finish_model.py / RealityScanCLI.run_attach_script), '
+                'which never boots and never resets.')
 
         os.makedirs(log_dir, exist_ok=True)
         stamp = time.strftime('%Y-%m-%d_%H-%M-%S')
         log_path = os.path.join(log_dir, f'output_{stamp}.txt')
         # Shares the workflow log's timestamp so the trace and the narrative
         # of the same run are trivially paired. Every workflow gets one -
-        # a crash is never predictable in advance.
+        # a crash is never predictable in advance. basename() because
+        # script_name may be an absolute path (tests use stub scripts).
         resource_csv = os.path.join(
-            log_dir, f'resources_{os.path.splitext(script_name)[0]}_{stamp}.csv')
+            log_dir,
+            f'resources_{os.path.splitext(os.path.basename(script_name))[0]}_{stamp}.csv')
 
         env = os.environ.copy()
         env['RS_EXECUTABLE'] = exe
@@ -556,8 +705,166 @@ class RealityScanCLI:
         finally:
             self._release_lock()
 
+    def run_attach_script(self, script_name: str, args: list[str],
+                          log_dir: str, instance: str = '*') -> WorkflowResult:
+        """Run one RS_CLI workflow script against an ALREADY-RUNNING
+        RealityScan instance (attach mode - e.g. ModelToFinal.bat).
+
+        The attach-mode counterpart to :meth:`run_batch_script` for
+        workflows that finish a scene another session created (a GUI
+        reconstruction, an Epic-Launcher instance). ``instance`` may be a
+        concrete name or ``*`` ("first available instance" - only safe with
+        a single instance running). The differences from
+        ``run_batch_script`` are each deliberate and commented inline.
+        """
+        exe = self.find_executable()
+        script_path = os.path.join(SCRIPTS_DIR, script_name)
+        if not os.path.isfile(script_path):
+            raise FileNotFoundError(f'Workflow script not found: {script_path}')
+        # Same cmd-metacharacter refusal as batch mode: attach passes the
+        # export directory, model name and source-model name straight
+        # through to ModelToFinal.bat. '*' is a LEGAL instance here (it is
+        # the whole point of attach mode) and rides separately from args.
+        assert_bat_safe(args, script_name)
+
+        # Difference (a): REFUSE to start an instance. run_batch_script's
+        # contract is "own the instance's whole lifecycle"; attach mode's
+        # is "never boot, never reset". Booting from here would go through
+        # startRealityScan.bat, whose already-running branch issues
+        # '-newScene -deleteAutosave' and destroys the very scene this
+        # workflow exists to finish (the ON2026 near-miss, HANDOFF
+        # 2026-08-07).
+        status = self.get_instance_status(instance)
+        if status is None:
+            raise RuntimeError(
+                f'No reachable RealityScan instance "{instance}" '
+                '(-getStatus failed). Attach mode never boots an instance: '
+                'start RealityScan and load the project first (GUI, Epic '
+                'Launcher, or startRealityScan.bat), then re-run - or pass '
+                'the right instance name.')
+        if status.get('timeout'):
+            # Exists but unresponsive - possibly hours into a legitimate
+            # operation, possibly hung (a relocated .rsalign import pins an
+            # instance in a #timeout state forever). Attaching is still the
+            # conservative move - refusing could strand a busy instance's
+            # finished scene - but the operator must know which it is.
+            self.logger.warning(
+                'RealityScan instance "%s" exists but -getStatus timed out '
+                'after %s s - it may be mid-operation or hung. The workflow '
+                'will block on -waitCompleted until it responds; check the '
+                'GUI if this stalls.', instance, STATUS_CALL_TIMEOUT_SECONDS)
+
+        os.makedirs(log_dir, exist_ok=True)
+        stamp = time.strftime('%Y-%m-%d_%H-%M-%S')
+        log_path = os.path.join(log_dir, f'output_{stamp}.txt')
+        # Difference (e) is a NON-difference: attach runs still get the
+        # same run log and resource CSV as batch runs, same naming scheme.
+        resource_csv = os.path.join(
+            log_dir,
+            f'resources_{os.path.splitext(os.path.basename(script_name))[0]}_{stamp}.csv')
+
+        env = os.environ.copy()
+        env['RS_EXECUTABLE'] = exe
+        # No RS_GPU_DEVICES/CUDA_VISIBLE_DEVICES here: GPU pinning is a
+        # boot-time property of the instance, and attach mode never boots.
+
+        self._acquire_lock(instance)
+        start_time = time.monotonic()
+        try:
+            # Difference (b): NO shutdown-before-start, NO shutdown-after,
+            # and no FOREIGN marker clearing. The instance and its scene
+            # belong to whoever booted it. errors_<instance>.txt exists
+            # ONLY for instances booted by startRealityScan.bat - its
+            # absence is not success, and clearing a foreign instance's
+            # markers would corrupt the owner's error detection mid-run.
+            #
+            # OWN-instance exception (live gate B9, 2026-08-07): when
+            # attaching to the instance THIS checkout owns, a previous
+            # run's ErrorWriter entries are ours and legitimately stale -
+            # they tripped ModelToFinal's own-marker gate on the very
+            # first delegated op. Clear errors/results exactly as
+            # run_batch_script would. NEVER progress_<instance>.txt: the
+            # live instance holds it open via -writeProgress (deleting it
+            # raises WinError 32; truncation is pointless - the writer
+            # keeps appending).
+            if instance == self.instance_name:
+                for kind in ('errors', 'results'):
+                    path = self._marker(kind)
+                    if os.path.isfile(path):
+                        try:
+                            os.remove(path)
+                        except OSError:
+                            try:
+                                # a reader may hold it transiently; truncate
+                                with open(path, 'w', encoding='utf-8'):
+                                    pass
+                            except OSError:
+                                # Second sharing violation: warn and let the
+                                # .bat's own marker gate produce the loud
+                                # abort - do not kill the attach before the
+                                # workflow even starts (clean-sweep 2026-08-07).
+                                self.logger.warning(
+                                    'Could not clear stale own marker %s - '
+                                    'the workflow marker gate may abort on it.',
+                                    path)
+
+            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+
+            # Difference (c): the target instance rides as the script's
+            # FIRST argument (ModelToFinal.bat: %1 -> RS_TARGET), not via
+            # RS_INSTANCE. RS_INSTANCE keeps meaning "the instance this
+            # checkout boots and owns", which is what lets the script's own
+            # marker-file gate tell own markers from foreign ones.
+            with open(log_path, 'w', encoding='utf-8', errors='replace') as log_file:
+                process = subprocess.Popen(
+                    [script_path, instance] + list(args),
+                    cwd=SCRIPTS_DIR, env=env,
+                    stdout=log_file, stderr=subprocess.STDOUT,
+                    creationflags=creationflags,
+                )
+                # Difference (d): same progress-tailing/stall/resource
+                # machinery as batch mode, pointed at the TARGET instance's
+                # marker files - which may simply not exist (wildcard or
+                # foreign instance). The monitor already degrades every
+                # missing marker read to '', so it tolerates that.
+                self._monitor_until_exit(process, resource_csv,
+                                         marker_instance=instance)
+
+            return_code = process.returncode
+
+            # Success is the script's exit code: its :run gate baselines
+            # rev/lastError from -getStatus around every delegated command
+            # (see ModelToFinal.bat), because marker files cannot be
+            # trusted in attach mode. Never gate on marker absence here.
+            errors = ''
+            if return_code != 0:
+                final = self.get_instance_status(instance) or {}
+                last_error = final.get('lastError')
+                if last_error not in (None, 0):
+                    errors = f'lastError:{last_error}'
+                else:
+                    errors = f'workflow exited with code {return_code}'
+                self.logger.error(
+                    'RealityScan attach workflow %s on "%s" failed '
+                    '(exit code %s, %s). Log: %s',
+                    script_name, instance, return_code, errors, log_path)
+
+            # Informational only: results_<instance>.log is never cleared
+            # by attach mode, so for a CLI-booted own instance it may also
+            # contain lines from earlier operations.
+            results = [line for line in
+                       self._read_marker('results', instance).splitlines()
+                       if line.strip()]
+
+            return WorkflowResult(return_code == 0, return_code, log_path,
+                                  errors, results,
+                                  time.monotonic() - start_time)
+        finally:
+            self._release_lock(instance)
+
     def _monitor_until_exit(self, process: subprocess.Popen,
-                            resource_csv: str = None) -> None:
+                            resource_csv: str = None,
+                            marker_instance: str = None) -> None:
         """Poll the workflow process, relaying progress.txt updates and
         warning on stalls. No overall timeout by design.
 
@@ -567,7 +874,7 @@ class RealityScanCLI:
         next instance overwrites Temp\\RealityScan.log), so the trace across
         the crash has to be durable as it is written, not at close.
         """
-        progress_path = self._marker('progress')
+        progress_path = self._marker('progress', marker_instance)
         last_progress_line = ''
         last_errors = ''
         last_activity = time.monotonic()
@@ -596,7 +903,7 @@ class RealityScanCLI:
             self._monitor_loop(process, progress_path, last_progress_line,
                                last_errors, last_activity, stall_warned,
                                low_memory_warned, cpu, trace, next_sample,
-                               started, peak)
+                               started, peak, marker_instance)
         finally:
             if trace is not None:
                 trace.close()
@@ -615,7 +922,7 @@ class RealityScanCLI:
     def _monitor_loop(self, process, progress_path, last_progress_line,
                       last_errors, last_activity, stall_warned,
                       low_memory_warned, cpu, trace, next_sample, started,
-                      peak) -> None:
+                      peak, marker_instance=None) -> None:
         while process.poll() is None:
             time.sleep(PROGRESS_POLL_SECONDS)
 
@@ -652,7 +959,7 @@ class RealityScanCLI:
                     last_activity = time.monotonic()
                     stall_warned = False
 
-            errors = self._read_marker('errors')
+            errors = self._read_marker('errors', marker_instance)
             if errors and errors != last_errors:
                 # The batch script aborts itself on the errors marker; we just
                 # make the failure visible immediately instead of at the end.
