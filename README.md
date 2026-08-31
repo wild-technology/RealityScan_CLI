@@ -31,6 +31,7 @@ generate textured models.
 | `publish_batch.py` | Publishes every exported component (`exports/<comp>/obj`) to Cesium ion and/or Nira — whichever credentials are present — by driving the two publishers below; writes `publish_report.json` |
 | `publish_cesium.py` | Uploads one mesh export (OBJ) to Cesium ion as a tiled 3D asset via ion's REST flow — the scripted equivalent of the GUI-only "Share to Cesium ion" button |
 | `publish_nira.py` | Uploads one export to Nira through the official `niraclient` (Enterprise plan required), building the explicit typed file list Nira's docs recommend |
+| `cesium2unreal/` | The far end of the publish pipeline: finds ion assets by name pattern, resolves where each sits on the globe, and populates an Unreal Engine 5.7 level with georeferenced `Cesium3DTileset` actors snapped to a terrain tileset. Stdlib-only so it runs in Unreal's bundled Python |
 | `modules/camera_registry.py` | Single source of truth for the four physical rig cameras (lens, calibration groups, XMP content, filename families) |
 | `geoall.py` | Standalone georeferencing (ROV nav CSV → RealityScan flight logs). The most up-to-date georeferencing implementation. |
 | `poses2flightlog.py` | Post-alignment: rewrite camera locations back to UTM from the computed poses (XMP sidecars), producing a refined flight log + per-image nav-error QC |
@@ -63,6 +64,12 @@ is the newer, faster implementation (multiprocessing + binary-search
 timestamp matching); the module is the version wired into `main.py`. Prefer
 `geoall.py` for standalone runs. When the module needs improvements, port
 them from `geoall.py` rather than diverging further.
+
+`cesium2unreal/ion_locate.py` carries its own ECEF↔geodetic conversion instead
+of the `+proj=geocent` path in `modules/flight_logs.py`. This one is deliberate
+and must stay: that half runs inside Unreal's bundled Python, which has no
+numpy, geopandas or pyproj. Porting it onto the shared implementation breaks
+the Unreal side.
 
 ## Persisted settings (`rs_settings.json`)
 
