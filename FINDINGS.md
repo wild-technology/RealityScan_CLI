@@ -3511,3 +3511,38 @@ Two separate facts:
 LESSON, generalised: this repo's own rule is "verify by census, never by
 exit status" - and the same trap exists in the HARNESS. `cmd | tail`
 reports tail's status. Capture `${PIPESTATUS[0]}` or redirect to a file.
+
+## [NA165] 2026-08-31 - pool-mode components ALWAYS got bbox_utm = null
+## (bbox_from_flight_log compared a full path against basenames)
+
+`component_manifest.bbox_from_flight_log` builds `wanted` from member
+BASENAMES and STEMS, then read the flight log's filename column and compared
+the whole column value:
+
+    name = parts[0].strip()
+    key  = name.lower()
+    if key not in wanted and os.path.splitext(key)[0] not in wanted:
+        continue
+
+In POOL layout that column is a FULL PATH by design (FLIGHTLOG_ARCHITECTURE:
+the zone flight log carries the same canonical paths as the .imagelist), so
+the comparison could never match and every pool-mode component got
+`bbox_utm: null`. The docstring already claimed basename matching; the code
+never took the basename OF THE LOG ROW. It also contradicts CLAUDE.md's
+"Consumers match by NORMALIZED BASENAME".
+
+WHY IT MATTERS, not cosmetic: `component_analysis` treats a null bbox as
+UNKNOWN EXTENT and borders such a component against every other one
+(component_analysis.py:294,307), and `merge_zones.py:277` compares bboxes when
+planning. So the whole merge plan degrades to "everything might touch
+everything" without a single error being raised.
+
+HOW DISCOVERED: NA165/H2060 single-scene align produced 20 components,
+2,813/3,870 cameras (72.7%), and the census showed bbox=NULL on all 20 while
+the run reported success. Fixing the matcher and recomputing from the same
+untouched flight log gave real extents on all 20 (c0 32.5 x 12.5 m,
+c1 15.5 x 49.7 m), so the data was always there.
+
+Fix tries the raw column first, then its basename, so copy-layout logs that
+already carry bare names are byte-identical in behaviour. Cover:
+testing/test_component_manifest_bbox.py (suite 559 -> 566).

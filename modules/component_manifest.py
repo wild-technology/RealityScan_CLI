@@ -168,9 +168,22 @@ def bbox_from_flight_log(flight_log_path: str | None,
                 parts = line.strip().split(';')
                 if len(parts) < 3:
                     continue
-                name = parts[0].strip()
-                key = name.lower()
-                if key not in wanted and os.path.splitext(key)[0] not in wanted:
+                # The log's filename column is a FULL PATH in pool mode
+                # (FLIGHTLOG_ARCHITECTURE: the zone flight log carries the same
+                # canonical paths as the .imagelist), while `wanted` holds
+                # basenames and stems. Comparing a whole path against a
+                # basename never matches, so EVERY pool-mode component got a
+                # null bbox - and null means "unknown extent" to
+                # component_analysis, which then borders it against everything
+                # and degrades merge planning. Observed on NA165/H2060: all 20
+                # components null. The raw column is still tried first so
+                # copy-layout logs carrying bare names behave exactly as before.
+                raw = parts[0].strip()
+                base = os.path.basename(raw.replace('\\', '/'))
+                for key in (raw.lower(), base.lower()):
+                    if key in wanted or os.path.splitext(key)[0] in wanted:
+                        break
+                else:
                     continue
                 try:
                     x = float(parts[1])
