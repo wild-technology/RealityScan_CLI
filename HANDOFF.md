@@ -1,5 +1,96 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-08-31 — AGENT-NATIVE EXECUTION LANE, read this first
+
+Branch **`agent-native-execution`** (off `main` @ `2900c1f`). Nothing
+running. Suite **639 passed, 1 skipped, ~25 s** (was 559). Owner's goal:
+move from a product run by hand to one always executed by a Claude-guided
+workflow. The design principle applied throughout: **every rule that lived
+only in prose is a rule that could be forgotten** — so each was pushed
+down to the cheapest layer that can enforce it.
+
+### What landed
+
+1. **`modules/verify.py` — the census/verify ORACLE.** One call answers
+   "did it actually work", as JSON, read entirely from artifacts on disk.
+   `py -3.13 -m modules.verify --workspace <ws> --json`; exit 0 ok /
+   1 incomplete / 2 blocked / 3 absent. On top of the existing census it
+   checks what a camera count cannot see: zones aligned from different
+   nav or settings, zones with no `align_inputs.json`, mixed coordinate
+   frames, and measured scale outside 0.90–1.10. 15 tests.
+2. **`modules/run_charter.py` — the run charter as DATA.**
+   `--init` / `--validate` / `--check --path/--instance`. Enforces the
+   AGENT_OPERATIONS touch rules mechanically: source and nav read-only
+   forever, protected paths refused (protection wins over containment, so
+   a protected tree inside the results root stays protected), writes
+   confined to results-root + repo, and the agent's instance separated
+   from the owner's. Case-insensitive, because NTFS is. 23 tests.
+3. **`RS_NO_SETTINGS_INHERITANCE`** in `module_base/settings_store.py`.
+   Gates the PROMPT path only (`prompt`/`ask`/`prompt_bool`); plain `get`
+   is untouched so machine constants still resolve. A refused inheritance
+   prints what it refused — it must not look like an absent value.
+4. **`wildscan/plan.py` — the run plan, headless.** Third consumer of the
+   `build_commands` planner, alongside the TUI and `runner.py`.
+   `--charter <c> --validate` proves every argv against `main.py`'s OWN
+   parser before anyone runs it, and names any charter answer that
+   reached no command. 17 tests.
+5. **`.claude/hooks/` + `.claude/settings.json`** — three guards:
+   direct RealityScan/`.bat` invocation (hard rule 1), charter write
+   violations, CRLF on `.bat`/`.vbs`. **Liveness-tested** per sec.1.1 — 25
+   tests in `testing/test_agent_hooks.py`.
+6. **`.claude/skills/`** — `rs-lookup` (routes any RealityScan question
+   into `docs/rs-reference/` in one hop), `drive-run`, `merge-zones`,
+   `publish-cesium`, `finish-model`.
+7. **CLAUDE.md trimmed 21.0 KB → 15.9 KB** while gaining the new tooling.
+   The module-by-module tour moved verbatim to **`docs/ARCHITECTURE.md`**
+   — it is reference material, and CLAUDE.md is paid on every turn of
+   every session including every subagent.
+
+### Read this before the next session
+
+- **The hooks are not live in the session that wrote them.** Claude Code
+  loads `.claude/settings.json` at session start, so the guards arm on the
+  NEXT session. Re-run `py -3.13 -m pytest testing/test_agent_hooks.py -q`
+  if you want proof they still fire.
+- **The charter guard is opt-in by design.** It does nothing unless
+  `RS_RUN_CHARTER` is set, so the owner's interactive sessions are
+  unaffected. A set-but-BROKEN charter blocks — believing you are
+  constrained while nothing checks is the dangerous state.
+- Nothing here has touched production data or run RealityScan. Every test
+  is fixture-based; no instance was booted.
+
+### Ranked loose ends
+
+1. **`_KIND_BY_NAME` in `wildscan/session.py` is keyed by non-flags**
+   (`batch_input_image_dir`, `geo_input_image_dir`, `rs_flight_log_path`,
+   ...). The real names are `b_*` / `r_*`. It drives question KINDS in the
+   TUI (path vs file vs text validation), so the fix needs the portal's
+   question path checked end to end — not done here. FINDINGS
+   2026-08-31 [HARNESS].
+2. **No driver calls `guard_write` yet.** Enforcement is currently at the
+   hook layer (agent writes) and the CLI layer (`--check`). Wiring
+   `modules.run_charter.guard_write` into `merge_zones` / `run_models` /
+   `export_deliverables` would extend it to writes the drivers make
+   themselves.
+3. **The oracle does not yet read `publish_report.json` provenance** — it
+   censuses publish state through the existing stage detector only. Cesium
+   placement verification stays in `publish_cesium.py --verify`.
+4. **`docs/AGENT_OPERATIONS.md` and `docs/RUN_CHARTER.template.md` still
+   describe the prose charter.** They are accurate but no longer the only
+   form; a pass to cross-reference the JSON schema would help.
+
+### Exact next commands
+
+```bash
+py -3.13 -m pytest testing -q
+py -3.13 -m modules.run_charter --init <results_root>/_agent/RUN_CHARTER.json
+py -3.13 -m modules.run_charter --validate <charter>
+py -3.13 -m wildscan.plan --charter <charter> --validate
+py -3.13 -m modules.verify --workspace <results_root> --json
+```
+
+---
+
 ## 2026-08-31 — CESIUM DEPTH SOLVED, read this first
 
 **The owner's standing complaint — "Cesium appears to ignore depth" — is

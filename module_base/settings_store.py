@@ -29,6 +29,34 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 DEFAULT_SETTINGS_PATH = os.path.join(_REPO_ROOT, "rs_settings.json")
 
 # ---------------------------------------------------------------------------
+# Refusing to INHERIT persisted answers
+# ---------------------------------------------------------------------------
+# Offering the last run's answer as a default is exactly right for an
+# operator at a keyboard: they see it and press enter. It is exactly wrong
+# for an unattended/agent-driven run, where the same mechanism silently
+# carries one campaign's locations into another campaign's run - the
+# wizard-prefill and stale-settings incidents of 2026-08-08, and the
+# reason docs/AGENT_OPERATIONS.md sec.8 says "no rs_settings inheritance
+# unattended".
+#
+# With RS_NO_SETTINGS_INHERITANCE truthy, the STORE stops supplying
+# values: prompt/ask/prompt_bool fall back to the caller's own explicit
+# `fallback` (which is code, not history) and otherwise fail by name.
+# Writing still happens, so a strict run's answers are recorded for the
+# humans; they just never come back as an unexamined default.
+#
+# modules.run_charter sets this for every child of a charter-driven run.
+NO_INHERIT_ENV = "RS_NO_SETTINGS_INHERITANCE"
+
+_TRUTHY = ("1", "true", "yes", "y", "on")
+
+
+def inheritance_refused() -> bool:
+    """True when persisted answers must not be reused as defaults."""
+    return os.environ.get(NO_INHERIT_ENV, "").strip().lower() in _TRUTHY
+
+
+# ---------------------------------------------------------------------------
 # The 'realityscan' section - per-machine constants
 # ---------------------------------------------------------------------------
 # Machine-level RealityScan constants live in ONE settings section so that no
@@ -168,6 +196,25 @@ class SettingsStore:
         sec = self._data.get(section)
         return sec.get(key, fallback) if isinstance(sec, dict) else fallback
 
+    def _default_for(self, section: str, key: str, fallback):
+        """The default a PROMPT may offer for this key.
+
+        Identical to ``get`` except under RS_NO_SETTINGS_INHERITANCE, where
+        the persisted value is discarded (loudly - a refused inheritance
+        must not look like an absent one) and the caller's own explicit
+        fallback stands in. ``get`` itself is deliberately NOT gated: code
+        that reads a stored machine constant on purpose (realityscan_env's
+        cache_dir, the portal's last-run fields) is not the hazard; the
+        hazard is a PROMPT silently answering itself from history.
+        """
+        if not inheritance_refused():
+            return self.get(section, key, fallback)
+        stored = self.get(section, key, None)
+        if stored is not None and stored != fallback:
+            print(f"REFUSING stored default {section}.{key}={stored!r} "
+                  f"({NO_INHERIT_ENV} is set) - supply it explicitly.")
+        return fallback
+
     def set(self, section: str, key: str, value) -> None:
         if not isinstance(self._data.get(section), dict):
             self._data[section] = {}
@@ -207,7 +254,7 @@ class SettingsStore:
         EOF-safe (see _input_or_default): unattended runs take the stored
         default silently and fail with a named ValueError when none exists.
         """
-        default = self.get(section, key, fallback)
+        default = self._default_for(section, key, fallback)
 
         if default is not None:
             answer = self._input_or_default(f"{message} [{default}]: ", default)
@@ -234,7 +281,18 @@ class SettingsStore:
         if cli_value is not None:
             self.set(section, key, cli_value)
             return cli_value
-        stored = self.get(section, key, fallback)
+        stored = self._default_for(section, key, fallback)
+        if stored is None and inheritance_refused():
+            # Strict mode with nothing explicit to fall back on. Returning
+            # None here would hand the caller a value it never chose and
+            # push the failure into whatever dereferences it first - the
+            # exact "unattended run died on a None" shape RSModule.
+            # validate_parameters was written to name. Name it here too.
+            raise ValueError(
+                f'{NO_INHERIT_ENV} is set and no explicit value was given '
+                f'for "{section}.{key}". Pass it on the command line (or in '
+                f'the run charter) - stored answers from previous runs are '
+                f'refused on this lane.')
         # sys.stdin is None under pythonw / no-console hosts; isatty()
         # on None would raise AttributeError before the EOFError guard
         # ever gets a chance (clean-sweep 2026-08-07).
@@ -249,7 +307,7 @@ class SettingsStore:
         return value
 
     def prompt_bool(self, section: str, key: str, message: str, fallback: bool = None):
-        default = self.get(section, key, fallback)
+        default = self._default_for(section, key, fallback)
         suffix = " [y/n]" if default is None else (" [Y/n]" if default else " [y/N]")
 
         while True:
