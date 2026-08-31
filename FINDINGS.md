@@ -3309,6 +3309,39 @@ Source tag **[CESIUM]**. Established while building the ion publish path.
   The fix for both is the same and lives outside RealityScan: convert the
   vertical ourselves and pass `options.position`. (2026-08-31) ESTABLISHED
 
+- **Export-stage readiness for the publish path: two of three requirements are
+  pinned, the third is UNVERIFIED, and the stage has never run here.** Audited
+  2026-08-31 against `ExportDeliverables.bat` and its three presets:
+  - `MvsMeshExportInfoFile=true` in all three, so the `.rsInfo` placement
+    record IS written. Now guarded by a test - dropping it would not fail the
+    export, it would silently make every later upload unplaceable.
+  - `MvsExportIsGeoreferenced=0x1` and `MvsExportMove{X,Y,Z}=0.0` /
+    `MvsExportScale{X,Y,Z}=1.0` in all three, so no hidden shift or scale is
+    applied. Also now test-guarded: a non-zero Move would displace the
+    geometry WITHOUT touching the `.rsInfo` the placement is derived from,
+    which is undetectable downstream.
+  - **`MvsExportcoordinatesystemtype=3` (OBJ and FBX) and `0` (PLY) are the
+    open risk.** The Help's dialog options in order are Grid plane / Project
+    Output / Shifted project output / Same as XMP, and the `0..3` indexing of
+    that list is `[INFERRED]`, never confirmed. Under that reading the repo
+    exports as "Same as XMP" (3) and "Grid plane" (0) - **neither is "Project
+    Output"** (1), the one that would guarantee the project CRS. And **no
+    workflow `.bat` pins a project or output coordinate system at all**
+    (grep for `coordinatesystem` across `RS_CLI/Scripts/` returns nothing),
+    so the export CRS rests entirely on scene state left by the flight-log
+    import.
+  - **No `exports/` directory exists on any volume**, so `ExportDeliverables`
+    has never produced output on this machine and the chain is untested end to
+    end. The single `.rsInfo` verified (NA168 H2080) carries
+    `exportCoordinateSystemType="2"`, which is NOT what either repo preset
+    sets - it came from a manual/GUI export, not from this pipeline.
+  **Consequence is bounded, not silent:** `modules/cesium_placement.py` reads
+  whatever the sidecar declares and REFUSES when the CRS is absent or no
+  reading of `transformToModel` validates, so the failure mode on a first real
+  export is a loud stop at `publish_cesium.py --dry-run`, not a misplaced
+  asset. Cheapest probe: run one export, then `--dry-run` and read the
+  reported lat/lon/depth. (2026-08-31) OPEN
+
 ## 2026-08-23 — onr2 stereo rig (Sony ILX-LR1 pair, 483 images), RealityScan 2.2.0.119430
 
 Source for all of these: a 17-arm session driving RealityScan from the CLI on an external

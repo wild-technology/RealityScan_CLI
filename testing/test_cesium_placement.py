@@ -371,6 +371,49 @@ def test_a_directory_with_no_obj_is_an_error(tmp_path):
         select_objs(tmp_path, "whole")
 
 
+# --------------------------------------------------------------------------
+# the contract with the EXPORT stage
+# --------------------------------------------------------------------------
+
+EXPORT_PRESETS = ["ModelExportParamsOBJ_NiraParts",
+                  "ModelExportParamsFBX_Parts",
+                  "ModelExportParamsPLY_DensePoints"]
+
+
+def preset(name):
+    import xml.etree.ElementTree as ET
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "modules", "realityscan_interface", "RS_CLI", "Metadata", name + ".xml")
+    root = ET.parse(path).getroot()
+    return {e.attrib["key"]: e.attrib["value"] for e in root.findall("entry")}
+
+
+@pytest.mark.parametrize("name", EXPORT_PRESETS)
+def test_export_preset_writes_the_placement_record(name):
+    """`.rsInfo` is the ONLY record of the export coordinate system, and the
+    publish step cannot place a mesh without it. Turning
+    MvsMeshExportInfoFile off would not fail the export - it would silently
+    make every downstream upload unplaceable."""
+    assert preset(name)["MvsMeshExportInfoFile"] == "true"
+
+
+@pytest.mark.parametrize("name", EXPORT_PRESETS)
+def test_export_preset_stays_georeferenced(name):
+    assert preset(name)["MvsExportIsGeoreferenced"] == "0x1"
+
+
+@pytest.mark.parametrize("name", EXPORT_PRESETS)
+def test_export_preset_applies_no_hidden_shift_or_scale(name):
+    """A non-zero MvsExportMove* or non-unit MvsExportScale* would move the
+    geometry without touching the .rsInfo the placement is derived from, so
+    the asset would land off by exactly that amount with nothing to show it."""
+    values = preset(name)
+    for axis in "XYZ":
+        assert values[f"MvsExportMove{axis}"] == "0.0"
+        assert values[f"MvsExportScale{axis}"] == "1.0"
+
+
 def test_companions_follow_mtl_references_not_the_whole_folder(tmp_path):
     """Copying every texture in the folder would ship the unused by-parts set
     too - 326 MB against 74 MB on NA168 H2080."""

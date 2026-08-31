@@ -246,8 +246,10 @@ def test_publish_carries_the_workspace_crs(tmp_path, tag, epsg):
     assert workspace_input_crs(Workspace(ws)) == epsg
     session = Session(results_root=str(ws), enabled=['publish'])
     argv = build_commands(session)[0].argv
-    assert '--input-crs' in argv
-    assert argv[argv.index('--input-crs') + 1] == epsg
+    # Placement now comes from each mesh's own .rsInfo sidecar; the flight
+    # log rides along as the INDEPENDENT nav check (2026-08-31).
+    assert '--flight-log' in argv
+    assert f'flight_log_{tag}_UTM.txt' in argv[argv.index('--flight-log') + 1]
 
 
 def test_publish_omits_the_crs_for_a_local_frame_campaign(tmp_path):
@@ -257,7 +259,35 @@ def test_publish_omits_the_crs_for_a_local_frame_campaign(tmp_path):
         'filename;X (East);Y (North)\na.jpg;1;2\n', encoding='utf-8')
     assert workspace_input_crs(Workspace(ws)) is None
     session = Session(results_root=str(ws), enabled=['publish'])
-    assert '--input-crs' not in build_commands(session)[0].argv
+    assert '--flight-log' not in build_commands(session)[0].argv
+
+
+def test_the_publish_argv_is_accepted_by_publish_batchs_own_parser(tmp_path):
+    """The gap this file exists to close, for the OTHER generated command.
+
+    Every stage selection is fed to main.py's real parser above, but the
+    publish stage builds a publish_batch.py argv that nothing ever parsed.
+    On 2026-08-31 `--input-crs` was removed from publish_batch while WildScan
+    kept passing it: argparse exit 2, the whole publish stage dead, and the
+    full suite still green. Parse it for real, against publish_batch's OWN
+    parser, so the two cannot drift again.
+    """
+    ws = tmp_path / 'ws'
+    (ws / 'raw_images').mkdir(parents=True)
+    (ws / 'raw_images' / 'flight_log_53N_UTM.txt').write_text(
+        'filename;X (East);Y (North)\na.jpg;1;2\n', encoding='utf-8')
+    (ws / 'exports').mkdir()
+    session = Session(results_root=str(ws), enabled=['publish'])
+    argv = build_commands(session)[0].argv
+    assert argv[1].endswith('publish_batch.py')
+
+    proc = subprocess.run(
+        [sys.executable, argv[1], *argv[2:], '--help'],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        cwd=REPO_ROOT)
+    # --help short-circuits before any work, but argparse still rejects an
+    # unknown flag with exit 2 first, which is exactly what we are testing.
+    assert proc.returncode == 0, (proc.stdout + proc.stderr)[-800:]
 
 
 # ------------------------------------------------------- camera records

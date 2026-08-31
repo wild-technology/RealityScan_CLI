@@ -39,7 +39,12 @@ The three older assets still sit at **+2.1 / +0.0 / +23.7 m**.
   of `--input-crs`, and runs every Cesium publish with `--verify`.
 - **`requirements.txt`** — `requests`, `boto3`, `pyproj` were all MISSING;
   `publish_cesium.py` could not run at all before today.
-- **24 new tests** (`testing/test_cesium_placement.py`); suite 498 -> 521.
+- **`wildscan/session.py`** — the portal's publish stage passed the now
+  deleted `--input-crs`; it forwards `--flight-log` instead. That break
+  passed the whole suite, so there is now a test feeding the portal's
+  publish argv to `publish_batch`'s OWN parser, the way this repo already
+  does for `main.py`.
+- **40 new tests**; suite 498 -> 537.
 
 ### Traps worth remembering
 
@@ -57,6 +62,30 @@ The three older assets still sit at **+2.1 / +0.0 / +23.7 m**.
 - The exported OBJ may sit in a **scrambled local frame** — NA168's is ~350 km
   from its site. Never publish on the flight-log CRS alone.
 
+### Export-stage readiness (audited 2026-08-31)
+
+The publish path needs three things from `ExportDeliverables.bat`. Two are
+pinned and now test-guarded; the third is the open risk:
+
+| need | state |
+|---|---|
+| `.rsInfo` written beside the mesh | **OK** — `MvsMeshExportInfoFile=true` in all three presets, test-guarded |
+| no hidden shift/scale | **OK** — `MvsExportMove*=0.0`, `MvsExportScale*=1.0`, `MvsExportIsGeoreferenced=0x1`, test-guarded |
+| geometry in a declared CRS | **UNVERIFIED** — `MvsExportcoordinatesystemtype=3` (OBJ/FBX), `0` (PLY); the `0..3` → Grid plane / Project Output / Shifted / Same-as-XMP mapping is `[INFERRED]`, and **no workflow pins a project or output CRS** |
+
+**`ExportDeliverables` has never produced output on this machine** — no
+`exports/` directory exists on any volume — so the chain is untested end to
+end. The one `.rsInfo` verified (NA168 H2080) came from a manual export
+(`exportCoordinateSystemType="2"`), not from these presets.
+
+This is bounded, not silent: `cesium_placement` refuses when the sidecar
+declares no CRS or no reading of `transformToModel` validates, so a first real
+export fails loudly at `--dry-run` rather than publishing something wrong.
+
+**Cheapest probe, and the next thing to do:** run one export, then
+`py -3.13 publish_cesium.py --name x --dir <export>\obj --dry-run` and read
+the reported lat/lon/depth. Seconds, no upload.
+
 ### Ranked loose ends
 
 1. **The three legacy assets are still at the surface.** ion has no reposition
@@ -73,6 +102,10 @@ The three older assets still sit at **+2.1 / +0.0 / +23.7 m**.
    observed. The repo's own OBJ presets set 0 and 3, so a third frame
    behaviour may exist. The resolver fails loudly rather than guessing.
 5. **Probe asset `5171554` was kept** — delete it when you have looked.
+6. **`MvsExportcoordinatesystemtype` 3 (OBJ/FBX) is unverified**, and no
+   workflow pins a project or output CRS. Settle it by exporting the same
+   model at each of the four GUI *Coordinate system* choices and diffing
+   the written `.rsInfo` — that also closes rs-reference OPEN question 16.
 
 ### Exact next commands
 
