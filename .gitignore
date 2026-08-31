@@ -33,3 +33,7 @@ main.py.lprof
 # Python bytecode
 __pycache__/
 *.pyc
+
+# publish_cesium.py staging (local-frame mesh copies) and the ion probe
+_cesium_local/
+_probe_cesium/

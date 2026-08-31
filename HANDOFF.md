@@ -1,5 +1,103 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-08-31 — CESIUM DEPTH SOLVED, read this first
+
+**The owner's standing complaint — "Cesium appears to ignore depth" — is
+answered, and it was never Cesium.** ion honours below-ellipsoid heights
+*exactly*: a probe asked for h = -512.46 m and read back h = -512.46 m,
+error -0.000 m (ion asset `5171554`, `testing/probe_cesium_depth.py`, KEPT).
+Two other faults produced every sea-surface asset:
+
+1. RealityScan's **Share to Cesium ion never georeferences** — its own Help
+   says the model "does not have to be georeferenced ... define its
+   approximate position" later, i.e. hand-placed at ~sea level.
+2. Even where placement *is* carried (the Cesium 3D Tiles LoD export), the
+   project CRS is **2D** and declares no vertical datum, while the Z it
+   carries is a depth below the **sea surface**. Cesium reads every height as
+   above the **ellipsoid**. The gap is the geoid undulation N — **+72.69 m**
+   at the NA168 H2080 site, +70.4 m Solomon Sea, -27.1 m Gulf of Mexico.
+
+**Proof it is fixed:** `NA168 H2080` republished as ion asset **`5171556`**
+(https://ion.cesium.com/assets/5171556). Independent read-back of its own
+`tileset.json`, decoded outside the publishing code: lon 133.634688,
+lat 3.584574, h = **-512.46 m** ellipsoidal = **-585.16 m below the sea
+surface**, inside the dive's nav range (-1030.91 .. -532.16 m). Extents asked
+12.7 x 11.7 x 30.6 m, ion reported 12.7 x 11.7 x 30.6 m.
+The three older assets still sit at **+2.1 / +0.0 / +23.7 m**.
+
+### What changed
+
+- **NEW `modules/cesium_placement.py`** — reads the export's `.rsInfo` for CRS
+  and `transformToModel`, DERIVES the correct reading of that matrix rather
+  than assuming one, converts sea-surface depth to ellipsoidal height through
+  EGM2008, and localises the mesh into East-North-Up metres.
+- **`publish_cesium.py` rewritten** — now uploads a LOCAL-frame mesh with
+  `options.position=[lon, lat, h]` instead of raw UTM + `inputCrs`, and
+  **verifies placement by decoding the finished tileset**. Dropped the stale
+  `targetVersion`; added `geometryCompression`.
+- **`publish_batch.py`** — forwards `--flight-log` (nav cross-check) instead
+  of `--input-crs`, and runs every Cesium publish with `--verify`.
+- **`requirements.txt`** — `requests`, `boto3`, `pyproj` were all MISSING;
+  `publish_cesium.py` could not run at all before today.
+- **24 new tests** (`testing/test_cesium_placement.py`); suite 498 -> 521.
+
+### Traps worth remembering
+
+- **PROJ silently applies a ZERO geoid correction** when the grid is absent —
+  `Transformer.from_crs('EPSG:9518','EPSG:4979')` succeeds offline and returns
+  Z unchanged. Everything here passes `allow_ballpark=False`, which raises.
+  The EGM2008 grid (~80 MB) needs `PROJ_NETWORK=ON` or a local `projsync`.
+- **`root.boundingVolume.box` is NOT the geometry** — it is the padded octree
+  root cell and read 20x20x20 m for a 20x8x3 m probe. Use
+  `root.metadata.properties.tightBoundingBox`.
+- **ion cannot reposition after tiling** — `PATCH /v1/assets/{id}` accepts only
+  name/description/attribution. Placement must be right at creation.
+- **`3D_MODEL` + `position` is a staff-acknowledged ion bug** (tiling fails).
+  Use `3D_CAPTURE`.
+- The exported OBJ may sit in a **scrambled local frame** — NA168's is ~350 km
+  from its site. Never publish on the flight-log CRS alone.
+
+### Ranked loose ends
+
+1. **The three legacy assets are still at the surface.** ion has no reposition
+   endpoint, so fixing them means re-publishing from source. Owner decision:
+   `2017323` NA149_H1953_CliffFace, `2335997` NA156_H2019_Rock_Coral,
+   `2336618` NA156_H2011_Goosefish. The exports would need locating first.
+2. **Only the `whole` form of a by-parts export has been published.**
+   `--parts split` is implemented but never exercised against ion; parts share
+   one anchor by design, but that is untested live.
+3. **`--no-geoid` is untested live.** It exists as a deliberate escape hatch
+   and warns loudly; nobody has run it.
+4. **`MvsExportcoordinatesystemtype` 0 and 3 have never been seen in a written
+   `.rsInfo`.** Only `1` (LAS, identity) and `2` (OBJ, local+transform) are
+   observed. The repo's own OBJ presets set 0 and 3, so a third frame
+   behaviour may exist. The resolver fails loudly rather than guessing.
+5. **Probe asset `5171554` was kept** — delete it when you have looked.
+
+### Exact next commands
+
+```bat
+:: publish one component, verified
+set CESIUM_ION_TOKEN=<token>
+py -3.13 publish_cesium.py --name "<name>" --dir <export>\obj ^
+    --flight-log <cruise>\raw_images\flight_log_<zone>_UTM.txt --poll --verify
+
+:: plan only, no upload
+py -3.13 publish_cesium.py --name x --dir <export>\obj --dry-run
+
+:: whole workspace
+py -3.13 publish_batch.py --workspace <ws> --prefix "<wreck>"
+
+:: re-run the depth probe (creates and deletes a ~2 KB asset)
+py -3.13 testing\probe_cesium_depth.py
+```
+
+Reference: `docs/rs-reference/10-reconstruction-texturing-export.md` §17.2,
+rewritten with the live-verified API contract. Raw log: `FINDINGS.md`,
+`[CESIUM]` entries dated 2026-08-31.
+
+---
+
 ## 2026-08-07 — ON2026 MODEL DELIVERED + NAV PREP BLOCKED, read this first
 
 Different dataset and different lineage from the H2024 line below: ON2026

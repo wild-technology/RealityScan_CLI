@@ -505,12 +505,19 @@ def test_publish_refuses_disagreeing_zones_rather_than_picking_one(tmp_path):
                                 'raw_images/flight_log_57L_UTM.txt'])
     with pytest.raises(SystemExit) as exc:
         pb.resolve_input_crs(tmp_path)
-    assert 'cannot resolve an input CRS' in str(exc.value)
+    assert 'cannot resolve a flight log' in str(exc.value)
 
 
-def test_the_publish_driver_passes_the_resolved_crs_downstream(tmp_path):
-    """End to end through main(): --input-crs was only forwarded when the
-    OPERATOR typed it, so every portal-free publish shipped without one."""
+def test_the_publish_driver_passes_the_georeferencing_downstream(tmp_path):
+    """End to end through main(): the georeferencing input was only
+    forwarded when the OPERATOR typed it, so every portal-free publish
+    shipped without one (audit-verification 2026-08-07).
+
+    The mechanism changed on 2026-08-31: placement now comes from each
+    mesh's own .rsInfo sidecar, and the flight log is forwarded instead as
+    the INDEPENDENT nav check on that reading. What must not regress is that
+    the driver resolves it itself and passes it on.
+    """
     _publish_ws(tmp_path, ['raw_images/flight_log_54L_UTM.txt'])
     proc = subprocess.run(
         [sys.executable, os.path.join(REPO_ROOT, 'publish_batch.py'),
@@ -519,4 +526,7 @@ def test_the_publish_driver_passes_the_resolved_crs_downstream(tmp_path):
         cwd=REPO_ROOT)
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 0, combined
-    assert '--input-crs EPSG:32754' in combined, combined[-800:]
+    assert '--flight-log' in combined, combined[-800:]
+    assert 'flight_log_54L_UTM.txt' in combined, combined[-800:]
+    # and the publish itself must be verified, not fire-and-forget
+    assert '--verify' in combined, combined[-800:]
