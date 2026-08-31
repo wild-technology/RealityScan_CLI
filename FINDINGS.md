@@ -3640,3 +3640,43 @@ Scale by component (14 PASS / 6 FAIL, band 0.90-1.10):
 
 If confirmed, the fix is per-zoom-segment calibration groups rather than one
 group for the whole dive. NOT PURSUED - owner said note it and move on.
+
+## [NA165] 2026-08-31 - zoom hypothesis TESTED against solved focal lengths:
+## explains AT MOST 1 of 6 scale failures (supersedes the note above)
+
+The identity harvest writes per-camera XMP sidecars carrying
+`xcr:FocalLength35mm`, and RealityScan solves them with
+`xcr:CalibrationGroup="-1"` (each camera solved independently) even though
+the registry declares `Camera:CalibrationGroup="1"`. So the solved focal per
+camera IS observable, on all 2,813 registered cameras.
+
+Distribution across the dive: median **24.5 mm** (registry prior 23, owner
+stated ~28), p25 22.6, p75 26.2. Per-30-min medians stay in 19.9-36.1 - there
+is NO sustained 2x or 4x shift anywhere in the dive. What does exist is a
+heavy TAIL: 35 cameras above 100 mm, max 11,203 mm, and p95 blowing out to
+92 mm in the 18:00 bin. That is the signature of focal/depth ambiguity under
+near-zero parallax, not of a lens changing.
+
+Per component, median solved focal vs measured scale:
+
+    all 20 components      r = -0.643
+    excluding c11          r = +0.093
+    passing components     r = +0.011
+
+The correlation is ENTIRELY one outlier. Five of the six failures (c12 0.482,
+c18 0.854, c9 0.870, c8 0.885, c6 1.111) have perfectly ordinary focals of
+22.1-25.5 mm, so their scale error is not focal-driven.
+
+c11 is the exception and deserves its own line: scale 4.184, median focal
+**16.0 mm**, tightly clustered (p95 16.3, max 16.4) - a confident solve well
+below the 24.6 cohort median. But 16 mm is WIDER, not zoomed IN, and its
+imagery (19:34) is a wide OBLIQUE view down a talus slope with a large
+in-frame depth range, versus c0's near-nadir view of flat crust. Weak
+geometry explains it at least as well as a lens change.
+
+VERDICT: the owner's zoom hypothesis is not supported as the general cause.
+It cannot be fully excluded - these frames carry NO EXIF whatsoever, so
+there is no lens telemetry to check against, and a zoom fighting a fixed
+calibration group would also perturb the solve. But the measured focals say
+the dominant driver is the 3.8 cm baseline geometry, which is what the scale
+oracle's own "drift or a fold" wide-IQR verdict already said.
