@@ -3476,3 +3476,38 @@ status. Details and tables landed in `docs/rs-reference/` (05 §2.3, 06 §2.3/§
   a 180° rotation, which is its own inverse (R = Rᵀ), so world→camera and camera→world are
   near-indistinguishable; three arms gave inconclusive separation. A rig-baseline check does
   not test it either, since the baseline depends only on positions.
+
+## [NA165] 2026-08-31 - a DIAGNOSTIC zone plot could destroy a completed
+## batching run (matplotlib 3.11.1 / Python 3.14)
+
+Batching H2060 (29,069 Zeuss frames, pool layout, use_z on) computed 13
+zones and 34,144 images-with-overlap, printed the full per-zone summary,
+then died with:
+
+    File "modules/image_batcher/batch_directory.py", line 778, in __plot_results
+      fig1.savefig(kernel_plot_path, bbox_inches='tight')
+    AttributeError: 'Path' object has no attribute 'simplify_thresh'.
+      Did you mean: 'simplify_threshold'?
+
+raised from matplotlib's Agg `draw_path_collection`. HOW DISCOVERED: the
+run reported exit 0 through a `| tail` pipe (bash returns the LAST command's
+status); re-run capturing `PYTHONRC` directly showed rc=1, and
+`batched_images_by_zone/` was EMPTY despite the successful zone summary.
+
+Two separate facts:
+
+1. **Structural.** `__plot_results` is called at batch_directory.py:1254,
+   UPSTREAM of both the accept prompt and the file copy. The PNGs are
+   diagnostic and nothing downstream reads them, but an exception there
+   discarded the entire clustering result. Now wrapped: the failure is
+   logged as a warning and the batches still land on disk.
+
+2. **Environmental.** matplotlib 3.11.1 on CPython 3.14.3 / numpy 2.5.2
+   raises the above from `savefig` on a large PathCollection. The repo's
+   requirements.txt pins `matplotlib>=3.11`, so a clean install reproduces
+   it. Not yet isolated to a minimal case; the structural fix makes it
+   non-blocking either way.
+
+LESSON, generalised: this repo's own rule is "verify by census, never by
+exit status" - and the same trap exists in the HARNESS. `cmd | tail`
+reports tail's status. Capture `${PIPESTATUS[0]}` or redirect to a file.

@@ -1251,7 +1251,22 @@ class BatchDirectory(RSModule):
             print(f"Average zone size: {total_in_batches / len(final_zones):.0f} images")
             print("---------------------\n")
 
-            self.__plot_results(gdf_processed, final_zones, output_dir)
+            # The zone plots are DIAGNOSTIC, and this call sits upstream of the
+            # accept prompt and the file copy - so a rendering failure used to
+            # throw away a completed clustering run and leave
+            # batched_images_by_zone empty. Observed on NA165/H2060
+            # (2026-08-31): 13 zones and 34,144 images computed, then
+            # matplotlib 3.11.1 raised "'Path' object has no attribute
+            # 'simplify_thresh'" out of savefig and the whole run died with
+            # nothing written. Nothing downstream reads these PNGs, so a
+            # failure here is logged and the batches still land on disk.
+            try:
+                self.__plot_results(gdf_processed, final_zones, output_dir)
+            except Exception as e:
+                self.logger.warning(
+                    f'Zone diagnostic plots failed ({type(e).__name__}: {e}). '
+                    f'The batches themselves are unaffected and will still be '
+                    f'written; only the PNGs are missing.')
 
             # EOF-safe: an unattended run cannot answer - auto-accept the
             # computed batches (the summary above is in the log for review).
