@@ -36,7 +36,9 @@ def _write(obj):
     return fh.name
 
 
-class PopulateTest(unittest.TestCase):
+class _LevelFixture(unittest.TestCase):
+    """A level with a georeference, a terrain tileset and a manifest."""
+
     def setUp(self):
         fake_unreal.reset()
         self.georef = fake_unreal.CesiumGeoreference(*ORIGIN)
@@ -79,7 +81,9 @@ class PopulateTest(unittest.TestCase):
         return [a for a in fake_unreal._Level.actors
                 if isinstance(a, fake_unreal.Cesium3DTileset) and a is not self.terrain]
 
-    # -- placement ---------------------------------------------------------
+
+class PopulateTest(_LevelFixture):
+    """Placement and the height correction for standalone models."""
 
     def test_spawns_one_actor_per_model_and_skips_the_terrain(self):
         cesium_populate.run(self.cfg_path)
@@ -139,7 +143,9 @@ class PopulateTest(unittest.TestCase):
         self.assertEqual((a.location.x, a.location.y, a.location.z), (0.0, 0.0, 0.0))
         row = next(r for r in self.report()["assets"] if r["id"] == 103)
         self.assertFalse(row["sampled"])
-        self.assertIsNone(row["delta_m"])
+        self.assertEqual(row["placement"], "unsampled")
+        self.assertEqual(row["delta_m"], 0.0)
+        self.assertIsNone(row["terrain_height_m"])
 
     # -- the report --------------------------------------------------------
 
@@ -148,12 +154,13 @@ class PopulateTest(unittest.TestCase):
         rows = {r["id"]: r for r in self.report()["assets"]}
         self.assertAlmostEqual(rows[101]["delta_m"], -50.0, places=6)
         self.assertAlmostEqual(rows[102]["delta_m"], -20.0, places=6)
-        self.assertEqual(self.report()["summary"]["sampled"], 2)
+        self.assertEqual(self.report()["summary"]["anchored"], 2)
 
     def test_uniform_offset_is_called_out_as_a_datum_error(self):
-        for m in self.manifest:
-            if m["id"] != TERRAIN_ID:
-                m["lat"], m["lon"], m["height"] = ORIGIN[1], ORIGIN[0], -1163.0
+        for n, m in enumerate(m for m in self.manifest if m["id"] != TERRAIN_ID):
+            m["lat"] = ORIGIN[1] + 0.01 * n          # separate sites...
+            m["lon"] = ORIGIN[0]
+            m["height"] = -1163.0                    # ...sharing one height error
         self.cfg_path = _write({
             "terrain_ion_asset_id": TERRAIN_ID,
             "manifest": _write(self.manifest),
@@ -167,6 +174,107 @@ class PopulateTest(unittest.TestCase):
     def test_level_is_saved(self):
         cesium_populate.run(self.cfg_path)
         self.assertTrue(fake_unreal._Level.saved)
+
+
+class ClusterStackTest(_LevelFixture):
+    """Overlapping models stack instead of burying each other in one surface."""
+
+    def cluster_manifest(self, gap=None, radius=50.0, stack=True):
+        # Three models over the same patch of seafloor, at different depths.
+        # Extents are deliberately asymmetric so a wrong one shows up.
+        self.manifest = [
+            {"id": 201, "name": "A_deep", "lon": ORIGIN[0], "lat": ORIGIN[1],
+             "height": -1200.0, "height_min": -1210.0, "height_max": -1190.0,
+             "radius_m": radius},
+            {"id": 202, "name": "B_mid", "lon": ORIGIN[0], "lat": ORIGIN[1],
+             "height": -1150.0, "height_min": -1160.0, "height_max": -1140.0,
+             "radius_m": radius},
+            {"id": 203, "name": "C_shallow", "lon": ORIGIN[0], "lat": ORIGIN[1],
+             "height": -1100.0, "height_min": -1106.0, "height_max": -1094.0,
+             "radius_m": radius},
+        ]
+        cfg = {"terrain_ion_asset_id": TERRAIN_ID,
+               "manifest": _write(self.manifest), "report": self.report_path,
+               "stack_clusters": stack}
+        if gap is not None:
+            cfg["stack_gap_m"] = gap
+        self.cfg_path = _write(cfg)
+        fake_unreal.TERRAIN_FN = lambda lon, lat: -1250.0
+
+    def targets(self):
+        return {r["id"]: r for r in self.report()["assets"]}
+
+    def test_deepest_lands_on_terrain_and_the_rest_stack_on_it(self):
+        self.cluster_manifest()
+        cesium_populate.run(self.cfg_path)
+        t = self.targets()
+
+        # A is deepest (height_min -1210): its centre goes to the terrain.
+        self.assertEqual(t[201]["placement"], "terrain")
+        self.assertAlmostEqual(t[201]["target_height_m"], -1250.0, places=6)
+
+        # B's bottom rests on A's top: -1250 + 10 = -1240, + B's 10 m below
+        self.assertEqual(t[202]["placement"], "stacked")
+        self.assertAlmostEqual(t[202]["target_height_m"], -1230.0, places=6)
+
+        # C's bottom rests on B's top: -1230 + 10 = -1220, + C's 6 m below
+        self.assertEqual(t[203]["placement"], "stacked")
+        self.assertAlmostEqual(t[203]["target_height_m"], -1214.0, places=6)
+
+    def test_stacked_models_do_not_overlap(self):
+        self.cluster_manifest()
+        cesium_populate.run(self.cfg_path)
+        t = self.targets()
+        src = {m["id"]: m for m in self.manifest}
+        spans = []
+        for i in (201, 202, 203):
+            centre, m = t[i]["target_height_m"], src[i]
+            spans.append((centre - (m["height"] - m["height_min"]),
+                          centre + (m["height_max"] - m["height"])))
+        spans.sort()
+        for (_, top), (bottom, _) in zip(spans, spans[1:]):
+            self.assertAlmostEqual(bottom, top, places=6,
+                                   msg="stacked models should touch, not overlap")
+
+    def test_gap_separates_the_stack(self):
+        self.cluster_manifest(gap=5.0)
+        cesium_populate.run(self.cfg_path)
+        t = self.targets()
+        self.assertAlmostEqual(t[201]["target_height_m"], -1250.0, places=6)
+        self.assertAlmostEqual(t[202]["target_height_m"], -1225.0, places=6)
+        self.assertAlmostEqual(t[203]["target_height_m"], -1204.0, places=6)
+
+    def test_separate_footprints_are_each_snapped_to_terrain(self):
+        self.cluster_manifest(radius=1.0)          # 1 m radii, all co-located...
+        for n, m in enumerate(self.manifest):
+            m["lat"] = ORIGIN[1] + 0.05 * n        # ...but now kilometres apart
+        self.cfg_path = _write({"terrain_ion_asset_id": TERRAIN_ID,
+                                "manifest": _write(self.manifest),
+                                "report": self.report_path})
+        cesium_populate.run(self.cfg_path)
+        placements = {r["placement"] for r in self.report()["assets"]}
+        self.assertEqual(placements, {"terrain"})
+
+    def test_stacking_can_be_turned_off(self):
+        self.cluster_manifest(stack=False)
+        cesium_populate.run(self.cfg_path)
+        placements = {r["placement"] for r in self.report()["assets"]}
+        self.assertEqual(placements, {"terrain"},
+                         "with stacking off every model snaps to the surface")
+
+    def test_stacked_models_are_kept_out_of_the_datum_summary(self):
+        self.cluster_manifest()
+        cesium_populate.run(self.cfg_path)
+        # Only the anchor carries datum evidence; the other two were positioned
+        # by what sits under them, so counting them would fabricate a spread.
+        self.assertEqual(self.report()["summary"]["anchored"], 1)
+
+    def test_the_actor_is_actually_moved_to_its_stacked_height(self):
+        self.cluster_manifest()
+        cesium_populate.run(self.cfg_path)
+        actor = next(a for a in self.models() if a.get_actor_label() == "B_mid")
+        # -1150 -> -1230 is an 80 m drop, straight down at the origin.
+        self.assertAlmostEqual(actor.location.z, -8000.0, delta=1.0)
 
 
 if __name__ == "__main__":

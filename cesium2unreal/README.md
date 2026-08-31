@@ -96,6 +96,35 @@ Scattered deltas are genuine placement error. A tight cluster is a datum bug,
 and the right fix is upstream in ion — `options.position` at upload, or the 3D
 Tiles Location Editor — so CesiumJS and everything else downstream agree.
 
+## Overlapping models stack
+
+Snapping every model to the terrain surface works until two of them cover the
+same patch of seafloor — then both land at the same height and interpenetrate.
+So models are clustered first, and each cluster is handled as a stack: the
+**deepest** model is snapped to the terrain, and the rest rest on top of it in
+depth order, each sitting on the one below.
+
+Clustering needs no threshold to guess. Each asset's horizontal radius and
+vertical extent come from its own root bounding volume in `tileset.json`, so
+two models cluster when their footprints genuinely intersect. Grouping is
+single-link: if A overlaps B and B overlaps C, all three are one stack, which
+is what consecutive survey passes look like.
+
+| config | effect |
+|---|---|
+| `stack_clusters` | `false` puts every model on the terrain surface, overlaps and all |
+| `cluster_radius_m` | fixed separation in metres instead of footprint overlap |
+| `stack_gap_m` | vertical space between stacked models; `0` means touching |
+
+A cluster of one is just a snap, so nothing changes for isolated models.
+
+**Only the deepest model in a stack sits on real terrain.** Everything above it
+is at a height chosen to avoid a collision, not a measured one. The report
+records this per asset — `placement` is `terrain`, `stacked` or `unsampled`,
+with `cluster` and `stack_index` — and the datum summary counts only
+terrain-anchored models, because a stacked model's offset is dictated by what
+is beneath it and would otherwise fabricate a spread.
+
 ## The offset is not a Z nudge
 
 Unreal's +Z is "up" only at the georeference origin. `populate` converts both
@@ -118,9 +147,12 @@ py -3.13 cesium2unreal/tests/test_populate.py     # or: pytest cesium2unreal/tes
 
 `tests/fake_unreal.py` stands in for the editor, implementing the real
 ECEF→ESU geodesy rather than a stub, so the offset assertions mean something.
-Ten tests cover placement, idempotency on re-run, the terrain being excluded
-from its own population, unsampled sites being left alone, the datum warning,
-and both offset cases. No Unreal required.
+Seventeen tests cover placement, idempotency on re-run, the terrain being
+excluded from its own population, unsampled sites being left alone, the datum
+warning, both offset cases, and the stacking rules — that the deepest member
+lands on the terrain, that stacked models touch without overlapping, that the
+gap is honoured, that separate footprints do not cluster, and that stacked
+models stay out of the datum summary. No Unreal required.
 
 What the tests **cannot** cover is whether the plugin's Python bindings match.
 `SampleHeightMostDetailed` is a Blueprint async node whose factory and

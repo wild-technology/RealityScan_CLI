@@ -76,8 +76,40 @@ def _mat_apply(m, v):
     ]
 
 
-def tileset_origin(tileset_json):
-    """Cartographic centre of a tileset's root tile: (lon_deg, lat_deg, height_m)."""
+def _mat_rotate(m, v):
+    """As _mat_apply but without the translation — for directions, not points."""
+    if not m:
+        return list(v)
+    return [
+        m[0] * v[0] + m[4] * v[1] + m[8] * v[2],
+        m[1] * v[0] + m[5] * v[1] + m[9] * v[2],
+        m[2] * v[0] + m[6] * v[1] + m[10] * v[2],
+    ]
+
+
+def _dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _norm(v):
+    return math.sqrt(_dot(v, v))
+
+
+def geodetic_up(lon_deg, lat_deg):
+    """Unit ellipsoid normal at a cartographic position, in ECEF."""
+    lo, la = math.radians(lon_deg), math.radians(lat_deg)
+    return (math.cos(la) * math.cos(lo), math.cos(la) * math.sin(lo), math.sin(la))
+
+
+def tileset_footprint(tileset_json):
+    """Reduce a tileset's root tile to where it sits and how big it is.
+
+    Returns lon/lat degrees, the centre height, the vertical extent
+    (height_min/height_max) and a horizontal radius, all metres above the
+    ellipsoid. The extent is what lets callers stack overlapping models
+    instead of burying them in each other; the radius is what lets them work
+    out which models overlap in the first place.
+    """
     root = tileset_json["root"]
     bv = root.get("boundingVolume", {})
     xform = root.get("transform")
@@ -88,27 +120,68 @@ def tileset_origin(tileset_json):
         w, s, e, n, hmin, hmax = bv["region"]
         if e < w:                      # region straddling the antimeridian
             e += 2.0 * math.pi
-        lon = math.degrees((w + e) / 2.0)
-        lon = (lon + 180.0) % 360.0 - 180.0
-        return lon, math.degrees((s + n) / 2.0), (hmin + hmax) / 2.0
+        lat = (s + n) / 2.0
+        lon = (math.degrees((w + e) / 2.0) + 180.0) % 360.0 - 180.0
+        half_ns = (n - s) * _A / 2.0
+        half_ew = (e - w) * _A * math.cos(lat) / 2.0
+        return {
+            "lon": lon,
+            "lat": math.degrees(lat),
+            "height": (hmin + hmax) / 2.0,
+            "height_min": hmin,
+            "height_max": hmax,
+            "radius_m": math.hypot(half_ns, half_ew),
+        }
 
     if "box" in bv:
-        # 12 numbers: centre xyz then three half-axis vectors.
-        centre = bv["box"][0:3]
+        # 12 numbers: centre xyz, then three half-axis vectors.
+        b = bv["box"]
+        centre = _mat_apply(xform, b[0:3])
+        axes = [_mat_rotate(xform, b[3:6]), _mat_rotate(xform, b[6:9]),
+                _mat_rotate(xform, b[9:12])]
+        lon, lat, h = ecef_to_lon_lat_height(*centre)
+        up = geodetic_up(lon, lat)
+        # Support function of the box: the half-extent along a direction is the
+        # sum of the projections of the three half-axes onto it.
+        half_up = sum(abs(_dot(a, up)) for a in axes)
+        radius = sum(
+            _norm([a[i] - _dot(a, up) * up[i] for i in range(3)]) for a in axes
+        )
     elif "sphere" in bv:
-        centre = bv["sphere"][0:3]
+        c = bv["sphere"]
+        centre = _mat_apply(xform, c[0:3])
+        lon, lat, h = ecef_to_lon_lat_height(*centre)
+        # A sphere's radius scales with the transform; the largest basis-column
+        # norm is the worst case.
+        scale = 1.0
+        if xform:
+            scale = max(_norm(xform[i:i + 3]) for i in (0, 4, 8))
+        half_up = radius = c[3] * scale
     else:
         raise ValueError("root tile has no usable boundingVolume")
 
-    return ecef_to_lon_lat_height(*_mat_apply(xform, centre))
+    return {
+        "lon": lon,
+        "lat": lat,
+        "height": h,
+        "height_min": h - half_up,
+        "height_max": h + half_up,
+        "radius_m": radius,
+    }
+
+
+def tileset_origin(tileset_json):
+    """Cartographic centre of a tileset's root tile: (lon_deg, lat_deg, height_m)."""
+    f = tileset_footprint(tileset_json)
+    return f["lon"], f["lat"], f["height"]
 
 
 def locate_asset(asset_id, token):
-    """(lon_deg, lat_deg, height_m) for an ion 3D Tiles asset."""
+    """Footprint dict for an ion 3D Tiles asset — see tileset_footprint."""
     ep = _get("%s/v1/assets/%d/endpoint" % (API, int(asset_id)), token)
     url = ep["url"]
     sep = "&" if urllib.parse.urlparse(url).query else "?"
-    return tileset_origin(_get(url + sep + "access_token=" + ep["accessToken"]))
+    return tileset_footprint(_get(url + sep + "access_token=" + ep["accessToken"]))
 
 
 def match_names(assets, pattern):
@@ -141,13 +214,12 @@ def build_manifest(token, pattern=None, asset_ids=None):
     manifest = []
     for a in assets:
         try:
-            lon, lat, h = locate_asset(a["id"], token)
+            entry = dict(locate_asset(a["id"], token))
         except Exception as exc:                       # keep going; report at the end
             manifest.append({"id": a["id"], "name": a["name"], "error": str(exc)})
             continue
-        manifest.append(
-            {"id": a["id"], "name": a["name"], "lon": lon, "lat": lat, "height": h}
-        )
+        entry.update(id=a["id"], name=a["name"])
+        manifest.append(entry)
     return manifest
 
 
