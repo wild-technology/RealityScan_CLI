@@ -94,3 +94,14 @@ def test_union_log_still_refuses_when_nothing_matches(tmp_path):
     with pytest.raises(ValueError, match="ZERO rows"):
         _union(tmp_path, [os.path.join(POOL, n) for n in NAMES],
                only={"nothing_like_it.jpg"})
+
+
+def test_union_log_matches_extensionless_stems(tmp_path):
+    # Callers pass manifest `images`, which the identity harvest records
+    # WITHOUT an extension, so a basename carrying .jpg still misses. This is
+    # the form that actually failed on NA165/H2060 after the first fix.
+    log_path, _params = _union(
+        tmp_path, [os.path.join(POOL, n) for n in NAMES],
+        only={"a", "b"})
+    body = [l for l in open(log_path, encoding="utf-8").read().splitlines()[1:] if l.strip()]
+    assert len(body) == 2, "extensionless manifest stems must match full-path rows"

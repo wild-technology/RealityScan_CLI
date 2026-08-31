@@ -653,9 +653,14 @@ def build_union_flight_log(images_root: str, output_dir: str, logger,
             raw = line.split(';')[0].strip('"').strip()
             raw_key = raw.lower()
             base_key = os.path.basename(raw.replace('\\', '/')).lower()
+            # ...and the STEM: callers pass manifest `images`, which the
+            # identity harvest records WITHOUT an extension, so a basename
+            # carrying .jpg still misses. Try every form.
+            candidates = (raw_key, base_key,
+                          os.path.splitext(raw_key)[0],
+                          os.path.splitext(base_key)[0])
             if (only_basenames is not None
-                    and raw_key not in only_basenames
-                    and base_key not in only_basenames):
+                    and not any(c in only_basenames for c in candidates)):
                 continue
             rows.setdefault(base_key, line)
 
