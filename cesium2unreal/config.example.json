@@ -6,8 +6,8 @@
   "token_env": "CESIUM_ION_TOKEN",
   "manifest": "manifest.json",
   "report": "snap-report.json",
-  "stack_clusters": true,
+  "cluster_models": true,
   "cluster_radius_m": null,
-  "stack_gap_m": 0.0,
+  "seafloor_clearance_m": 0.0,
   "timeout_s": 300
 }

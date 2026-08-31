@@ -137,7 +137,7 @@ def apply_height(tileset, georef, lon, lat, height_from, height_to):
 
 
 # --------------------------------------------------------------------------
-# clustering and stacking
+# clustering and the seafloor datum correction
 # --------------------------------------------------------------------------
 
 _EARTH_R = 6371008.8            # mean radius; clustering does not need better
@@ -182,48 +182,57 @@ def cluster_sites(sites, radius_m=None):
     return list(groups.values())
 
 
-def _extent(site):
-    """(below, above) — how far the model reaches from its own centre."""
-    h = site["height"]
-    return h - site.get("height_min", h), site.get("height_max", h) - h
+def _deepest_point(site):
+    """The model's lowest point, metres above the ellipsoid."""
+    return site.get("height_min", site["height"])
 
 
-def plan_cluster(members, terrain, gap_m=0.0):
-    """Where each member of one cluster should end up.
+def plan_cluster(members, terrain, clearance_m=0.0):
+    """One rigid vertical correction for a group of overlapping models.
 
-    Snapping every overlapping model to the same terrain surface buries them
-    in each other. Instead the deepest one is snapped to the terrain and the
-    rest are stacked on top of it in depth order, each resting on the one
-    below. A cluster of one reduces to a plain snap.
+    The multibeam surface is the ground truth for depth: nothing sits below
+    it. For each member the lift needed to raise its deepest point to the
+    seafloor beneath it is `terrain - height_min`; the cluster takes the
+    largest of those, so the model that most violates the seafloor ends up
+    resting exactly on it and no other member is left buried.
+
+    That single correction is then applied to every member, which is the whole
+    point. Moving each model onto the surface independently, or stacking them
+    into contact, would flatten real vertical structure — a seawall is
+    genuinely several metres above the seafloor its neighbour sits on, and
+    those relative offsets are survey measurements, not artefacts. A rigid
+    shift fixes the datum without touching the geometry between models.
 
     terrain maps asset id -> sampled height, or None where sampling failed.
-    Returns {id: (target_centre_height, placement)}; placement is "terrain"
-    for the anchor, "stacked" above it, "unsampled" for members with no
-    terrain under them, which are left where ion put them.
+    Returns {id: (target_centre_height, placement)}:
+
+      anchor     the member that defines the shift; rests on the seafloor
+      offset     sampled member carried by the same shift, its depth relative
+                 to the anchor preserved exactly
+      carried    no terrain of its own, but corrected with its cluster —
+                 better than leaving it on an uncorrected datum
+      unsampled  no member of the cluster found terrain; left where ion put it
     """
+    lifts = {
+        m["id"]: terrain[m["id"]] - _deepest_point(m)
+        for m in members
+        if terrain.get(m["id"]) is not None
+    }
+    if not lifts:
+        return {m["id"]: (m["height"], "unsampled") for m in members}
+
+    anchor_id = max(lifts, key=lifts.get)
+    delta = lifts[anchor_id] + clearance_m
+
     plan = {}
-    eligible = sorted(
-        [m for m in members if terrain.get(m["id"]) is not None],
-        key=lambda m: m.get("height_min", m["height"]),
-    )
     for m in members:
-        if terrain.get(m["id"]) is None:
-            plan[m["id"]] = (m["height"], "unsampled")
-
-    if not eligible:
-        return plan
-
-    anchor = eligible[0]
-    centre = terrain[anchor["id"]]
-    plan[anchor["id"]] = (centre, "terrain")
-    top = centre + _extent(anchor)[1]
-
-    for m in eligible[1:]:
-        below, above = _extent(m)
-        centre = top + gap_m + below
-        plan[m["id"]] = (centre, "stacked")
-        top = centre + above
-
+        if m["id"] == anchor_id:
+            placement = "anchor"
+        elif m["id"] in lifts:
+            placement = "offset"
+        else:
+            placement = "carried"
+        plan[m["id"]] = (m["height"] + delta, placement)
     return plan
 
 
@@ -285,16 +294,16 @@ def sample_heights(terrain, positions, on_complete, timeout_s=300.0):
 # --------------------------------------------------------------------------
 
 def _summarise(rows):
-    """Report the correction applied to terrain-anchored models.
+    """Report the per-cluster seafloor correction.
 
     Snapping every model to the terrain hides a systematic height error by
     construction. A tight cluster of similar offsets is the signature of one —
     a geoid/ellipsoid mismatch shifts everything by nearly the same amount,
     whereas genuinely wrong placements scatter.
     """
-    # Only terrain-anchored models carry datum evidence: a stacked model's
-    # offset is dictated by whatever is beneath it, not by the seafloor.
-    deltas = [r["delta_m"] for r in rows if r["placement"] == "terrain"]
+    # One lift per cluster: every other member moved by the same amount, so
+    # counting them would report the same correction many times over.
+    deltas = [r["delta_m"] for r in rows if r["placement"] == "anchor"]
     if not deltas:
         return {"anchored": 0}
     summary = {
@@ -359,19 +368,16 @@ def run(config_path):
 
         actors = {site["id"]: tileset for site, tileset in placed}
         sites = [site for site, _ in placed]
-        if cfg.get("stack_clusters", True):
+        if cfg.get("cluster_models", True):
             groups = cluster_sites(sites, cfg.get("cluster_radius_m"))
         else:
             groups = [[site] for site in sites]
-        gap = float(cfg.get("stack_gap_m", 0.0))
+        clearance = float(cfg.get("seafloor_clearance_m", 0.0))
 
         rows = []
         # Largest clusters first, so the interesting ones head the report.
         for index, members in enumerate(sorted(groups, key=lambda g: -len(g))):
-            plan = plan_cluster(members, terrain, gap)
-            order = [m["id"] for m in sorted(
-                (m for m in members if plan[m["id"]][1] != "unsampled"),
-                key=lambda m: m.get("height_min", m["height"]))]
+            plan = plan_cluster(members, terrain, clearance)
 
             for site in members:
                 target, placement = plan[site["id"]]
@@ -383,37 +389,42 @@ def run(config_path):
                 else:
                     apply_height(actors[site["id"]], georef, site["lon"],
                                  site["lat"], site["height"], target)
+
+                floor = terrain[site["id"]]
+                # Where the model's own base ends up relative to the seafloor
+                # beneath it: the clearance for the anchor, and for a seawall
+                # the height of its base above the floor its neighbour sits on.
+                base = target - (site["height"] - _deepest_point(site))
                 rows.append({
                     "id": site["id"],
                     "name": site["name"],
                     "lon": site["lon"],
                     "lat": site["lat"],
                     "ion_height_m": site["height"],
-                    "terrain_height_m": terrain[site["id"]],
+                    "terrain_height_m": floor,
                     "target_height_m": target,
                     "delta_m": target - site["height"],
+                    "base_above_seafloor_m": (base - floor) if floor is not None else None,
                     "placement": placement,
                     "cluster": index if len(members) > 1 else None,
-                    "stack_index": order.index(site["id"]) if site["id"] in order else None,
-                    "sampled": terrain[site["id"]] is not None,
+                    "sampled": floor is not None,
                 })
 
-        stacked = sum(1 for r in rows if r["placement"] == "stacked")
         clusters = sum(1 for g in groups if len(g) > 1)
-        if stacked:
+        if clusters:
             unreal.log(
-                "%d models in %d cluster(s) stacked above their deepest member; "
-                "only the deepest sits on the terrain"
-                % (stacked + clusters, clusters)
+                "%d cluster(s) share one seafloor correction each; depths "
+                "relative to the anchor are preserved" % clusters
             )
 
         report = {"summary": _summarise(rows), "assets": rows}
         if cfg.get("report"):
             with open(cfg["report"], "w") as fh:
                 json.dump(report, fh, indent=2)
-            unreal.log(
-            "%d of %d anchored to terrain, %d stacked; %s"
-            % (report["summary"].get("anchored", 0), len(rows), stacked,
+            moved = sum(1 for r in rows if r["placement"] != "unsampled")
+        unreal.log(
+            "%d of %d models corrected across %d group(s); %s"
+            % (moved, len(rows), report["summary"].get("anchored", 0),
                json.dumps(report["summary"]))
         )
 

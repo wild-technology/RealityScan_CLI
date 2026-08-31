@@ -74,17 +74,63 @@ it loads the terrain tiles it needs on demand and calls back several frames
 later. A `-run=pythonscript` commandlet has no tick loop and will time out at
 the sampling step. Discovery is headless-safe; snapping is not.
 
-## Height, and why the report exists
+## The seafloor is the depth datum
 
-Every model is snapped to the terrain surface. That is also, by construction, a
-way to hide a systematic error: Cesium heights are metres above the **WGS 84
-ellipsoid**, not depth and not mean sea level. A sounding of 32 m becomes
-roughly `h = N + tide − 32`, where `N` is the geoid separation — tens of metres
-in most of the world.
+Multibeam bathymetry is the accurate measurement here, so the seafloor is
+ground truth for depth: nothing is placed below it, and the correction that
+puts models onto it is derived from it rather than guessed.
 
-If that conversion is wrong, snapping makes it invisible. So `populate` writes
-`snap-report.json` recording the correction applied to each asset, and warns
-when the corrections cluster:
+Models are grouped first — two cluster when their footprints genuinely
+intersect, using the horizontal radius and vertical extent read from each
+tileset's own root bounding volume, so there is no threshold to invent.
+Grouping is single-link: A overlapping B and B overlapping C makes one group,
+which is what consecutive survey passes look like.
+
+Each group then gets **one rigid vertical correction**. For every member, the
+lift needed to raise its deepest point to the seafloor beneath it is
+`terrain − height_min`; the group takes the largest of those. The model that
+most violates the seafloor ends up resting exactly on it, nothing else is left
+buried, and every member moves by that same amount.
+
+That last part is the whole point. Snapping each model onto the surface
+independently — or stacking them into contact — flattens real vertical
+structure. **A seawall is genuinely several metres above the seafloor its
+neighbour sits on**, and that separation is a survey measurement, not an
+artefact to be corrected away. A rigid shift fixes the datum without touching
+the geometry between models.
+
+Note that the binding member is the most *buried* model, not the deepest one.
+Where the seafloor varies across a group, a deep model over a deep trench can
+clear the bottom comfortably while a shallower one is underground; anchoring
+on depth alone would leave the second buried.
+
+| config | effect |
+|---|---|
+| `cluster_models` | `false` corrects every model on its own |
+| `cluster_radius_m` | fixed separation in metres instead of footprint overlap |
+| `seafloor_clearance_m` | lift the group this far clear of the surface; `0` rests on it |
+
+### What the report tells you
+
+`snap-report.json` gives each asset a `placement`:
+
+| | |
+|---|---|
+| `anchor` | defines its group's correction; rests on the seafloor |
+| `offset` | carried by the same shift, depth relative to the anchor preserved |
+| `carried` | no terrain of its own, corrected with its group anyway |
+| `unsampled` | no terrain anywhere in its group; left where ion put it |
+
+plus `base_above_seafloor_m` — how far the model's own base ends up above the
+seafloor beneath it. Zero for the anchor; for a seawall, the height of its base
+above the floor. That number is a survey result, so it is worth reading.
+
+The corrections themselves are the datum diagnostic. Cesium heights are metres
+above the **WGS 84 ellipsoid**, not depth and not mean sea level: a sounding of
+32 m becomes roughly `h = N + tide − 32`, where `N` is the geoid separation —
+tens of metres in most of the world. If that conversion is wrong, the
+correction silently absorbs it. So the summary counts one correction per group
+and warns when they agree too well:
 
 ```
 every asset moved by -37.2 m +/- 0.3 m. That is a datum offset, not
@@ -92,38 +138,10 @@ scattered placement error — worth fixing in ion rather than re-snapping
 on every import.
 ```
 
-Scattered deltas are genuine placement error. A tight cluster is a datum bug,
-and the right fix is upstream in ion — `options.position` at upload, or the 3D
-Tiles Location Editor — so CesiumJS and everything else downstream agree.
-
-## Overlapping models stack
-
-Snapping every model to the terrain surface works until two of them cover the
-same patch of seafloor — then both land at the same height and interpenetrate.
-So models are clustered first, and each cluster is handled as a stack: the
-**deepest** model is snapped to the terrain, and the rest rest on top of it in
-depth order, each sitting on the one below.
-
-Clustering needs no threshold to guess. Each asset's horizontal radius and
-vertical extent come from its own root bounding volume in `tileset.json`, so
-two models cluster when their footprints genuinely intersect. Grouping is
-single-link: if A overlaps B and B overlaps C, all three are one stack, which
-is what consecutive survey passes look like.
-
-| config | effect |
-|---|---|
-| `stack_clusters` | `false` puts every model on the terrain surface, overlaps and all |
-| `cluster_radius_m` | fixed separation in metres instead of footprint overlap |
-| `stack_gap_m` | vertical space between stacked models; `0` means touching |
-
-A cluster of one is just a snap, so nothing changes for isolated models.
-
-**Only the deepest model in a stack sits on real terrain.** Everything above it
-is at a height chosen to avoid a collision, not a measured one. The report
-records this per asset — `placement` is `terrain`, `stacked` or `unsampled`,
-with `cluster` and `stack_index` — and the datum summary counts only
-terrain-anchored models, because a stacked model's offset is dictated by what
-is beneath it and would otherwise fabricate a spread.
+Scattered corrections are genuine placement error. A tight cluster across
+independent groups is a datum bug, and the right fix is upstream in ion —
+`options.position` at upload, or the 3D Tiles Location Editor — so CesiumJS
+and everything else downstream agree.
 
 ## The offset is not a Z nudge
 
@@ -147,12 +165,13 @@ py -3.13 cesium2unreal/tests/test_populate.py     # or: pytest cesium2unreal/tes
 
 `tests/fake_unreal.py` stands in for the editor, implementing the real
 ECEF→ESU geodesy rather than a stub, so the offset assertions mean something.
-Seventeen tests cover placement, idempotency on re-run, the terrain being
-excluded from its own population, unsampled sites being left alone, the datum
-warning, both offset cases, and the stacking rules — that the deepest member
-lands on the terrain, that stacked models touch without overlapping, that the
-gap is honoured, that separate footprints do not cluster, and that stacked
-models stay out of the datum summary. No Unreal required.
+Twenty-three tests cover placement, idempotency on re-run, the terrain being
+excluded from its own population, the datum warning, both offset cases, and
+the seafloor-datum rules — that relative depths survive the correction (the
+seawall case), that one shift moves a whole group, that the most buried model
+rests on the surface, that nothing is left below it, that the binding member
+is the most buried rather than the deepest, that clearance lifts the group,
+and that a member without terrain is carried by its group. No Unreal required.
 
 What the tests **cannot** cover is whether the plugin's Python bindings match.
 `SampleHeightMostDetailed` is a Blueprint async node whose factory and

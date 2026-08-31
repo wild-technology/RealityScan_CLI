@@ -106,9 +106,9 @@ def tileset_footprint(tileset_json):
 
     Returns lon/lat degrees, the centre height, the vertical extent
     (height_min/height_max) and a horizontal radius, all metres above the
-    ellipsoid. The extent is what lets callers stack overlapping models
-    instead of burying them in each other; the radius is what lets them work
-    out which models overlap in the first place.
+    ellipsoid. The extent is what lets callers seat a model on the seafloor
+    without burying it; the radius is what lets them work out which models
+    overlap in the first place.
     """
     root = tileset_json["root"]
     bv = root.get("boundingVolume", {})

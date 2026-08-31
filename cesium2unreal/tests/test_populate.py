@@ -176,105 +176,154 @@ class PopulateTest(_LevelFixture):
         self.assertTrue(fake_unreal._Level.saved)
 
 
-class ClusterStackTest(_LevelFixture):
-    """Overlapping models stack instead of burying each other in one surface."""
+class SeafloorDatumTest(_LevelFixture):
+    """The multibeam surface is the depth datum; relative depths are survey data."""
 
-    def cluster_manifest(self, gap=None, radius=50.0, stack=True):
-        # Three models over the same patch of seafloor, at different depths.
-        # Extents are deliberately asymmetric so a wrong one shows up.
-        self.manifest = [
-            {"id": 201, "name": "A_deep", "lon": ORIGIN[0], "lat": ORIGIN[1],
-             "height": -1200.0, "height_min": -1210.0, "height_max": -1190.0,
-             "radius_m": radius},
-            {"id": 202, "name": "B_mid", "lon": ORIGIN[0], "lat": ORIGIN[1],
-             "height": -1150.0, "height_min": -1160.0, "height_max": -1140.0,
-             "radius_m": radius},
-            {"id": 203, "name": "C_shallow", "lon": ORIGIN[0], "lat": ORIGIN[1],
-             "height": -1100.0, "height_min": -1106.0, "height_max": -1094.0,
-             "radius_m": radius},
-        ]
+    FLOOR = -1250.0
+
+    def build(self, models, terrain_fn=None, **cfg_extra):
+        self.manifest = models
         cfg = {"terrain_ion_asset_id": TERRAIN_ID,
-               "manifest": _write(self.manifest), "report": self.report_path,
-               "stack_clusters": stack}
-        if gap is not None:
-            cfg["stack_gap_m"] = gap
+               "manifest": _write(self.manifest), "report": self.report_path}
+        cfg.update(cfg_extra)
         self.cfg_path = _write(cfg)
-        fake_unreal.TERRAIN_FN = lambda lon, lat: -1250.0
+        fake_unreal.TERRAIN_FN = terrain_fn or (lambda lon, lat: self.FLOOR)
 
-    def targets(self):
+    def rows(self):
         return {r["id"]: r for r in self.report()["assets"]}
 
-    def test_deepest_lands_on_terrain_and_the_rest_stack_on_it(self):
-        self.cluster_manifest()
+    def seawall(self, radius=50.0):
+        """A seafloor patch and two courses of a wall standing on it."""
+        return [
+            {"id": 301, "name": "floor_patch", "lon": ORIGIN[0], "lat": ORIGIN[1],
+             "height": -1249.0, "height_min": -1251.0, "height_max": -1247.0,
+             "radius_m": radius},
+            {"id": 302, "name": "wall_lower", "lon": ORIGIN[0], "lat": ORIGIN[1],
+             "height": -1245.0, "height_min": -1250.0, "height_max": -1240.0,
+             "radius_m": radius},
+            {"id": 303, "name": "wall_upper", "lon": ORIGIN[0], "lat": ORIGIN[1],
+             "height": -1235.0, "height_min": -1240.0, "height_max": -1230.0,
+             "radius_m": radius},
+        ]
+
+    # -- the point of the whole exercise -----------------------------------
+
+    def test_relative_depths_survive_the_correction(self):
+        models = self.seawall()
+        self.build(models)
         cesium_populate.run(self.cfg_path)
-        t = self.targets()
+        r = self.rows()
+        before = {m["id"]: m["height"] for m in models}
+        for a, b in ((301, 302), (302, 303), (301, 303)):
+            self.assertAlmostEqual(
+                r[a]["target_height_m"] - r[b]["target_height_m"],
+                before[a] - before[b], places=6,
+                msg="a seawall's height above the seafloor is measured, not an artefact")
 
-        # A is deepest (height_min -1210): its centre goes to the terrain.
-        self.assertEqual(t[201]["placement"], "terrain")
-        self.assertAlmostEqual(t[201]["target_height_m"], -1250.0, places=6)
-
-        # B's bottom rests on A's top: -1250 + 10 = -1240, + B's 10 m below
-        self.assertEqual(t[202]["placement"], "stacked")
-        self.assertAlmostEqual(t[202]["target_height_m"], -1230.0, places=6)
-
-        # C's bottom rests on B's top: -1230 + 10 = -1220, + C's 6 m below
-        self.assertEqual(t[203]["placement"], "stacked")
-        self.assertAlmostEqual(t[203]["target_height_m"], -1214.0, places=6)
-
-    def test_stacked_models_do_not_overlap(self):
-        self.cluster_manifest()
+    def test_one_shift_moves_the_whole_group(self):
+        self.build(self.seawall())
         cesium_populate.run(self.cfg_path)
-        t = self.targets()
-        src = {m["id"]: m for m in self.manifest}
-        spans = []
-        for i in (201, 202, 203):
-            centre, m = t[i]["target_height_m"], src[i]
-            spans.append((centre - (m["height"] - m["height_min"]),
-                          centre + (m["height_max"] - m["height"])))
-        spans.sort()
-        for (_, top), (bottom, _) in zip(spans, spans[1:]):
-            self.assertAlmostEqual(bottom, top, places=6,
-                                   msg="stacked models should touch, not overlap")
+        deltas = {round(r["delta_m"], 9) for r in self.report()["assets"]}
+        self.assertEqual(len(deltas), 1, "a rigid correction is one number per cluster")
 
-    def test_gap_separates_the_stack(self):
-        self.cluster_manifest(gap=5.0)
+    def test_the_binding_model_rests_on_the_seafloor(self):
+        self.build(self.seawall())
         cesium_populate.run(self.cfg_path)
-        t = self.targets()
-        self.assertAlmostEqual(t[201]["target_height_m"], -1250.0, places=6)
-        self.assertAlmostEqual(t[202]["target_height_m"], -1225.0, places=6)
-        self.assertAlmostEqual(t[203]["target_height_m"], -1204.0, places=6)
+        r = self.rows()
+        anchor = next(v for v in r.values() if v["placement"] == "anchor")
+        self.assertEqual(anchor["id"], 301, "the most buried model is the binding one")
+        self.assertAlmostEqual(anchor["base_above_seafloor_m"], 0.0, places=6)
 
-    def test_separate_footprints_are_each_snapped_to_terrain(self):
-        self.cluster_manifest(radius=1.0)          # 1 m radii, all co-located...
-        for n, m in enumerate(self.manifest):
-            m["lat"] = ORIGIN[1] + 0.05 * n        # ...but now kilometres apart
-        self.cfg_path = _write({"terrain_ion_asset_id": TERRAIN_ID,
-                                "manifest": _write(self.manifest),
-                                "report": self.report_path})
+    def test_nothing_is_left_below_the_seafloor(self):
+        self.build(self.seawall())
         cesium_populate.run(self.cfg_path)
-        placements = {r["placement"] for r in self.report()["assets"]}
-        self.assertEqual(placements, {"terrain"})
+        for row in self.report()["assets"]:
+            self.assertGreaterEqual(row["base_above_seafloor_m"], -1e-9,
+                                    "%s ended up under the multibeam surface" % row["name"])
 
-    def test_stacking_can_be_turned_off(self):
-        self.cluster_manifest(stack=False)
+    def test_wall_height_above_the_seafloor_is_reported(self):
+        self.build(self.seawall())
         cesium_populate.run(self.cfg_path)
-        placements = {r["placement"] for r in self.report()["assets"]}
-        self.assertEqual(placements, {"terrain"},
-                         "with stacking off every model snaps to the surface")
+        # wall_upper's base started 11 m above the floor patch's lowest point.
+        self.assertAlmostEqual(self.rows()[303]["base_above_seafloor_m"], 11.0, places=6)
 
-    def test_stacked_models_are_kept_out_of_the_datum_summary(self):
-        self.cluster_manifest()
+    # -- the max-lift rule, which is not the same as "deepest model" --------
+
+    def test_the_binding_model_is_the_most_buried_not_the_deepest(self):
+        # P is far deeper, but sits over deeper seafloor and clears it. Q is
+        # shallower yet buried. Anchoring on P would leave Q 10 m underground.
+        models = [
+            {"id": 401, "name": "P_deep", "lon": ORIGIN[0], "lat": ORIGIN[1],
+             "height": -1258.0, "height_min": -1260.0, "height_max": -1256.0,
+             "radius_m": 500.0},
+            {"id": 402, "name": "Q_buried", "lon": ORIGIN[0] + 0.001, "lat": ORIGIN[1],
+             "height": -1238.0, "height_min": -1240.0, "height_max": -1236.0,
+             "radius_m": 500.0},
+        ]
+        self.build(models, terrain_fn=lambda lon, lat:
+                   -1265.0 if lon < ORIGIN[0] + 0.0005 else -1235.0)
         cesium_populate.run(self.cfg_path)
-        # Only the anchor carries datum evidence; the other two were positioned
-        # by what sits under them, so counting them would fabricate a spread.
+        r = self.rows()
+        self.assertEqual(r[402]["placement"], "anchor")
+        self.assertEqual(r[401]["placement"], "offset")
+        self.assertAlmostEqual(r[402]["base_above_seafloor_m"], 0.0, places=6)
+        self.assertAlmostEqual(r[401]["base_above_seafloor_m"], 10.0, places=6)
+
+    # -- clearance, carrying, and the escape hatches ------------------------
+
+    def test_clearance_lifts_the_group_clear_of_the_surface(self):
+        self.build(self.seawall(), seafloor_clearance_m=0.25)
+        cesium_populate.run(self.cfg_path)
+        for row in self.report()["assets"]:
+            self.assertGreaterEqual(row["base_above_seafloor_m"], 0.25 - 1e-9)
+
+    def test_a_member_with_no_terrain_is_carried_by_its_cluster(self):
+        models = self.seawall()
+        # ~33 m north: outside terrain coverage, still inside the 100 m
+        # footprint reach, so it stays in the cluster.
+        models[2]["lat"] = ORIGIN[1] + 0.0003
+        self.build(models, terrain_fn=lambda lon, lat:
+                   None if lat > ORIGIN[1] + 0.0002 else self.FLOOR)
+        cesium_populate.run(self.cfg_path)
+        r = self.rows()
+        self.assertEqual(r[303]["placement"], "carried")
+        self.assertAlmostEqual(r[303]["delta_m"], r[301]["delta_m"], places=9,
+                               msg="a carried model still gets its cluster's datum fix")
+
+    def test_a_cluster_with_no_terrain_at_all_is_left_alone(self):
+        self.build(self.seawall(), terrain_fn=lambda lon, lat: None)
+        cesium_populate.run(self.cfg_path)
+        for row in self.report()["assets"]:
+            self.assertEqual(row["placement"], "unsampled")
+            self.assertEqual(row["delta_m"], 0.0)
+
+    def test_the_summary_counts_one_correction_per_cluster(self):
+        self.build(self.seawall())
+        cesium_populate.run(self.cfg_path)
         self.assertEqual(self.report()["summary"]["anchored"], 1)
 
-    def test_the_actor_is_actually_moved_to_its_stacked_height(self):
-        self.cluster_manifest()
+    def test_separate_footprints_are_corrected_independently(self):
+        models = self.seawall(radius=1.0)
+        for n, m in enumerate(models):
+            m["lat"] = ORIGIN[1] + 0.05 * n
+        self.build(models)
         cesium_populate.run(self.cfg_path)
-        actor = next(a for a in self.models() if a.get_actor_label() == "B_mid")
-        # -1150 -> -1230 is an 80 m drop, straight down at the origin.
-        self.assertAlmostEqual(actor.location.z, -8000.0, delta=1.0)
+        placements = [r["placement"] for r in self.report()["assets"]]
+        self.assertEqual(placements, ["anchor"] * 3)
+
+    def test_clustering_can_be_turned_off(self):
+        self.build(self.seawall(), cluster_models=False)
+        cesium_populate.run(self.cfg_path)
+        placements = {r["placement"] for r in self.report()["assets"]}
+        self.assertEqual(placements, {"anchor"},
+                         "with clustering off each model is corrected alone")
+
+    def test_the_actor_is_moved_by_the_cluster_delta(self):
+        self.build(self.seawall())
+        cesium_populate.run(self.cfg_path)
+        delta = self.rows()[302]["delta_m"]
+        actor = next(a for a in self.models() if a.get_actor_label() == "wall_lower")
+        self.assertAlmostEqual(actor.location.z, delta * 100.0, delta=1.0)
 
 
 if __name__ == "__main__":
