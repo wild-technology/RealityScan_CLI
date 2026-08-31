@@ -52,6 +52,25 @@ from modules.workspace_census import Workspace, _records  # noqa: E402
 MIN_FREE_GB = 50.0
 
 
+def scale_gate_enabled(report: dict) -> bool:
+    """Whether this workspace's merge report asks for the scale gate to REFUSE.
+
+    merge_zones records the operator's --scale_gate answer as
+    ``{"scale_gate": {"enabled": bool, ...}}``. Workspace modelling used to
+    gate unconditionally and ignore it, so a workspace deliberately assembled
+    with --scale_gate false still had its out-of-band components refused.
+
+    Absent or malformed = True: an old report predating the field must keep
+    gating, because silently MODELLING something a previous run refused is the
+    worse failure of the two.
+    """
+    gate = report.get('scale_gate')
+    if not isinstance(gate, dict):
+        return True
+    value = gate.get('enabled', True)
+    return bool(value) if isinstance(value, bool) else True
+
+
 def make_cli(logger_name: str = 'models') -> RealityScanCLI:
     """Machine constants from the settings store's 'realityscan' section -
     prompt-with-default on a TTY, silent stored/fallback when unattended
@@ -254,7 +273,20 @@ def main() -> int:
                                             union_log, logger)
         entry = {'component': name, 'cameras': comp.get('camera_count'),
                  'scale': median, 'status': status, 'why': why}
-        if status != 'pass':
+        # merge_zones records the operator's --scale_gate answer in the report;
+        # this loop used to ignore it and gate unconditionally, so a workspace
+        # deliberately assembled with --scale_gate false still had its
+        # out-of-band components refused here. The measured scale is kept in
+        # the entry either way - disabling the gate stops it REFUSING, it does
+        # not stop it MEASURING.
+        gate_enabled = scale_gate_enabled(report)
+        if status != 'pass' and not gate_enabled:
+            logger.warning(
+                'scale gate DISABLED for this workspace: modelling %s anyway '
+                '(%s - %s). Its measured scale is recorded, not corrected.',
+                name, status, why)
+            entry['scale_gate_bypassed'] = True
+        elif status != 'pass':
             logger.error('SCALE GATE: %s not modelled (%s - %s)',
                          name, status, why)
             entry['skipped'] = 'scale_gate'

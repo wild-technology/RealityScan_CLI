@@ -3680,3 +3680,30 @@ there is no lens telemetry to check against, and a zoom fighting a fixed
 calibration group would also perturb the solve. But the measured focals say
 the dominant driver is the 3.8 cm baseline geometry, which is what the scale
 oracle's own "drift or a fold" wide-IQR verdict already said.
+
+## [NA165] 2026-08-31 - run_models ignored the merge report's recorded
+## --scale_gate answer and refused components anyway
+
+merge_zones writes the operator's answer as
+`{"scale_gate": {"enabled": false, "min": 0.9, "max": 1.1}}`. The workspace
+modelling loop in run_models.py gated on `status != 'pass'` unconditionally
+and never read that field, so a workspace deliberately assembled with
+`--scale_gate false` still had its out-of-band components refused with
+`SCALE GATE: <name> not modelled`.
+
+HOW DISCOVERED: owner asked for every component modelled and exported
+regardless of scale ("as long as the scale is preserved"). The assembly was
+built with `--assemble_only true --scale_gate false`, the report correctly
+recorded `enabled: false`, and the first modelling pass still skipped
+zone_all_c18 (0.853) and zone_all_c16 (0.899). Caught on the FIRST component
+boundary because run_models works smallest-first - the cost ladder paid for
+itself immediately here, since the alternative was discovering it after the
+716-camera component had spent 2.5 h.
+
+Fixed via a testable `scale_gate_enabled(report)` helper. Absent or malformed
+field = True (keep gating): silently MODELLING what a previous run refused is
+the worse of the two failures. Disabling the gate stops it REFUSING, not
+MEASURING - the measured scale is still recorded in the model entry, and the
+bypass is logged per component as `scale_gate_bypassed`.
+
+Suite 573 -> 578.
