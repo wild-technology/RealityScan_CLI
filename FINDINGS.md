@@ -3370,6 +3370,65 @@ Source tag **[CESIUM]**. Established while building the ion publish path.
   carries the live-verified ion API contract; README gains two fast-path rows
   and updated censuses (88 failure modes; tags re-counted). (2026-08-31)
 
+## [ORIENTATION] 2026-08-31 - assumed mount pitch, and the frame convention pinned
+
+- **VERIFIED: the RealityScan frame transformation was already correct.**
+  `rc_pitch = 90 + (vehicle_pitch - mount_down_tilt)` on the scale where
+  **0 = nadir and 90 = horizontal**, which is RealityScan's own convention -
+  `-renderMeshFromCustomPositionYPR` documents a camera at `(0,0,150)` with
+  `yaw=pitch=roll=0` looking DOWN [OFFICIAL: appbasics/allcommands]. Yaw is
+  `wrap360(heading_mag + declination)`; roll passes through from the nav. So
+  the priors ARE composed with the vehicle's attitude, as intended. A
+  same-session claim that "we write pitch from horizontal, so Port is 90 deg
+  wrong" was previously refuted and remains refuted. (2026-08-31) ESTABLISHED
+- **VERIFIED: per-camera overrides already worked.** `MOUNTS` is keyed by
+  filename FAMILY (not by physical camera - the same Cinema unit is 10 deg
+  down under legacy `camlower` names and 45 deg down under WCA `C###C`), and
+  both implementations resolve lever arm and pitch through ONE lookup so an
+  image can never take a lever arm from one table and a pitch from another.
+  (2026-08-31) ESTABLISHED
+- **REFUTED: there was no 10 deg default.** An unmeasured mount got NO pitch
+  prior at all - `None`, written as empty Pitch and Pitch Accuracy columns.
+  The fallback had been REMOVED by an audit on 2026-08-07, where it was
+  pitch 0 deg ("this camera looks straight ahead") asserted at 10 deg
+  accuracy. (2026-08-31) SUPERSEDED by the change below.
+- **CHANGED (owner-stated 2026-08-31): an unmeasured mount now assumes 10 deg
+  down at 30 deg accuracy.** `ASSUMED_MOUNT_DEFAULTS` in
+  `modules/georeference/georeference_images.py`, consumed by BOTH
+  implementations through `assumed_pitch_prior()`. Note this is a DIFFERENT
+  claim from the one the audit removed - 10 deg down, not 0 deg ahead - but
+  the audit's other objection still applies, so the accuracy is deliberately
+  30 deg, the loosest any MEASURED mount claims (zeuss), because PD-0/PD-0b
+  measured that over-tight orientation accuracy FRAGMENTS solves. Knobs:
+  `--assumed-pitch` / `--assumed-pitch-accuracy` (geoall) and
+  `--g_assumed_pitch` / `--g_assumed_pitch_accuracy` (module); a NEGATIVE
+  assumed pitch restores the 2026-08-07 no-prior behaviour exactly.
+  (2026-08-31) ESTABLISHED
+- **The LEVER ARM is still never invented.** An unmeasured mount continues to
+  contribute `(0, 0, 0)` metres. The Port-1 m incident was a POSITION
+  invention and nothing in this change touches position - only the pitch
+  prior. (2026-08-31) ESTABLISHED
+- **VOYIS families are excluded from the assumption by name**
+  (`NO_ASSUMED_MOUNT_FAMILIES`). Their poses come from the COLMAP bridge, so a
+  vehicle-nav prior there is not a missing measurement but the WRONG PIPELINE,
+  and falling back would mask a pipeline-selection error that the null in
+  `MOUNTS` exists to surface. Verified: `l_*`, `r_*` and `image_left_*` stems
+  still resolve to no pitch prior. `wca_starboard` DOES take the assumption
+  (10/30) since it is merely unmeasured - and its unknown-camera warning still
+  fires, so the run still says so. (2026-08-31) ESTABLISHED
+- **The frame conversion had ZERO test coverage until today.** The function
+  that decides which way every camera in every solve points was pinned by
+  nothing, and the two implementations were free to drift - which is how the
+  3-vs-15 orientation accuracy drift happened in a neighbouring table.
+  `testing/test_camera_orientation_frame.py` (20 tests) now pins the 0=nadir
+  scale, the vehicle composition, yaw wrapping, roll passthrough, the
+  None-guards, and equality between the two implementations across four
+  attitude cases. Suite 539 -> 559. (2026-08-31) ESTABLISHED
+- **Port sits at the yaw/roll degeneracy boundary and now has a test saying
+  so.** Its 0 deg mount puts it at ~90 deg on the nadir scale, within a couple
+  of degrees of the singularity flagged in `13-…` §6.4. Unchanged behaviour;
+  the hazard is simply no longer invisible. (2026-08-31) ESTABLISHED
+
 ## 2026-08-23 — onr2 stereo rig (Sony ILX-LR1 pair, 483 images), RealityScan 2.2.0.119430
 
 Source for all of these: a 17-arm session driving RealityScan from the CLI on an external

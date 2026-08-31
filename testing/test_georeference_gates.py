@@ -266,32 +266,65 @@ def test_a_single_zone_track_reports_no_crossings():
 
 # --------------------------------------------------------- unmeasured mount
 
-def test_unknown_mount_gets_no_pitch_prior():
-    """0.0 tilt at 10 deg claimed accuracy on a mount nobody measured is
-    exactly what the MOUNTS['wca_starboard'] = None comment forbids."""
+def test_unmeasured_mount_takes_the_house_convention():
+    """Owner convention (2026-08-31): a camera family with NO measured mount
+    is assumed to look 10 deg down and otherwise ride the vehicle attitude.
+
+    This REPLACES the 2026-08-07 behaviour of writing no pitch prior at all.
+    That audit removed a 0 deg tilt asserted at 10 deg accuracy; the half of
+    its reasoning that survives is the accuracy, which is why the assumed
+    tilt is claimed at 30 deg - no tighter than the loosest MEASURED mount.
+    """
     module = _module()
-    assert module._get_camera_pitch_offset('mystery_cam_0001.jpg') is None
-    assert module._get_camera_pitch_accuracy('mystery_cam_0001.jpg') is None
+    assert module._get_camera_pitch_offset('mystery_cam_0001.jpg') == 10.0
+    assert module._get_camera_pitch_accuracy('mystery_cam_0001.jpg') == 30.0
     # Starboard is a KNOWN family whose mount has never been measured.
-    assert module._get_camera_pitch_offset('S231C0001.jpg') is None
-    assert module._get_camera_pitch_accuracy('S231C0001.jpg') is None
-    # A measured mount is untouched.
+    assert module._get_camera_pitch_offset('S231C0001.jpg') == 10.0
+    assert module._get_camera_pitch_accuracy('S231C0001.jpg') == 30.0
+    # A MEASURED mount always wins over the assumption.
     assert module._get_camera_pitch_offset('C231C0001.jpg') == 45.0
     assert module._get_camera_pitch_accuracy('C231C0001.jpg') == 15.0
+    assert module._get_camera_pitch_offset('P231C0001.jpg') == 0.0
+    assert module._get_camera_pitch_accuracy('P231C0001.jpg') == 15.0
 
 
-def test_unmeasured_mount_rows_carry_empty_pitch_fields(tmp_path):
-    """Yaw and roll come from the nav table and are real; only the two
-    MOUNT-derived fields go blank."""
+def test_voyis_families_never_take_the_assumed_mount():
+    """Their poses come from the COLMAP bridge, so a vehicle-nav prior is the
+    WRONG PIPELINE rather than a missing measurement. Falling back would mask
+    a pipeline-selection error that the null in MOUNTS exists to surface."""
+    module = _module()
+    for stem in ('l_2024-01-01_10-00-00.jpg', 'r_2024-01-01_10-00-00.jpg',
+                 'image_left_000123.tif'):
+        assert module._get_camera_pitch_offset(stem) is None, stem
+        assert module._get_camera_pitch_accuracy(stem) is None, stem
+
+
+def test_the_assumption_can_be_switched_off(tmp_path):
+    """A negative assumed pitch restores the 2026-08-07 behaviour exactly."""
+    module = _module()
+    module.params['geo_assumed_pitch_deg'].value = -1.0
+    assert module._get_camera_pitch_offset('mystery_cam_0001.jpg') is None
+    assert module._get_camera_pitch_accuracy('mystery_cam_0001.jpg') is None
+    # and a measured mount is STILL untouched by the opt-out
+    assert module._get_camera_pitch_offset('C231C0001.jpg') == 45.0
+
+
+def test_unmeasured_mount_rows_carry_the_assumed_pitch(tmp_path):
+    """Yaw and roll still come from the nav table; the two MOUNT-derived
+    fields now carry the assumption instead of going blank - and they must
+    move together, since a pitch with an empty accuracy is a malformed row."""
     _m, result, _raw = _run(tmp_path, ['S231C0001', 'S231C0002'],
                             geo_min_accept_rate_pct=0.0)
     _header, rows = _rows(result['Output Flight Log'])
     assert rows, 'nothing was written'
     for row in rows:
         f = row.split(';')
-        assert f[8] == '', f'invented pitch: {row}'
-        assert f[11] == '', f'invented pitch accuracy: {row}'
+        assert float(f[8]) == pytest.approx(80.0, abs=15.0), (
+            f'assumed pitch not written as 90 + (vehicle_pitch - 10): {row}')
+        assert float(f[11]) == 30.0, f'wrong assumed accuracy: {row}'
         assert f[7] != '' and f[9] != '', 'real nav yaw/roll were discarded'
+    # The count still reports what had no MEASURED mount - the assumption
+    # does not make the gap invisible.
     assert result['Rows Without Pitch Prior'] == len(rows)
 
 

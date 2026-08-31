@@ -27,7 +27,9 @@ from multiprocessing import Pool, cpu_count
 # same rig, in the file the docs call canonical (review finding M4).
 from modules.georeference.georeference_images import MOUNTS as _MOUNTS
 from modules.georeference.georeference_images import (
-    PRIOR_ACCURACY_DEFAULTS as _ACCURACY_DEFAULTS)
+    PRIOR_ACCURACY_DEFAULTS as _ACCURACY_DEFAULTS,
+    ASSUMED_MOUNT_DEFAULTS as _ASSUMED_MOUNT,
+    assumed_pitch_prior as _assumed_pitch_prior)
 from modules import camera_registry as _camera_registry
 
 import utm
@@ -86,7 +88,9 @@ def get_camera_type(filename: str) -> str:
         return 'Unknown'
 
 
-def get_camera_pitch_accuracy(filename: str) -> float | None:
+def get_camera_pitch_accuracy(filename: str, assume_pitch: bool = True,
+                              pitch_deg: float | None = None,
+                              accuracy_deg: float | None = None) -> float | None:
     """Pitch accuracy (degrees) from the shared MOUNTS table, or None when
     the mount has never been measured.
 
@@ -97,15 +101,23 @@ def get_camera_pitch_accuracy(filename: str) -> float | None:
     3x overconfidence on the mount with the least ground truth. PD-0
     established that over-tight orientation accuracy FRAGMENTS the solve.
 
-    NO MOUNT now means NO PRIOR, not a 10 deg fallback (audit 2026-08-07):
-    the old fallback asserted "this camera looks straight ahead" at 10 deg
-    confidence for a mount nobody ever measured. The row's Pitch and Pitch
-    Accuracy fields are written empty instead.
+    A MEASURED mount always wins. With none, this falls back to the house
+    convention (ASSUMED_MOUNT_DEFAULTS, owner-stated 2026-08-31): 10 deg down
+    at 30 deg accuracy. The accuracy is deliberately loose - the 2026-08-07
+    audit removed a 0 deg / 10 deg fallback precisely because asserting
+    unmeasured geometry at tight confidence FRAGMENTS solves (PD-0), and that
+    half of its reasoning still holds. VOYIS families never take the fallback.
+
+    Must track get_camera_pitch_offset exactly: a pitch with an empty accuracy
+    (or the reverse) is a malformed flight-log row.
     """
     mount = _mount(filename)
     if mount and 'p_acc' in mount:
         return float(mount['p_acc'])
-    return None
+    return _assumed_pitch_prior(_camera_registry.family(filename),
+                                enabled=assume_pitch,
+                                pitch_deg=pitch_deg,
+                                accuracy_deg=accuracy_deg)[1]
 
 
 
@@ -115,15 +127,27 @@ def _mount(filename: str) -> dict | None:
     return _MOUNTS.get(fam) if fam else None
 
 
-def get_camera_pitch_offset(filename: str) -> float | None:
+def get_camera_pitch_offset(filename: str, assume_pitch: bool = True,
+                            pitch_deg: float | None = None,
+                            accuracy_deg: float | None = None) -> float | None:
     """Camera down-tilt from the vehicle forward axis, in degrees, or None
     when the mount has never been measured (= no pitch prior).
 
     Delegates to the shared table; the local prefix chain had no WCA branch so
     Cinema silently lost its 45 deg down-look in standalone runs.
+
+    A MEASURED mount always wins. With none, this falls back to the house
+    convention (ASSUMED_MOUNT_DEFAULTS: 10 deg down, owner-stated 2026-08-31),
+    except for the VOYIS families, whose poses come from the COLMAP bridge -
+    a vehicle-nav prior there is the wrong pipeline, not a missing measurement.
     """
     mount = _mount(filename)
-    return None if mount is None else mount['pitch']
+    if mount is not None:
+        return mount['pitch']
+    return _assumed_pitch_prior(_camera_registry.family(filename),
+                                enabled=assume_pitch,
+                                pitch_deg=pitch_deg,
+                                accuracy_deg=accuracy_deg)[0]
 
 
 def get_camera_offsets(filename: str) -> tuple[float, float, float]:
@@ -783,6 +807,12 @@ def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: 
     alt_acc = float(acc['alt'])
     yaw_acc = float(acc['yaw'])
     roll_acc = float(acc['roll'])
+    # House convention for an UNMEASURED mount; a measured MOUNTS entry still
+    # wins. Negative assumed pitch is the opt-out (no pitch prior at all).
+    assumed_pitch = float(acc.get('assumed_pitch', _ASSUMED_MOUNT['pitch']))
+    assumed_pitch_acc = float(
+        acc.get('assumed_pitch_acc', _ASSUMED_MOUNT['p_acc']))
+    assume_pitch = assumed_pitch >= 0.0
     decl = (MAGNETIC_DECLINATION_DEG if declination_deg is None
             else float(declination_deg))
 
@@ -796,12 +826,16 @@ def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: 
             pitch_vehicle = image.get("PITCH_VEHICLE")
             roll_vehicle = image.get("ROLL_VEHICLE")
 
-            camera_pitch_offset = get_camera_pitch_offset(image["FILENAME"])
+            camera_pitch_offset = get_camera_pitch_offset(
+                image["FILENAME"], assume_pitch=assume_pitch,
+                pitch_deg=assumed_pitch, accuracy_deg=assumed_pitch_acc)
             rc_yaw, rc_pitch, rc_roll = convert_to_rc_orientation(
                 heading_mag, pitch_vehicle, roll_vehicle, camera_pitch_offset, decl
             )
 
-            pitch_acc = get_camera_pitch_accuracy(image["FILENAME"])
+            pitch_acc = get_camera_pitch_accuracy(
+                image["FILENAME"], assume_pitch=assume_pitch,
+                pitch_deg=assumed_pitch, accuracy_deg=assumed_pitch_acc)
 
             def fmt(val):
                 return f"{val:.6f}" if val is not None else ""
@@ -892,6 +926,17 @@ def build_arg_parser() -> "argparse.ArgumentParser":
     p.add_argument('--alt-accuracy', type=float, default=None,
                    help='altitude accuracy claimed for every image, in metres '
                         '(default %.1f)' % _ACCURACY_DEFAULTS['alt'])
+    p.add_argument('--assumed-pitch', type=float, default=None,
+                   help='down-tilt assumed for a camera family with NO '
+                        'measured mount, in degrees below the vehicle forward '
+                        'axis (default %.1f; negative writes no pitch prior '
+                        'at all). A measured mount always wins.'
+                        % _ASSUMED_MOUNT['pitch'])
+    p.add_argument('--assumed-pitch-accuracy', type=float, default=None,
+                   help='accuracy claimed for that assumed tilt in degrees '
+                        '(default %.1f - no tighter than the loosest MEASURED '
+                        'mount, because the geometry is assumed)'
+                        % _ASSUMED_MOUNT['p_acc'])
     p.add_argument('--orientation-accuracy', type=float, default=None,
                    help='yaw/roll accuracy claimed for every image, in '
                         'degrees (default %.1f; 3-5 fragments the solve, '
@@ -927,6 +972,12 @@ def main(argv: list[str] | None = None):
         'yaw': float(settings.ask("geoall", "orientation_accuracy_deg",
                                   args.orientation_accuracy,
                                   _ACCURACY_DEFAULTS['yaw'])),
+        'assumed_pitch': float(settings.ask(
+            "geoall", "assumed_pitch_deg", args.assumed_pitch,
+            _ASSUMED_MOUNT['pitch'])),
+        'assumed_pitch_acc': float(settings.ask(
+            "geoall", "assumed_pitch_accuracy_deg",
+            args.assumed_pitch_accuracy, _ASSUMED_MOUNT['p_acc'])),
     }
     accuracies['roll'] = accuracies['yaw']
 
@@ -941,6 +992,13 @@ def main(argv: list[str] | None = None):
     print(f"Magnetic Declination:  {declination} deg")
     print(f"Prior Accuracies:      pos {accuracies['pos_xy']} m, "
           f"alt {accuracies['alt']} m, orientation {accuracies['yaw']} deg")
+    if accuracies['assumed_pitch'] >= 0.0:
+        print(f"Assumed mount:         {accuracies['assumed_pitch']} deg down "
+              f"at {accuracies['assumed_pitch_acc']} deg accuracy, for "
+              "families with NO measured mount (a measured one always wins)")
+    else:
+        print("Assumed mount:         DISABLED - a family with no measured "
+              "mount gets no pitch prior at all")
     print(f"Worker Processes:      {NUM_WORKERS}")
     print("="*80)
     print("Features:")

@@ -300,10 +300,22 @@ def test_cameras_json_defaults_match_the_shared_accuracy_table():
     assert geo_module.PRIOR_ACCURACY_DEFAULTS['roll'] == ori['roll']
     # geoall must consume the SAME object, not a copy of the numbers.
     assert geoall._ACCURACY_DEFAULTS is geo_module.PRIOR_ACCURACY_DEFAULTS
-    # An UNKNOWN mount now gets NO pitch prior in either implementation -
-    # cameras.json records that as null, not as a 10 deg fallback.
-    assert d['unknown_mount_pitch_accuracy_deg'] is None
-    assert geoall.get_camera_pitch_accuracy('mystery_cam.jpg') is None
+    # An UNKNOWN mount takes the house convention (owner-stated 2026-08-31):
+    # 10 deg down at 30 deg accuracy. cameras.json, the shared table and BOTH
+    # implementations must agree, or the two georeferencers drift the way the
+    # 3-vs-15 orientation accuracy once did.
+    assumed = d['assumed_mount']
+    assert geo_module.ASSUMED_MOUNT_DEFAULTS['pitch'] == assumed['pitch_deg']
+    assert geo_module.ASSUMED_MOUNT_DEFAULTS['p_acc'] == assumed['pitch_accuracy_deg']
+    assert geoall._ASSUMED_MOUNT is geo_module.ASSUMED_MOUNT_DEFAULTS
+    assert geoall.get_camera_pitch_offset('mystery_cam.jpg') == assumed['pitch_deg']
+    assert geoall.get_camera_pitch_accuracy('mystery_cam.jpg') == assumed['pitch_accuracy_deg']
+    # The exclusion list is part of the contract, not an implementation detail.
+    assert set(assumed['excluded_families']) == set(
+        geo_module.NO_ASSUMED_MOUNT_FAMILIES)
+    # A MEASURED mount is never overridden by the assumption.
+    assert geoall.get_camera_pitch_offset('C231C0001.jpg') == 45.0
+    assert geoall.get_camera_pitch_accuracy('C231C0001.jpg') == 15.0
 
 
 def test_cameras_json_voyis_entries_registered_and_gated():

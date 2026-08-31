@@ -1910,6 +1910,34 @@ legacy dataset by tens of degrees. `MOUNTS` in
 
 [VERIFIED-by-inspection + pinned by `testing/test_rig_mounts.py`, values in force 2026-07-26]
 
+**The fallback for a family with no measured mount (2026-08-31, owner-stated).**
+A family that resolves to `None` above no longer writes an empty pitch. It takes
+the house convention: **10° down from the vehicle forward axis, claimed at 30°
+accuracy** — which lands at **80° on the nadir scale** for a level vehicle, and
+composes with vehicle pitch like any measured mount. A measured `MOUNTS` entry
+always **wins**; the fallback is reached only where there is none.
+
+| | |
+|---|---|
+| Source of truth | `ASSUMED_MOUNT_DEFAULTS` + `assumed_pitch_prior()` in `modules/georeference/georeference_images.py`, consumed by **both** implementations |
+| Config record | `modules/cameras.json` → `defaults.assumed_mount` |
+| Knobs | `--assumed-pitch` / `--assumed-pitch-accuracy` (`geoall.py`); `--g_assumed_pitch` / `--g_assumed_pitch_accuracy` (module) |
+| Opt-out | a **negative** assumed pitch restores the 2026-08-07 behaviour (no pitch prior at all) |
+| Never applies to | `voyis_*` — poses come from the COLMAP bridge, so a vehicle-nav prior is the **wrong pipeline**, not a missing measurement, and a fallback would mask that |
+| Applies to | `wca_starboard` and any unrecognised family. The unknown-camera warning still fires, so the run still SAYS the mount was never measured |
+| Lever arm | **still never invented** — an unmeasured mount contributes `(0, 0, 0)` m. The Port-1 m incident was a POSITION invention; this changes only the pitch prior |
+
+This **reverses part of** the 2026-08-07 audit, which deleted a fallback of
+**0°** ("this camera looks straight ahead") asserted at **10°** accuracy. The
+owner's convention is a different geometric claim — 10° *down*, not 0° *ahead* —
+but the audit's other objection still stands, which is why the accuracy is 30°:
+no tighter than the loosest **measured** mount (`zeuss`), because PD-0/PD-0b
+measured that over-tight orientation accuracy **fragments** solves. Asserting an
+assumed tilt at a measured mount's confidence would repeat the mistake the audit
+was right about. [VERIFIED: FINDINGS 2026-08-31]
+
+
+
 `wca_starboard` is deliberately `None`: the owner excludes Starboard from photogrammetry, so
 it should not be reached — and if it is, **the run must say so rather than invent a zero
 lever arm and a 0° tilt**. Unknown families and known-but-unmeasured mounts are both counted

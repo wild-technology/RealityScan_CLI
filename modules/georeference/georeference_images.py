@@ -94,6 +94,60 @@ PRIOR_ACCURACY_DEFAULTS: dict[str, float] = {
 }
 
 
+# The house convention for a camera family whose mount has never been
+# measured: it looks 10 deg down from the vehicle forward axis and otherwise
+# rides the vehicle's attitude (yaw and roll straight from the nav, pitch
+# composed with the vehicle's). Owner-stated 2026-08-31. A MOUNTS entry always
+# WINS over this - the fallback is only ever reached when the family has no
+# measured geometry at all.
+#
+# History, because this reverses a documented decision. Until 2026-08-07 an
+# unmeasured mount fell back to pitch 0 deg ("this camera looks straight
+# ahead") asserted at 10 deg accuracy, and an audit removed it: inventing rig
+# numbers is what produced the Port-1 m incident, and PD-0/PD-0b measured that
+# over-tight orientation accuracy FRAGMENTS solves. The owner's convention is a
+# different claim - 10 deg DOWN, not 0 deg ahead - and it is reinstated as a
+# prior, but deliberately at 30 deg accuracy, the loosest any measured mount
+# claims (zeuss). That keeps the geometry honest about being assumed rather
+# than measured, which is the half of the audit that still holds.
+#
+# The LEVER ARM is NOT part of this. An unmeasured mount still contributes
+# (0, 0, 0) metres, exactly as before: the Port-1 m incident was a position
+# invention, and nothing here changes position.
+ASSUMED_MOUNT_DEFAULTS: dict[str, float] = {
+    'pitch': 10.0,    # deg down from the vehicle forward axis
+    'p_acc': 30.0,    # deg; assumed geometry, so no tighter than the loosest measured mount
+}
+
+# Families that must NEVER take the assumed mount. The VOYIS eyes carry
+# per-camera poses from the COLMAP bridge, so a vehicle-nav prior is not
+# merely unmeasured, it is the wrong pipeline - falling back would MASK a
+# pipeline-selection error that the null in MOUNTS exists to surface.
+NO_ASSUMED_MOUNT_FAMILIES: frozenset[str] = frozenset({
+    'voyis_left_staged', 'voyis_right_staged',
+    'voyis_left_original', 'voyis_right_original',
+})
+
+
+def assumed_pitch_prior(family: str | None, enabled: bool = True,
+                        pitch_deg: float | None = None,
+                        accuracy_deg: float | None = None
+                        ) -> tuple[float | None, float | None]:
+    """``(pitch, accuracy)`` to assume for a family with NO measured mount.
+
+    ``(None, None)`` means "write no pitch prior at all" - an unknown family
+    with the fallback disabled, or one of NO_ASSUMED_MOUNT_FAMILIES. Callers
+    must reach this ONLY after MOUNTS has returned nothing, so a measured
+    mount can never be overridden.
+    """
+    if not enabled or family in NO_ASSUMED_MOUNT_FAMILIES:
+        return (None, None)
+    pitch = ASSUMED_MOUNT_DEFAULTS['pitch'] if pitch_deg is None else pitch_deg
+    accuracy = (ASSUMED_MOUNT_DEFAULTS['p_acc']
+                if accuracy_deg is None else accuracy_deg)
+    return (float(pitch), float(accuracy))
+
+
 class GeoreferenceImages(RSModule):
     TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
     # superseded-by modules/cameras.json families[].timestamp_formats - pending migration step (c+)
@@ -214,6 +268,35 @@ class GeoreferenceImages(RSModule):
             prompt_user=True
         )
 
+        # The house convention for an UNMEASURED mount (provenance:
+        # ASSUMED_MOUNT_DEFAULTS at module scope). A measured MOUNTS entry
+        # always wins; this only fills the gap where there is none.
+        additional_params['geo_assumed_pitch_deg'] = Parameter(
+            name='Assumed Mount Pitch (deg)',
+            cli_short='g_ap',
+            cli_long='g_assumed_pitch',
+            type=float,
+            default_value=ASSUMED_MOUNT_DEFAULTS['pitch'],
+            description='Down-tilt assumed for a camera family with no '
+                        'measured mount, in degrees below the vehicle '
+                        'forward axis (negative disables the assumption and '
+                        'writes no pitch prior at all)',
+            prompt_user=False
+        )
+
+        additional_params['geo_assumed_pitch_accuracy_deg'] = Parameter(
+            name='Assumed Mount Pitch Accuracy (deg)',
+            cli_short='g_apa',
+            cli_long='g_assumed_pitch_accuracy',
+            type=float,
+            default_value=ASSUMED_MOUNT_DEFAULTS['p_acc'],
+            description='Accuracy claimed for that assumed tilt, in degrees '
+                        '(30 = no tighter than the loosest MEASURED mount, '
+                        'because the geometry is assumed; tightening '
+                        'orientation accuracy fragments solves, PD-0)',
+            prompt_user=False
+        )
+
         additional_params['geo_min_accept_rate_pct'] = Parameter(
             name='Minimum Acceptance Rate (%)',
             cli_short='g_mr',
@@ -235,6 +318,27 @@ class GeoreferenceImages(RSModule):
         param = (self.params or {}).get(param_name)
         value = None if param is None else param.get_value()
         return float(PRIOR_ACCURACY_DEFAULTS[key] if value is None else value)
+
+    def _assumed_mount(self, param_name: str, key: str) -> float:
+        """An assumed-mount parameter's value, or its shared default."""
+        param = (self.params or {}).get(param_name)
+        value = None if param is None else param.get_value()
+        return float(ASSUMED_MOUNT_DEFAULTS[key] if value is None else value)
+
+    @property
+    def _assumed_pitch_deg(self) -> float:
+        return self._assumed_mount('geo_assumed_pitch_deg', 'pitch')
+
+    @property
+    def _assumed_pitch_acc_deg(self) -> float:
+        return self._assumed_mount('geo_assumed_pitch_accuracy_deg', 'p_acc')
+
+    @property
+    def _assume_mount_pitch(self) -> bool:
+        """A negative assumed pitch is the opt-out: it restores the
+        2026-08-07 behaviour of writing no pitch prior for an unmeasured
+        mount, without needing a separate boolean flag."""
+        return self._assumed_pitch_deg >= 0.0
 
     @staticmethod
     def _wrap360(angle_deg: float) -> float:
@@ -276,26 +380,42 @@ class GeoreferenceImages(RSModule):
         """Camera down-tilt from the vehicle forward axis, in degrees, or
         None when the mount has never been measured.
 
-        None means NO PITCH PRIOR - __generate_flight_log writes empty
-        Pitch and Pitch Accuracy fields for that image. It used to return
-        0.0, i.e. "this camera looks straight ahead", asserted at 10 deg
-        confidence (see _get_camera_pitch_accuracy) on a mount nobody ever
-        measured - exactly what the MOUNTS['wca_starboard'] = None comment
-        forbids, and the failure mode PD-0 showed FRAGMENTS solves
-        (audit 2026-08-07). Yaw and roll come from the nav table, not the
-        mount, so they are still written.
+        A MEASURED mount always wins. Only when the family has none does this
+        fall back to the house convention (ASSUMED_MOUNT_DEFAULTS: 10 deg down
+        at 30 deg accuracy, owner-stated 2026-08-31), and never for the VOYIS
+        families, where a vehicle-nav prior is the wrong pipeline entirely.
+
+        None still means NO PITCH PRIOR - __generate_flight_log writes empty
+        Pitch and Pitch Accuracy fields for that image - and is what you get
+        with the fallback disabled. Yaw and roll come from the nav table, not
+        the mount, so they are written either way.
         """
         mount = self._mount_for(filename)
         if mount is None:
             self._no_mount_stems.add(filename)
-            return None
+            return assumed_pitch_prior(
+                camera_registry.family(filename),
+                enabled=self._assume_mount_pitch,
+                pitch_deg=self._assumed_pitch_deg,
+                accuracy_deg=self._assumed_pitch_acc_deg)[0]
         return mount['pitch']
 
     def _get_camera_pitch_accuracy(self, filename: str) -> float | None:
         """Claimed accuracy of the pitch prior in degrees, or None when
-        there is no pitch prior to claim an accuracy for."""
+        there is no pitch prior to claim an accuracy for.
+
+        Must track _get_camera_pitch_offset exactly: a pitch written with an
+        empty accuracy, or an accuracy written with an empty pitch, is a
+        malformed flight-log row.
+        """
         mount = self._mount_for(filename)
-        return None if mount is None else mount['p_acc']
+        if mount is None:
+            return assumed_pitch_prior(
+                camera_registry.family(filename),
+                enabled=self._assume_mount_pitch,
+                pitch_deg=self._assumed_pitch_deg,
+                accuracy_deg=self._assumed_pitch_acc_deg)[1]
+        return mount['p_acc']
 
     def _apply_camera_position_offset(self, utm_x: float | None, utm_y: float | None,
                                       altitude: float | None, heading_deg: float | None,

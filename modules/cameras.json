@@ -31,12 +31,25 @@
       "Orientation stays at HONEST 15 deg until the mounts are",
       "ground-truthed: PD-0/PD-0b measured 3-5 deg claimed accuracy",
       "FRAGMENTING the solve while 15 deg gained registration.",
-      "unknown_mount_pitch_accuracy_deg is null BY DESIGN: an UNKNOWN",
-      "mount gets NO pitch prior at all. It used to be 10.0, i.e. 'this",
-      "camera looks straight ahead' asserted at 10 deg confidence on a",
-      "mount nobody measured - the invention MOUNTS['wca_starboard']=null",
-      "exists to refuse (audit 2026-08-07). Pitch and Pitch Accuracy are",
-      "written EMPTY for those rows; yaw/roll still come from the nav."
+      "",
+      "assumed_mount (2026-08-31, owner-stated) is the house convention for",
+      "a family with NO measured mount: the camera looks 10 deg down from",
+      "the vehicle forward axis and otherwise rides the vehicle attitude",
+      "(yaw and roll straight from the nav, pitch composed with it). A",
+      "MOUNTS entry always WINS - this only fills the gap where there is",
+      "none, and the VOYIS families are excluded outright because their",
+      "poses come from the COLMAP bridge, so a vehicle-nav prior there is",
+      "the wrong pipeline rather than a missing measurement.",
+      "This REVERSES part of the 2026-08-07 audit, which removed a fallback",
+      "of 0 deg ('this camera looks straight ahead') asserted at 10 deg",
+      "confidence. The surviving half of that reasoning is the ACCURACY:",
+      "the assumed tilt is claimed at 30 deg, no tighter than the loosest",
+      "MEASURED mount, because the geometry is assumed and PD-0 showed",
+      "over-tight orientation accuracy fragments solves. The LEVER ARM is",
+      "still never invented - an unmeasured mount contributes (0,0,0) m.",
+      "Knobs: --g_assumed_pitch / --g_assumed_pitch_accuracy on the module,",
+      "--assumed-pitch / --assumed-pitch-accuracy on geoall.py; a NEGATIVE",
+      "assumed pitch restores the 2026-08-07 no-prior behaviour."
     ],
     "position_accuracy_m": {
       "x": 10.0,
@@ -47,7 +60,16 @@
       "yaw": 15.0,
       "roll": 15.0
     },
-    "unknown_mount_pitch_accuracy_deg": null
+    "assumed_mount": {
+      "pitch_deg": 10.0,
+      "pitch_accuracy_deg": 30.0,
+      "excluded_families": [
+        "voyis_left_staged",
+        "voyis_right_staged",
+        "voyis_left_original",
+        "voyis_right_original"
+      ]
+    }
   },
   "cameras": {
     "_comment": [
