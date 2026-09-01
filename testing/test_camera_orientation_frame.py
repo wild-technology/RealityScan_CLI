@@ -48,7 +48,7 @@ def convert(heading=0.0, vehicle_pitch=0.0, roll=0.0, tilt=0.0, decl=0.0):
     (90.0, 0.0, 'a camera tilted 90 deg down is NADIR - pitch 0'),
     (10.0, 80.0, 'the house convention: 10 deg down from horizontal'),
     (45.0, 45.0, 'Cinema under WCA names'),
-    (30.0, 60.0, 'Zeuss'),
+    (25.0, 65.0, 'Zeuss on its tilting head'),
     (70.0, 20.0, 'legacy camupper'),
 ])
 def test_mount_tilt_maps_onto_the_nadir_scale(tilt, expected, what):
@@ -132,7 +132,8 @@ def test_the_assumed_mount_lands_10_degrees_below_horizontal():
 def test_measured_mounts_are_unchanged_by_the_assumption():
     """Regression guard: adding the fallback must not have moved any mount
     that was actually measured."""
-    assert MOUNTS['zeuss']['pitch'] == 30.0
+    assert MOUNTS['zeuss']['pitch'] == 25.0
+    assert MOUNTS['zeuss']['p_acc'] == 45.0
     assert MOUNTS['legacy_camupper']['pitch'] == 70.0
     assert MOUNTS['legacy_cammid']['pitch'] == 20.0
     assert MOUNTS['legacy_camlower']['pitch'] == 10.0
@@ -141,6 +142,41 @@ def test_measured_mounts_are_unchanged_by_the_assumption():
     assert MOUNTS['wca_starboard'] is None
     for family in NO_ASSUMED_MOUNT_FAMILIES:
         assert MOUNTS[family] is None
+
+
+def _alignment_params() -> dict[str, str]:
+    import xml.etree.ElementTree as ET
+    path = os.path.join(REPO_ROOT, 'modules', 'realityscan_interface',
+                        'RS_CLI', 'Metadata', 'AlignmentParams.xml')
+    root = ET.parse(path).getroot()
+    return {e.attrib['key']: e.attrib['value'] for e in root.findall('entry')}
+
+
+def test_orientation_prior_hardness_is_locked_at_2():
+    """Owner decision, 2026-09-01: LOCK sfmCameraPriorWeightOrientation at 2.0.
+
+    It was 10.0 - ten times RealityScan's own default of 1.0 - which made
+    every per-image Pitch Accuracy behave far tighter than the number read.
+    That is the knob that decides whether a deliberately loose prior (Zeuss:
+    45 deg, for a tilting head that ranges roughly 0-90 deg down) is actually
+    loose, or is quietly pulled hard against imagery that knows better.
+
+    Pinned here because it is the kind of value that gets 'tuned back' by
+    someone reading the accuracy columns alone: the two are multiplicative in
+    effect, so raising this silently undoes the widening.
+    """
+    assert _alignment_params()['sfmCameraPriorWeightOrientation'] == '2.0'
+
+
+def test_the_orientation_hardness_key_still_passes_the_workflow_filter():
+    """The workflow applies AlignmentParams by filtering to keys starting
+    'sfm' or 'lis'. A rename that broke that prefix would drop the lock
+    silently and leave RealityScan's default of 1.0 in force - the same class
+    of bug that meant the s###l POSITION accuracies were never applied at all
+    (docs/rs-reference/06 2.10)."""
+    key = 'sfmCameraPriorWeightOrientation'
+    assert key in _alignment_params()
+    assert key.startswith(('sfm', 'lis'))
 
 
 def test_port_sits_at_the_documented_degeneracy_boundary():

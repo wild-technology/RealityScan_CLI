@@ -249,8 +249,8 @@
         "fwd": 0.5,
         "lat": 0.0,
         "down": 0.5,
-        "pitch": 30.0,
-        "p_acc": 30.0
+        "pitch": 25.0,
+        "p_acc": 45.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S"

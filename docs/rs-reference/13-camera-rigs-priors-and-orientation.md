@@ -1900,7 +1900,7 @@ legacy dataset by tens of degrees. `MOUNTS` in
 
 | Family | fwd (m) | lat (m) | down (m) | pitch (° down from vehicle forward axis) | pitch accuracy (°) |
 |---|---:|---:|---:|---:|---:|
-| `zeuss` | 0.5 | 0.0 | 0.5 | 30.0 | 30.0 |
+| `zeuss` | 0.5 | 0.0 | 0.5 | **25.0** | **45.0** |
 | `legacy_camupper` | 1.0 | 0.0 | 0.0 | 70.0 | 10.0 |
 | `legacy_cammid` | 1.0 | 0.0 | 1.0 | 20.0 | 10.0 |
 | `legacy_camlower` | 1.0 | 0.0 | 1.0 | 10.0 | 5.0 |
@@ -1909,6 +1909,37 @@ legacy dataset by tens of degrees. `MOUNTS` in
 | `wca_starboard` | **`None`** — never measured | | | | |
 
 [VERIFIED-by-inspection + pinned by `testing/test_rig_mounts.py`, values in force 2026-07-26]
+
+**Zeuss is on a TILTING HEAD, and its row is not a mount constant.**
+Owner-stated 2026-09-01: the head sits around **20° down** for most survey
+work, **never points up**, and sometimes goes almost fully down. So the true
+distribution is bounded at 0°, right-skewed, with a long tail toward nadir —
+and a single number cannot describe it. The row is a compromise, chosen on
+these grounds:
+
+| choice | value | why |
+|---|---:|---|
+| `pitch` | **25.0** | Just above the ~20° mode and biased into the nadir tail: the least-squares centre of a right-skewed distribution sits above its mode |
+| `p_acc` | **45.0** | Puts the survey mode at **0.11 σ**, near-nadir (~85°) at **1.33 σ**, horizontal at **0.56 σ**. Wide enough that imagery wins wherever the two disagree |
+
+**What cannot be expressed is the most useful thing known.** Priors are
+symmetric Gaussians, so any σ wide enough to reach nadir necessarily permits
+the same excursion *above* horizontal — which this head never does. The
+one-sided bound is simply not representable in the flight-log format, so the
+prior is weaker than the physical knowledge behind it.
+
+**The head tilt is not logged.** The authoritative nav table
+(`*_final_datatable.csv`) carries 38 columns — vehicle heading/pitch/roll,
+position, CTD, event and camera-grab metadata — and **no tilt, pan or
+head-angle channel**, so there is no per-image truth to substitute for the
+constant. If that angle can be recovered from raw vehicle logs it would beat
+any value in this table outright, and a per-image pitch column already exists
+in the flight-log format to carry it. Two cheaper improvements, in order of
+value: tag dives (or segments) by survey mode and write **two** priors — say
+20°/25° oblique and 70°/25° near-nadir — or drop Zeuss's pitch prior entirely
+and keep yaw and roll, which a pitch-only gimbal leaves untouched.
+[VERIFIED: FINDINGS 2026-09-01]
+
 
 **The fallback for a family with no measured mount (2026-08-31, owner-stated).**
 A family that resolves to `None` above no longer writes an empty pitch. It takes
@@ -2110,7 +2141,7 @@ RealityScan.exe -delegateTo RS1 -importFlightLog ^
 RealityScan.exe -delegateTo RS1 -set "sfmEnableCameraPrior=true"
 RealityScan.exe -delegateTo RS1 -set "sfmDistortionModel=Division"
 RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorWeight=10.0"
-RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorWeightOrientation=10.0"
+RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorWeightOrientation=2.0"
 RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorAccuracyYaw=10.0"
 RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorAccuracyPitch=10.0"
 RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorAccuracyRoll=10.0"

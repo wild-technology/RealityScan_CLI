@@ -14,7 +14,7 @@
   <entry key="sfmMaxFeaturesPerMpx" value="0x36b0"/>
   <entry key="sfmGPUAcceleration" value="true"/>
   <entry key="sfmBackgroundDetectThreadPriority" value="Low"/>
-  <entry key="sfmCameraPriorWeightOrientation" value="10.0"/>
+  <entry key="sfmCameraPriorWeightOrientation" value="2.0"/>
   <entry key="s236l" value="5.0"/>
   <entry key="sfmEnableCameraPrior" value="true"/>
   <entry key="lisPreferImagesAsFeatureSource" value="false"/>

@@ -29,11 +29,22 @@ from module_base.parameter import Parameter
 #   pitch: camera down-tilt from the vehicle forward axis (deg)
 #   p_acc: claimed accuracy of that pitch prior (deg)
 #
-# These are the values in force on 2026-07-26, pinned by
-# testing/test_rig_mounts.py so the table cannot drift unnoticed.
+# These are the values in force on 2026-09-01 (Zeuss retuned that day; the
+# rest unchanged since 2026-07-26), pinned by testing/test_rig_mounts.py so
+# the table cannot drift unnoticed.
 # superseded-by modules/cameras.json families[].mount - pending migration step (c+)
 MOUNTS: dict[str, dict | None] = {
-    'zeuss': {'fwd': 0.5, 'lat': 0.0, 'down': 0.5, 'pitch': 30.0, 'p_acc': 30.0},
+    # Zeuss (Hercules) is the one camera on a TILTING HEAD, so its pitch is
+    # not a mount constant at all: owner-stated 2026-09-01, it sits around
+    # 20 deg down for most survey work, NEVER points up, and sometimes goes
+    # almost fully down. 25 deg centres just above the mode, biased into the
+    # nadir tail (the least-squares centre of a right-skewed distribution is
+    # above its mode); 45 deg is wide enough that near-nadir lands ~1.4 sigma
+    # out rather than 2.3, so imagery wins wherever the two disagree.
+    # The one thing that CANNOT be expressed here is the useful half of that
+    # knowledge - priors are symmetric, so any sigma wide enough to reach
+    # nadir allows an equal amount above horizontal, which the head never does.
+    'zeuss': {'fwd': 0.5, 'lat': 0.0, 'down': 0.5, 'pitch': 25.0, 'p_acc': 45.0},
     'legacy_camupper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 70.0, 'p_acc': 10.0},
     'legacy_cammid': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 20.0, 'p_acc': 10.0},
     'legacy_camlower': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 10.0, 'p_acc': 5.0},
@@ -107,16 +118,17 @@ PRIOR_ACCURACY_DEFAULTS: dict[str, float] = {
 # numbers is what produced the Port-1 m incident, and PD-0/PD-0b measured that
 # over-tight orientation accuracy FRAGMENTS solves. The owner's convention is a
 # different claim - 10 deg DOWN, not 0 deg ahead - and it is reinstated as a
-# prior, but deliberately at 30 deg accuracy, the loosest any measured mount
-# claims (zeuss). That keeps the geometry honest about being assumed rather
-# than measured, which is the half of the audit that still holds.
+# prior, but deliberately at 30 deg accuracy - looser than every FIXED measured
+# mount (only Zeuss, on a tilting head, claims more). That keeps the geometry
+# honest about being assumed rather than measured, which is the half of the
+# audit that still holds.
 #
 # The LEVER ARM is NOT part of this. An unmeasured mount still contributes
 # (0, 0, 0) metres, exactly as before: the Port-1 m incident was a position
 # invention, and nothing here changes position.
 ASSUMED_MOUNT_DEFAULTS: dict[str, float] = {
     'pitch': 10.0,    # deg down from the vehicle forward axis
-    'p_acc': 30.0,    # deg; assumed geometry, so no tighter than the loosest measured mount
+    'p_acc': 30.0,    # deg; assumed geometry, so looser than every FIXED measured mount
 }
 
 # Families that must NEVER take the assumed mount. The VOYIS eyes carry

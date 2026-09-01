@@ -46,7 +46,10 @@ from modules.georeference.georeference_images import (  # noqa: E402
 
 # family -> (lever arm (fwd, lat, down), pitch offset deg, pitch accuracy deg)
 EXPECTED = {
-    'zeuss': ((0.5, 0.0, 0.5), 30.0, 30.0),
+    # Retuned 2026-09-01: Zeuss is on a TILTING HEAD, ~20 deg down for most
+    # survey work, never up, sometimes near-nadir. 25 centres just above the
+    # mode and into the tail; 45 keeps near-nadir ~1.4 sigma out.
+    'zeuss': ((0.5, 0.0, 0.5), 25.0, 45.0),
     'legacy_camupper': ((1.0, 0.0, 0.0), 70.0, 10.0),
     'legacy_cammid': ((1.0, 0.0, 1.0), 20.0, 10.0),
     'legacy_camlower': ((1.0, 0.0, 1.0), 10.0, 5.0),

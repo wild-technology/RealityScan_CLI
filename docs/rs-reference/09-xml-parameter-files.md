@@ -489,7 +489,7 @@ Production values in force since 2026-07-25, all 39 entries:
 | `sfmDistortionModel` | `Division` | **global and all-or-nothing** — the per-camera XMP `Camera:DistortionModel` hint written by `modules/camera_registry.py` does **not** switch models per camera; every solved camera came back `xcr:DistortionModel="division"` [VERIFIED: FINDINGS 2026-07-26]. The file's own comment records the intent (fisheye Port/Starboard division, rectilinear Cinema/Zeuss brown3) that the setting cannot express. Note `docs/settings-evaluation-2026-07` §4 and FINDINGS 2026-07-23 recommend `Brown3` as the global fallback for this rig class while the shipped file still says `Division` [CONTRADICTED-internal: repo recommendation vs shipped profile; the profile is what runs] |
 | `sfmEnableCameraPrior` | `true` | the GUI's "use camera priors for georeferencing" |
 | `sfmCameraPriorWeight` | `10.0` | never A/B'd |
-| `sfmCameraPriorWeightOrientation` | `10.0` | never A/B'd |
+| `sfmCameraPriorWeightOrientation` | `2.0` | lowered from `10.0` 2026-09-01; still never A/B'd |
 | `sfmCameraPriorAccuracyYaw` / `Pitch` / `Roll` | `10.0` each | |
 | `sfmDetectorSensitivity` | `Ultra` | weak underwater texture |
 | `sfmImagesOverlap` | `Medium` | Low was legacy |

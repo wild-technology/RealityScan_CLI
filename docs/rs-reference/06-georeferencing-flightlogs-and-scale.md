@@ -756,7 +756,7 @@ lines 85–88 against `AlignmentParams.xml`, 2026-08-04]
 or `lis`, so `AlignmentParams.xml`'s **orientation** accuracies *are* applied —
 `sfmCameraPriorAccuracyYaw`, `…Pitch`, `…Roll` all carry `10.0` under their documented names
 and all pass the filter, as do `sfmCameraPriorWeight=10.0`,
-`sfmCameraPriorWeightOrientation=10.0`, `sfmEnableCameraPrior=true` and
+`sfmCameraPriorWeightOrientation=2.0`, `sfmEnableCameraPrior=true` and
 `sfmControPointImageMeasAccuracy=4.0`. Only the **position** accuracies, the control-point
 accuracies and the defined-distance accuracy were exported under `s###l` ids and therefore
 silently dropped. [VERIFIED-by-inspection: `AlignmentParams.xml`, 2026-08-04]
@@ -800,7 +800,7 @@ pos_y_acc = 10.0   # metres
 alt_acc   = 1.0    # metres
 yaw_acc   = 15.0   # degrees
 roll_acc  = 15.0   # degrees
-pitch_acc = MOUNTS[family]['p_acc']   # 30.0 zeuss, 15.0 wca_port/wca_cinema,
+pitch_acc = MOUNTS[family]['p_acc']   # 45.0 zeuss, 15.0 wca_port/wca_cinema,
                                       # 10.0 legacy_camupper/cammid, 5.0 legacy_camlower,
                                       # 10.0 fallback for an unknown mount
 ```

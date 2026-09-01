@@ -3429,6 +3429,51 @@ Source tag **[CESIUM]**. Established while building the ion publish path.
   of degrees of the singularity flagged in `13-…` §6.4. Unchanged behaviour;
   the hazard is simply no longer invisible. (2026-08-31) ESTABLISHED
 
+## [ORIENTATION] 2026-09-01 - Zeuss retuned for its tilting head; prior hardness locked at 2
+
+- **Zeuss is on a TILTING HEAD and was being described as a fixed mount.**
+  Owner-stated: the head sits ~20 deg down for most survey work, NEVER points
+  up, and sometimes goes almost fully down. So the real distribution is
+  bounded at 0, right-skewed, with a long tail to ~90 - not a constant.
+  `MOUNTS['zeuss']` retuned **30.0/30.0 -> 25.0/45.0**: 25 centres just above
+  the mode and into the tail (the least-squares centre of a right-skewed
+  distribution sits above its mode), and 45 puts the survey mode at 0.11
+  sigma, near-nadir (~85 deg) at 1.33 sigma and horizontal at 0.56 sigma - wide
+  enough that imagery wins wherever the two disagree. (2026-09-01) ESTABLISHED
+- **The most useful fact about this head cannot be expressed.** Priors are
+  symmetric Gaussians, so any sigma wide enough to reach nadir necessarily
+  permits the same excursion ABOVE horizontal, which the head never does. The
+  one-sided bound is not representable in the flight-log format, so the prior
+  is strictly weaker than the physical knowledge behind it. (2026-09-01)
+  ESTABLISHED
+- **The head tilt is NOT logged, so there is no per-image truth to use
+  instead.** The authoritative nav table `*_final_datatable.csv` carries 38
+  columns (vehicle heading/pitch/roll, position, CTD, event and camera-grab
+  metadata) and NO tilt, pan or head-angle channel; nor does any other CSV in
+  `RUMI_processed/`. Verified on NA168 H2080. If the angle exists in raw
+  vehicle logs it would beat any constant outright, and the flight-log format
+  already has a per-image Pitch column to carry it. (2026-09-01) ESTABLISHED
+- **`sfmCameraPriorWeightOrientation` was 10.0 - TEN TIMES RealityScan's own
+  default of 1.0 - and it is the knob that decides whether a loose accuracy is
+  actually loose.** It passes the workflow's `sfm`/`lis` prefix filter, so
+  unlike the `s###l` POSITION accuracies it HAS been in force all along, on
+  every run. Its effect is multiplicative with the per-image accuracy columns,
+  which means PD-0's calibration point (15 deg gains registration, 3-5 deg
+  fragments) was measured AT hardness 10 and does not transfer unchanged.
+  **Locked at 2.0 by owner decision** and pinned by
+  `testing/test_camera_orientation_frame.py`, with a second test asserting the
+  key still starts with `sfm` so a rename cannot silently drop it back to
+  RealityScan's default the way the position accuracies were dropped.
+  (2026-09-01) ESTABLISHED
+- **Not yet A/B'd.** Both the 25/45 mount and the hardness 2.0 are REASONED,
+  not measured. Bit-identical reruns on marginal geometry have given 26 vs 55
+  and 76 vs 61 registered, so a replicate is required before either is
+  credited or blamed for a change in registration. Ranked better options if
+  the constant proves inadequate: (a) recover the head angle from raw logs and
+  write it per-image; (b) tag dives by survey mode and write two priors
+  (~20/25 oblique, ~70/25 near-nadir); (c) drop Zeuss's pitch prior and keep
+  yaw and roll, which a pitch-only gimbal leaves untouched. (2026-09-01) OPEN
+
 ## 2026-08-23 — onr2 stereo rig (Sony ILX-LR1 pair, 483 images), RealityScan 2.2.0.119430
 
 Source for all of these: a 17-arm session driving RealityScan from the CLI on an external
