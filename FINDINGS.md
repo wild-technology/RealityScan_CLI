@@ -3773,3 +3773,47 @@ reset only after proving no instance is alive.
 PRACTICAL RULE for a long modelling run on a constrained volume: budget
 ~75 GB of cache per mid-size component, recover the cache fully between
 components, and never assume -clearCache did it - measure free space after.
+
+## [NA165] 2026-09-01 - RESOLVED: exportCoordinateSystemType="3" writes ECEF,
+## and globalCoordinateSystem in that case is a STALE label, not the data
+
+Closes the standing OPEN item ("`MvsExportcoordinatesystemtype` 3 (OBJ/FBX) is
+unverified"; "0 and 3 have never been seen in a written `.rsInfo`") and
+HANDOFF's export-readiness row "geometry in a declared CRS - UNVERIFIED".
+
+FIRST SUCCESSFUL `ExportDeliverables` RUN ON THIS MACHINE. HANDOFF said it had
+never produced output here; on 2026-09-01 it wrote OBJ-by-parts with diffuse /
+normal / unwrap texture pages, 710 MB for the first component.
+
+The written `.rsInfo` (zone_all_c17, OBJ) says:
+
+    globalCoordinateSystem="+proj=utm +zone=55 +datum=WGS84 +units=m +no_defs"
+    globalCoordinateSystemName="epsg:32655 - WGS 84 / UTM zone 55N"
+    exportCoordinateSystemType="3"
+    transformToModel="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"   (identity)
+
+H2060 is UTM **2 SOUTH** (EPSG:32702, central meridian -171). Zone 55N has
+central meridian 147E - the other side of the planet. But the DATA is fine;
+only the label is wrong. Measured on 300,000 exported vertices:
+
+    vertex X  -6070900 .. -6070897     <- ECEF magnitudes, and the same values
+    vertex Y  -1175001 .. -1174995        the XMP <xcr:Position> carries
+    vertex Z  -1555379 .. -1555375
+
+    read as ECEF (EPSG:4978) -> lat -14.21027 lon -169.04608 h -681.8 m
+    H2060 site                  lat -14.21089 lon -169.04633 seabed ~ -690 m
+    read as the DECLARED 55N -> lat -6.680 lon 95.844  (Indian Ocean)
+
+So **type 3 = "same as XMP" = GEOCENTRIC/ECEF**, `transformToModel` is
+identity because no transform is needed, and `globalCoordinateSystem` is a
+leftover project/app setting that does NOT describe the exported geometry.
+Anything that trusts that attribute will place the mesh ~16,000 km away.
+
+CONSEQUENCE FOR PUBLISHING: `cesium_placement` reads `.rsInfo` for the CRS and
+derives the correct reading of `transformToModel`, validating against the CRS
+area of use and the dive's nav envelope. A UTM-55N area of use against a Samoa
+nav envelope will not validate, so it should REFUSE rather than mis-place -
+the designed safety net, and worth confirming on a `--dry-run` before any
+publish. The fix is to treat type 3 as EPSG:4978 (which the vertices prove) or
+to pin a project/output CRS so the attribute stops lying; no workflow pins one
+today, which is exactly the gap HANDOFF flagged.
