@@ -263,6 +263,7 @@ def main() -> int:
     os.environ.pop('RS_PROJECTS_DIR', None)   # dated copies deferred
     os.environ.pop('RS_PROJECT_LABEL', None)
     logs_dir = str(ws.root / 'logs')
+    disk_floor_hit = False
 
     for key, comp in finals:
         name = key.split('/')[-1]
@@ -302,6 +303,7 @@ def main() -> int:
             entry['skipped'] = 'disk_floor'
             out['models'].append(entry)
             flush()
+            disk_floor_hit = True
             break
         logger.info('=== model %s (%s cams, scale %s) ===',
                     name, entry['cameras'], median)
@@ -320,7 +322,30 @@ def main() -> int:
             break
 
     done = [m for m in out['models'] if m.get('success')]
-    if done:
+    # A dated copy duplicates the WHOLE project. Writing one immediately after
+    # aborting for low disk is self-defeating, and it filled the volume for
+    # real on NA165/H2060 (2026-09-01): the loop stopped at 32 GB free, then
+    # SaveProjectCopy tried to write a 31.8 GB duplicate, hit 0 bytes free and
+    # died with 0x80070070 ERROR_DISK_FULL, leaving a partial copy that itself
+    # had to be deleted to recover the machine. The in-place project is
+    # already saved by GenerateModel; the dated copy is a convenience.
+    free_gb_now = shutil.disk_usage(ws.root).free / 1024**3
+    if done and disk_floor_hit:
+        logger.error(
+            'SKIPPING the dated project copy: this run aborted on the %.0f GB '
+            'disk floor (%.1f GB free now). Copying the whole project here is '
+            'what fills the volume. Free space, then rerun to get the copy.',
+            MIN_FREE_GB, free_gb_now)
+        out['dated_copy'] = {'skipped': 'disk_floor', 'free_gb': round(free_gb_now, 1)}
+        flush()
+    elif done and free_gb_now < MIN_FREE_GB * 2:
+        logger.error(
+            'SKIPPING the dated project copy: only %.1f GB free and a copy '
+            'duplicates the entire project. Free space, then rerun.',
+            free_gb_now)
+        out['dated_copy'] = {'skipped': 'low_disk', 'free_gb': round(free_gb_now, 1)}
+        flush()
+    elif done:
         import merge_zones
         merge_zones.set_project_save_env(str(ws.batched), ws.root.name.upper())
         dated = os.path.join(

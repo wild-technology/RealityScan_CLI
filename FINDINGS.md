@@ -3707,3 +3707,36 @@ MEASURING - the measured scale is still recorded in the model entry, and the
 bypass is logged per component as `scale_gate_bypassed`.
 
 Suite 573 -> 578.
+
+## [NA165] 2026-09-01 - run_models wrote a full dated project copy right
+## after aborting for LOW DISK, and filled the volume doing it
+
+`run_models.py` ends with "ONE dated RC_projects copy via SaveProjectCopy.bat".
+That copy duplicates the ENTIRE project, and it ran unconditionally whenever
+any component had succeeded - including immediately after the loop had just
+stopped itself on the 50 GB disk floor.
+
+Sequence on NA165/H2060, verbatim from the log:
+
+    02:58:03 model zone_all_c5: success=True in 58.9 min
+    02:58:03 ABORT: below the 50 GB floor
+    02:58:03 project complete - single dated copy -> RC_projects\...20260901.rsproj
+    02:59:43 process 20533 finished with result code 2147942512 in 77 seconds
+    02:59:45 SaveProjectCopy.bat failed (exit code 1)
+
+`2147942512` = **0x80070070 ERROR_DISK_FULL** - the same code FINDINGS already
+records for the H2023 hull model. C: went to **0.01 GB free**, and the partial
+31.8 GB copy had to be deleted by hand to recover the machine. The master
+project itself was untouched (GenerateModel had already saved it in place),
+so nothing modelled was lost - 14 of 20 components survived intact.
+
+Fixed: the dated copy is skipped when the run hit the disk floor, and also
+when free space is below 2x the floor, with the reason recorded in
+models_report.json as `dated_copy: {skipped: ...}`. The in-place project is
+already saved; the dated copy is a convenience and is not worth the volume.
+
+RELATED, and the reason this mattered so much: `-clearCache` does NOT clear
+everything. Two full flushes with nothing running left an 87.9 GB cache
+subdirectory holding files back to 09:39. The documented flush recovered
+138.8 -> 2.7 GB once and 148.2 -> 90.6 GB the next time, so its effectiveness
+is not something to plan capacity around.
