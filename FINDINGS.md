@@ -3740,3 +3740,36 @@ everything. Two full flushes with nothing running left an 87.9 GB cache
 subdirectory holding files back to 09:39. The documented flush recovered
 138.8 -> 2.7 GB once and 148.2 -> 90.6 GB the next time, so its effectiveness
 is not something to plan capacity around.
+
+## [NA165] 2026-09-01 - `-clearCache` does NOT reclaim the cache, and the
+## cache grows ~72 GB PER COMPONENT during modelling
+
+Two measurements from the H2060 modelling run, both load-bearing for capacity
+planning:
+
+**Growth.** Modelling a single 166-camera component (zone_all_c4) grew the
+cache from 90.6 GB to 163.2 GB - **+72.6 GB**, at a steady ~550 MB/min. The
+components still outstanding were 482 and 716 cameras. Cache growth, not model
+output, is what sizes the disk requirement: `master` was only 70.7 GB with 14
+components modelled, while the cache alone was 163 GB.
+
+**Recovery.** `FlushCache.bat` (-clearCache, retention 0) is NOT reliable:
+
+    flush 1 (idle machine)      148.2 -> 2.7 GB    full
+    flush 2 (idle machine)      148.2 -> 90.6 GB   left an 87.9 GB subdir
+                                                   holding files back to 09:39
+
+The residue is not age-based (retention was 0) and survived a second flush.
+Capacity cannot be planned assuming the documented flush works.
+
+What DOES work: with no RealityScan process alive the cache is COLD, and
+resetting the directory recovers everything - measured 164.3 GB reclaimed in
+one operation, C: 42.4 -> 206.7 GB. Epic's warning is about deleting from a
+cache IN USE, and this repo's own note says "relocating is the safe lever";
+a cold directory reset is that same operation. The driver
+(`_agent/supervise.py`) now tries -clearCache first and falls back to a cold
+reset only after proving no instance is alive.
+
+PRACTICAL RULE for a long modelling run on a constrained volume: budget
+~75 GB of cache per mid-size component, recover the cache fully between
+components, and never assume -clearCache did it - measure free space after.
