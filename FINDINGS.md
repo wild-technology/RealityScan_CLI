@@ -3132,3 +3132,405 @@ were measured on an M5 MacBook Pro (no CUDA) unless stated.
   pipeline's FINDINGS conventions and its RS pain points (component membership opacity, no
   incremental-against-locked-poses, census-not-exit-codes) are that engine's requirements
   spec via `docs/RS_CLI_DIGEST.md`. [MAGIC] (2026-08-12) ESTABLISHED
+
+## H2080 per-component model+export campaign (2026-08-31)
+
+Driving 64 named components of a GUI-built `NA168_H2080.rsproj` through
+GenerateModel → ExportDeliverables, on an agent-owned COPY with a named
+headless instance while the operator's GUI stayed open. Findings below are all
+from that run.
+
+- **`-exportModel <name>` resolves a model name GLOBALLY, but `-selectModel
+  <name>` resolves it only within the ACTIVE component.** Established by
+  controlled comparison, not inference: `ExportDeliverables.bat` wrote
+  `NA168_H2080_c44`'s OBJ (2.1 GB, 15 files) and FBX (763 MB, 13 files) via
+  `-exportModel`, then failed on `-selectModel "NA168_H2080_c44_HighPoly_Raw"`
+  with **2147942487** (0x80070057) for a model verified present in the saved
+  scene. Failed twice under the stock workflow; succeeded on the first attempt
+  with a single `call :run -selectComponent "%comp%"` added ahead of the model
+  lookups. Operation id **21856 = selectModel** (same id/code appears in the
+  tolerated `expected_select_*Model N*` files from the residual sweep).
+  CONSEQUENCE: **`ExportDeliverables.bat` cannot export more than one
+  component per run** despite taking a multi-component name list — it has only
+  ever worked because observed runs exported the component the preceding
+  `GenerateModel` left active. The dense-PLY step is where it bites, being the
+  only step needing a model other than `<comp>_Simplified_Textured`.
+  Fix is a one-line `-selectComponent` in `:export_component`. [NA168]
+  (2026-08-31) ESTABLISHED
+
+- **The same scoping makes any TOLERANT model-delete silently no-op, and it
+  reports success.** `:try_delete_model` is deliberately forgiving of a failed
+  `-selectModel` (correctly — that is what lets the "Model 1".."Model 9" sweep
+  skip absent names). For a non-active component the select fails with the same
+  not-found code, the helper moves the marker to `expected_select_*` and
+  returns 0 WITHOUT deleting. Measured: a 4-component prune pass deleted only
+  the last-modelled (active) component and left **9 of 12 models** in the
+  scene, while the workflow exited 0. Any prune/sweep over multiple components
+  needs `-selectComponent` first, or its success means nothing. FIX VERIFIED:
+  with `call :run -selectComponent "%tag%"` added ahead of the deletes, the
+  next 3-component prune removed all 9 models (verified by parsing the saved
+  `.rsproj`, not by trusting the exit code), and the scene fell 56 -> 34.5 GB. [NA168]
+  (2026-08-31) ESTABLISHED
+
+- **`-deleteSelectedModel` + `-save` removes the model from the project graph
+  but does NOT reclaim its data files.** After modelling, exporting and pruning
+  ONE mid-size component the scene grew **23.7 → 30 GB** with **148 new files**
+  left behind — `model<GUID>_tex0..3_2.dat` at 576–706 MB each plus
+  `model<N>.dat_rnd.dat` at 343 MB — none referenced by the saved `.rsproj`.
+  Pruning models therefore bounds SAVE TIME but not DISK. Same shape as
+  "CLI component deletion does not persist through save". Practical reclaim on
+  a scratch scene is to discard and re-copy it from a pristine template, not to
+  prune harder. [NA168] (2026-08-31) ESTABLISHED
+
+- **Cache is the dominant disk consumer on a multi-day campaign, not the
+  deliverables.** Retention defaults to 7 days so nothing is reclaimed while a
+  campaign runs. Measured on H2080: **~20–30 GB of cache per component
+  modelled** (91 GB after 7, 159 GB after 9) against ~2.5 GB of deliverables
+  each. Budget the cache first and flush between batches
+  (`FlushCache.bat`, main). Corroborates main's own note "7-day default kept
+  918 GB". [NA168] (2026-08-31) ESTABLISHED
+
+- **A `-calculateHighModel` failure is NOT a verdict on the component — retry
+  before recording it.** `NA168_H2080_c44` failed at step [1/8] after a clean,
+  uninterrupted 6.0 min run, then **modelled successfully in 29.8 min** on
+  retry with identical settings, scene and recipe. Two further components the
+  size proxy had condemned (`c06`, `c00`) also modelled.
+  A second instance, `NA168_H2080_c03`, then failed the same step at 4.4 min
+  and gave the code: **2181038105 = `0x82000019`**, from operation 20562 at
+  76% progress after 215 s. That code is NOT otherwise recorded in this repo;
+  its documented sibling `2181038335` = `0x820000FF` is the warning-class
+  result the workflows already whitelist, and `0x82000019` is a different
+  member of the same RealityScan-internal family. **Not resource pressure** -
+  the run's own resource trace at failure shows 82.9 GB RAM available of
+  127 GB, commit 49.8 of 156 GB, and 910.6 GB free disk. So `-calculateHighModel`
+  can fail mid-computation with ample headroom, and the failure is transient.
+  Drivers should retry such failures at least once rather than treating them
+  as unmodellable. [NA168] (2026-08-31)
+  ESTABLISHED
+
+- **`assert_bat_safe` refuses RealityScan's own duplicate-component names.**
+  RealityScan auto-names duplicates `Component N (K)`, and `(`/`)` are in
+  `CMD_METACHARACTERS`, so `run_models.py` / `export_deliverables.py` refuse
+  such a component outright. On H2080, 26 of 64 in-scope components carried a
+  `(K)` suffix. A GUI-built project therefore cannot be driven by this pipeline
+  until its components are renamed. Renaming by rewriting the
+  `<component name="...">` attributes in the `.rsproj` XML **is honoured by
+  RealityScan** (verified: `-selectComponent NA168_H2080_c37` succeeded after
+  an offline rename, 64/64 renamed, 196 components preserved). [NA168]
+  (2026-08-31) ESTABLISHED
+
+- **`schtasks` alone does not make a run shell-proof — `/IT` leaves a console
+  attached.** A task created with `/IT` runs in the operator's interactive
+  session WITH a console; closing an unrelated terminal window delivered a
+  console-close event to the process group and killed the Python driver
+  mid-batch (`scheduler.log` ends in a literal `^C`). The `GenerateModel.bat`
+  chain and its RealityScan instance SURVIVED - item 8 in reverse - and the
+  ORPHANED CHAIN RAN THE COMPONENT TO COMPLETION UNSUPERVISED: all 8 steps,
+  "Verifying the deliverable still exists", "Saving project", then a clean
+  `-quit`, 37 min after the driver died (verified in the workflow log and by
+  all three models present in the saved `.rsproj`). On this class of kill the
+  correct recovery is therefore to WAIT for the orphan and record its result,
+  not to kill it and re-model - but nothing external records that the run was
+  interrupted, which is the real hazard. Launch the driver through a `wscript` shim
+  (`WScript.Shell.Run "cmd /c <launcher>", 0, False`) so it gets a hidden
+  console owned by no terminal, the same reason `ErrorWriterLaunch.vbs` uses
+  wscript. [NA168] (2026-08-31) ESTABLISHED
+
+- **Benign, do not chase: the cache-relocation popup is auto-answered "No"
+  under `-silent`.** `Title: Resource Cache path is changing / Message: Would
+  you like to move cache files to? <RS_CACHE_DIR> / Action: &No` appears in
+  `RealityScan.log` on every boot that sets `appCacheCustomLocation`. It only
+  declines to MIGRATE pre-existing cache files; the new cache still goes to
+  `RS_CACHE_DIR`. Investigated because it is the same class as the recorded
+  "export auto-answers its dialog and exports nothing" hazard — it is not that.
+  Suppressible with `-set "PUS-6-323328742=1"` if migration is ever wanted.
+  [NA168] (2026-08-31) ESTABLISHED
+
+## NA165 H2063 extraction start (2026-08-31)
+
+- **A killed `robocopy /MT` leaves FULL-SIZE, zero-tailed files — size equality
+  is NOT a completeness check.** Aborting a 559 GB `robocopy /E /MT:8` mid-run
+  left 8 destination `.mov` files whose sizes were byte-for-byte equal to the
+  source (robocopy pre-allocates the destination), while everything past the
+  written point was zeros. Proof: md5 of a 4 MB window at 60% of the file and
+  another 16 MB from the end were IDENTICAL TO EACH OTHER in the local copy
+  and different from the source at both offsets — the signature of a zero
+  fill, not of a short write. All 4 files that were retained tested corrupt.
+  Any resume logic that trusts `os.path.getsize()` (or `os.path.exists()`)
+  will silently reuse these. Verify a late-offset hash against the source, or
+  delete and re-copy. [NA168] (2026-08-31) ESTABLISHED
+
+- **The Extract Images module reports `Success: True` after decoding 43 of
+  26,974 frames.** Same incident: the corrupt ProRes decoded for 43 s and then
+  emitted `[prores @ ...] invalid frame header` continuously, yet the module's
+  own summary read `Success: True`, `Total Input Frame Count: 26974`,
+  `Total Extracted Frame Count: 43`, and `main.py` exited 0. Exit code and the
+  module's Success flag are therefore NOT evidence that a video was extracted
+  — the extracted count must be compared against duration x rate. This is
+  exactly the check `tools/extract_pipeline.py` already performs ("43 frames
+  but expected ~900 from 900s - truncated read?"), and it is the only reason
+  the corruption was caught; it also correctly KEPT the local copy rather than
+  deleting it. Do not extract without that comparison. [NA168] (2026-08-31)
+  ESTABLISHED
+
+- **Latent hazard in `tools/extract_pipeline.py`: staging reuse is keyed on
+  existence alone.** `if not os.path.exists(dst)` skips the copy, so a video
+  whose staged copy is short or zero-tailed is never re-copied; its extraction
+  then fails verification on every subsequent run, and because the failure
+  path deliberately KEEPS the local copy, the file can never recover without
+  manual intervention. A size-and-late-offset check before the skip would close
+  it. [NA168] (2026-08-31) ESTABLISHED
+
+- **A HIDDEN console is still a TTY, and the Extract Images module hangs
+  forever on one.** Running the extraction under
+  `wscript ... WScript.Shell.Run "cmd /c ...", 0, False` (the shim that makes a
+  long run survive a terminal close) produced a `main.py` that consumed
+  **0.00 CPU seconds over 15 s** with no ffmpeg child and no output, on a video
+  that was demonstrably good. The same command with stdin from a pipe or from
+  `/dev/null` extracted normally (259 CPU-seconds, 565 frames and climbing).
+  Window style 0 hides the console but does not remove it, so `isatty()` stays
+  TRUE and an interactive read blocks on input that can never arrive -
+  `RS_NO_INTERACTIVE=1` did not prevent it. FIX: redirect stdin explicitly in
+  the launcher (`python driver.py < NUL >> log 2>&1`); verified working.
+  Applies to ANY scheduled/detached invocation of this pipeline, not just
+  extraction - the hidden-console launcher is otherwise the correct pattern.
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **`tools/extract_pipeline.py` never implemented the per-video output dir its
+  own docstring documents — so it extracts exactly ONE video and then fails
+  every remaining one, keeping each staged copy.** `extract_one`'s docstring
+  reads *"Extract into a PER-VIDEO output dir ... Reusing one output dir
+  therefore works for the FIRST video and fails for every one after it - which
+  is exactly what happened on 2026-08-15 ... 25 of those filled the disk. Each
+  video gets its own directory; frames are collected afterwards."* The code
+  under it passes the SHARED `out_dir` straight to `-o`, is called as
+  `extract_one(local, args.out, ...)`, and `grep` finds no move/collect step
+  anywhere in the file. The documented fix was lost; the regression it
+  describes is live. Reproduced on NA165/H2063 2026-08-31 08:56: video 0005 ok
+  (701 frames, 199 pruned outside the on-bottom window), then 0006 and 0007
+  back-to-back `ERROR: Extracted images folder already exists and this run is
+  non-interactive - refusing to overwrite it` / `exit 1`, each keeping its
+  ~17 GB copy, `progress 3/26 videos, 0 frames total`. FIX: extract into
+  `<out>/_extract_<stem>`, then move `frames_dir(per_video)` into
+  `frames_dir(out)` before `verify()` runs — verify and prune both read
+  `frames_dir(out_root)` and need no change. [NA168] (2026-08-31) ESTABLISHED
+
+- **geoall silently falls back to an ARBITRARY nav CSV when the merged
+  `final_datatable.csv` is absent — and the alphabetically-first candidate is
+  the SURFACE VESSEL's USBL.** `find_rov_datafiles` prefers
+  `*final_datatable.csv` and otherwise takes `paths[0]`. On NA165/H2063, whose
+  `RUMI_processed` dir had only ROVDataConcat STAGE 1 output, that fallback
+  chose `NA165_H2063_USBL_Atalanta.csv` - Atalanta, not Hercules - and printed
+  only a `Note:` while ignoring the DVL, octans and sealog files. A dive whose
+  Kalman stage has not been run will therefore georeference against the wrong
+  platform, with no orientation columns at all, and the only signal is an
+  easily-missed Note line. It should refuse instead: no `final_datatable`
+  means no authoritative nav. Discovered because the run also hit an unrelated
+  path error first; had the paths been right it would have proceeded.
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **ROVDataConcat is TWO stages and a dive can look "pre-processed" while
+  missing the one geoall needs.** Stage 1 (`main.py`, expedition-wide) emits
+  `*_pitch_roll_heading_octans.csv`, `*_dvl_lat_long.csv`, `*_USBL_Hercules.csv`,
+  `*_USBL_Atalanta.csv`, `*_sealog_sensors_merged.csv`. Stage 2
+  (`main_kalman.py --base <root> --expedition <EXP> --dive <DIVE>`, per dive)
+  is what produces `*_filtered_datatable.csv`, `*_kalman_filtered_data.csv` and
+  the `*_final_datatable.csv` that geoall treats as authoritative. NA165/H2060
+  has all of stage 2; NA165/H2063 had none of it, while still looking like a
+  populated `RUMI_processed/<DIVE>` folder. Check for `*final_datatable.csv`
+  before georeferencing, not for a non-empty directory. [NA168] (2026-08-31)
+  ESTABLISHED
+
+- **The extractor's frame layout does not match what geoall expects.**
+  `extract_pipeline.py --out X` writes frames to `X/raw_images`
+  (`frames_dir()`), but geoall's `--image-base-dir` wants the frames directly
+  inside an `edt` directory - the H2060 precedent is
+  `raw/zeuss/edt/*.jpg`. Passing `--out .../raw/zeuss/edt` therefore yields
+  `raw/zeuss/edt/raw_images/*.jpg` and geoall reports
+  "Reading 0 images from 1 edt directories" and exits. Either pass
+  `--out .../raw/zeuss` and rename `raw_images` to `edt`, or move the frames
+  up one level after extraction. [NA168] (2026-08-31) ESTABLISHED
+
+- **geoall.py and modules/georeference/ have diverged on the ONE column that
+  carries focal length — and CLAUDE.md points you at the wrong one.**
+  `modules/georeference/georeference_images.py` writes a **14-column** flight
+  log ending in `FocalLength`, which its own `_get_camera_focal_length`
+  documents as "THE ONLY ROUTE this value has to RealityScan": sidecars are
+  forbidden, and per `modules/prior_groups.py` neither
+  `-setPriorCalibrationGroup` nor `-setPriorLensGroup` carries a focal length
+  ("the two CLI commands set GROUPING only"). `geoall.py` still writes **13
+  columns** and drops it silently. Verified: geoall's NA165/H2063 output, and
+  the existing NA165/H2060 and NA168/H2080 logs, are all 13-column with no
+  FocalLength. CLAUDE.md rule 6 calls geoall canonical and says to port
+  improvements FROM it INTO the module - here the improvement went the other
+  way and was never back-ported, so following the documented guidance loses
+  the focal prior. Use the module (`RS_MODULES='Georeference Images'`,
+  `--g_type Zeuss`, `--g_flight_log <final_datatable.csv>`) when a numeric
+  focal prior matters. Confirmed working: 22,770 rows, 14 columns,
+  `FocalLength 28.000000` throughout. [NA168] (2026-08-31) ESTABLISHED
+
+- **`RS_NO_INTERACTIVE` must be set BEFORE the repo is imported, not before
+  the call.** Setting it inside a wrapper's `main()` and then importing
+  `main.py` is too late - parameters are built at import time and the run
+  stops on `Whether to continue automatically after each module [False]:`.
+  Set it at module scope ahead of every repo import. Same family as the
+  hidden-console TTY hang: both are "the non-interactive gate did not take".
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **A CLI value that EQUALS the declared default is treated as "not supplied"
+  and loses to rs_settings.json.** `batch_directory._explicit_cli_value` tests
+  explicitness as `value != param.get_default_value()`, so
+  `--b_max_zone 4000` (declared default 4000) returns None, is deemed
+  unanswered, and `_stored_default` falls through to the `batch` section -
+  which on this machine holds **max_zone_size 8000**. Measured NA165/H2063
+  2026-08-31: batching was invoked with `--b_max_zone 4000` and
+  `batch_inputs.json` recorded `"batch_max_zone_size": "8000"`, producing a
+  zone of **7,842 images (6,535 base + 1,307 overlap)** against an operator
+  cap of 6,000. The guard's own docstring says an explicit flag "must WIN
+  over rs_settings.json" - and it does, EXCEPT when the operator's chosen
+  value coincides with the default, which is exactly when they are most
+  likely to type it. Worse, both keys feed `_input_fingerprint`, so the wrong
+  zoning is recorded as legitimate provenance (the same failure mode the
+  2026-08-07 audit closed for the stored-value-beats-CLI case). Workaround:
+  pass a value that differs from the default. Real fix: track suppliedness
+  from argparse rather than inferring it by comparison. [NA168] (2026-08-31)
+  ESTABLISHED
+
+- **`-load` of a large scene can fail with 2147500037 (`0x80004005`, E_FAIL)
+  and it is transient, not a corrupt project.** NA168/H2080 2026-08-31 12:37:
+  the export session for `c54` reached only "Loading project" in its workflow
+  log and aborted after 12 s with `process 6 finished with result code
+  2147500037`. Operation id 6 is the load. The scene was 69 GB with ~12 live
+  models; resources were NOT tight (97.7 GB RAM free, commit 77 of 171 GB), and
+  a second RealityScan instance was aligning another campaign concurrently.
+  The next component's export loaded the SAME project seconds later without
+  incident, so the project is intact. This code is not otherwise recorded in
+  the repo; its documented neighbours are the RealityScan-internal `0x82...`
+  family and `0x80070057`. Treat a load failure as retryable - keep the
+  component's models and re-export on a later pass rather than re-modelling.
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **AlignZone's "save BEFORE the destructive identity loop" earned its keep:
+  the align survived while the identity capture failed.** (SUPERSEDED in
+  part: first attributed to memory pressure - WRONG. zone_2 reproduced it
+  with commit 70.2 GB and 79.9 GB RAM free. Real cause is the missing
+  RegistrationExportParams.xml - see the entry below.) NA165/H2063 zone_1 (4,060 images) ran 6 h 17 m and completed
+  scene build, prior groups, 35 alignment settings, flight-log import and the
+  alignment itself, logged "Saving project BEFORE the destructive identity
+  loop", then failed at
+  `-exportRegistration ".../zone_1/identity/zone_1_c0.csv"` with **2147500037
+  (0x80004005)**. `AlignZone.bat` exited 1 and the module logged the zone as
+  failed - but **three components totalling 2.8 GB were already on disk** in
+  `aligned_components/zone_1/latest_components/`, so no alignment work was
+  lost. A zone reported as FAILED by the workflow is therefore not necessarily
+  a zone without usable components; check `latest_components/` before
+  re-running a 6-hour align.
+  Resource peaks for that zone: **CPU 100%, commit 139.4 GB of 156 (89%),
+  minimum available RAM 37.6 GB** - and Windows GREW the commit limit to
+  185 GB during the run. A second campaign (NA168/H2080 modelling) was running
+  concurrently. Immediately afterwards, with the much smaller zone_2 (1,983
+  images) in flight, commit was 51.4 GB (28%). THE SIZE RULE I FIRST DREW
+  FROM THIS IS REFUTED by zone_5, which is LARGER than zone_1 (4,124 vs 4,060
+  images) yet peaked at 96.2 GB and finished in ~50 min:
+
+  | zone | images | commit peak | min RAM | duration |
+  |---|---:|---:|---:|---:|
+  | 1 | 4,060 | **139.4 GB** | 37.6 | **6 h 17 m** |
+  | 2 | 1,983 | 70.2 GB | 79.9 | ~15 m |
+  | 3 | 2,718 | 66.1 GB | 71.4 | ~23 m |
+  | 4 | 2,059 | 69.2 GB | 68.5 | ~26 m |
+  | 5 | 4,124 | 96.2 GB | 54.0 | ~50 m |
+
+  zone_1 is an OUTLIER in BOTH time and memory and zone SIZE explains neither.
+  It was the campaign's first zone (cold cache) and ran against the concurrent
+  H2080 campaign's heaviest phase. Do NOT budget alignment by image count on
+  this evidence. What IS reliable: the identity/registration tail fails on
+  every zone regardless, while the align and -exportLatestComponents succeed
+  throughout.
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **AlignZone's non-destructive identity capture CANNOT WORK as shipped:
+  `RegistrationExportParams.xml` does not exist, and the documented fallback
+  does not hold on a freshly booted instance.** `AlignZone.bat` sets
+  `RegistrationParams=%Metadata%\RegistrationExportParams.xml`, blanks it when
+  the file is absent, and relies on the comment *"-exportRegistration falls
+  back to the instance's current settings when no params xml is given"*. That
+  file is NOT shipped (its own comment says so - RealityScan must write it from
+  the "Export Registration" dialog) and does not exist anywhere on this
+  machine. A fresh headless instance has no "current settings" to fall back
+  to, so `-exportRegistration` fails immediately with **2147500037
+  (0x80004005)** and `AlignZone.bat` exits 1.
+  Measured NA165/H2063 2026-08-31 on BOTH zones run so far - zone_1 (4,060
+  images, commit peak 139.4 GB) and zone_2 (1,983 images, commit peak 70.2 GB,
+  min RAM 79.9 GB). Identical failure at identical step, three hours apart, at
+  opposite ends of the memory envelope: **it is not memory pressure**, it is
+  the missing params file. My first diagnosis blamed memory on the zone_1
+  evidence alone; zone_2 refuted it.
+  IMPACT - CORRECTED. I first called this bounded ('only provenance'). It is
+  worse than that: it BLOCKS THE MERGE. `merge_zones` refuses components
+  without a manifest ('Components WITHOUT a manifest are refused: the
+  feature-aware loop needs membership'), and the manifests are built from
+  the identity CSVs this step produces - the chain is
+  `-exportRegistration -> identity CSV -> member stems -> <rsalign>.manifest.json -> merge_zones`. No CSVs means no manifests means
+  no merge. Membership cannot be recovered from the .rsalign either: it is
+  binary TBSM and contains no image filenames at all (0 occurrences of
+  '.jpg' in a 151 MB component).
+  RECOVERY IS CHEAP THOUGH, because AlignZone saves before the destructive
+  loop: every zone keeps `zone_N.rsproj` AND an `RC_projects` dated copy, so
+  once a params file exists the identity capture can be re-run per zone in
+  minutes - load, select component, export - with NO re-alignment. An
+  8-hour campaign is not at risk.
+  `-exportLatestComponents` runs BEFORE the identity loop
+  and succeeds, so every zone still yields its components - zone_1 three
+  (2.7 GB), zone_2 seven (1.7 GB) - which is what a merge `.complist` consumes.
+  What is lost is per-component MEMBERSHIP: `<zone>/identity/` is empty on
+  every zone, so census and provenance cannot be computed. The zone is also
+  reported FAILED, which understates what actually happened.
+  FIX: export a registration preset once from the RealityScan GUI's "Export
+  Registration" dialog, drop it at
+  `RS_CLI/Metadata/RegistrationExportParams.xml` (or point
+  RS_REGISTRATION_PARAMS at it), and every later run gets identity data. Until
+  then the identity capture is dead code on any machine that has never saved
+  those settings. [NA168] (2026-08-31) ESTABLISHED
+
+- **No component manifest is EVER produced on this branch - two independent
+  breaks, and fixing either alone is not enough.** Root-caused NA165/H2063
+  2026-08-31 after `merge_zones` was found to be blocked:
+
+  **Break 1 - the CSV is never written.** `AlignZone.bat`'s `:identityOne`
+  calls `-exportRegistration "<identity>\<zone>_c<K>.csv"` with NO params
+  file, because `RS_CLI/Metadata/RegistrationExportParams.xml` is not shipped
+  and nothing generates or prompts for it. The .bat's own comment relies on
+  "-exportRegistration falls back to the instance's current settings", and
+  RealityScan's Help agrees - but a FRESHLY BOOTED HEADLESS instance has no
+  such settings, so the call fails with **2147500037 (0x80004005)** and the
+  zone exits 1. Confirmed on every zone run, at both ends of the memory
+  envelope. The settings can only be produced from the GUI's Export
+  Registration dialog (Help: "You can export the settings file from the
+  application in the Export Registration dialog"); `-exportGlobalSettings`
+  does not help - it writes a BINARY `.rcconfig` (TBES magic), not readable
+  keys.
+
+  **Break 2 - nothing would read the CSV even if it existed.** The .bat was
+  migrated to the non-destructive registration-CSV method; the Python side was
+  not. `RealityScanAlignment.capture_component_identities()` still reads the
+  RETIRED harvest layout - `identity_r<K>/*.xmp`, membership by successive
+  difference - not `identity/*.csv`. It therefore finds nothing and logs "No
+  usable identity harvests". (Its own comment says `identity_c<K>` while the
+  code reads `identity_r{index}` - the two halves disagree in the source.)
+  A grep confirms NOTHING in the repo parses `identity/*.csv`.
+
+  CONSEQUENCE: `<rsalign>.manifest.json` is never written, and `merge_zones`
+  refuses components without one, so the merge stage cannot run at all.
+  Membership is not recoverable from the `.rsalign`: it is binary TBSM with
+  ZERO occurrences of '.jpg' in a 151 MB component.
+
+  FIX (both halves needed): (a) export the registration preset once from the
+  GUI to `RS_CLI/Metadata/RegistrationExportParams.xml`; (b) parse the CSVs
+  into schema-v1 manifests - the format is pinned in the repo's own
+  `calibration.xml` as `#cameras N` / `#name,x,y,z,...` with the image name in
+  field 0, so a parser is ~20 lines against `component_manifest.build_manifest`.
+  Recovery for already-aligned zones is cheap because AlignZone saves BEFORE
+  the destructive loop: reload `zone_N.rsproj`, select each component, export
+  registration, build manifests - minutes per zone, no re-alignment.
+  [NA168] (2026-08-31) ESTABLISHED
