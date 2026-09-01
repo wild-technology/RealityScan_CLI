@@ -3861,3 +3861,34 @@ Fix, in two halves that must agree:
 Smoke fixture (one component) went rc=1 -> rc=1 -> rc=0 across the two halves;
 it caught BOTH a wrong fallback name and the census mismatch before either
 reached a 20-component run. Suite 578 -> 584.
+
+## [NA165] 2026-09-01 - the dated-copy guard needed to be SIZE-aware, not
+## threshold-aware (second incident, same code)
+
+The first fix skipped the dated project copy when the run hit the disk floor,
+or when free space was under 2x the floor. That was still wrong. Second
+incident the same day:
+
+    free before : 157.2 GB   (comfortably past 2 x 50 GB, so the guard allowed it)
+    copy written : 119.5 GB
+    free after  :  43.3 GB   <- the export stage then started here
+    flush freed :  -0.0 GB   (cache was already clean; nothing to reclaim)
+
+A fixed threshold only asks "is there room to START". It never asks "is there
+room to FINISH", and a copy that fits while stranding the next stage is not
+worth writing. `project_size_gb()` measures the .rsproj PLUS its sibling data
+directory - the .rsproj alone is ~1 MB and tells you nothing - and the guard
+now requires `project_size + MIN_FREE_GB <= free`. Measured against the real
+project it returns 119.5 GB, exactly the size of the copy that was written, so
+the guard would have refused (119.5 + 50 > 157).
+
+Recovery both times was the same: delete the duplicate. The in-place master
+project is saved by GenerateModel and was intact throughout - 20 modelled
+components never at risk.
+
+GENERAL LESSON, and the fourth instance of this shape today: a guard that
+reads one number and compares it to a constant is a guard against the wrong
+question. The stall detector watched a hardcoded log list, the flush probe
+sampled an instance mid-teardown, the completion watcher grepped a whole log
+including history, and this one measured headroom without measuring the thing
+that would consume it.

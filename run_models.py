@@ -52,6 +52,26 @@ from modules.workspace_census import Workspace, _records  # noqa: E402
 MIN_FREE_GB = 50.0
 
 
+def project_size_gb(project) -> float:
+    """Size of a .rsproj plus its sibling data directory, in GB.
+
+    RealityScan keeps the bulk beside the .rsproj in a folder of the same
+    stem, so the .rsproj alone is ~1 MB and tells you nothing about what a
+    copy costs. Used to decide whether a dated copy can be afforded.
+    """
+    project = Path(project)
+    total = project.stat().st_size if project.is_file() else 0
+    data_dir = project.with_suffix('')
+    if data_dir.is_dir():
+        for f in data_dir.rglob('*'):
+            try:
+                if f.is_file():
+                    total += f.stat().st_size
+            except OSError:
+                pass
+    return total / 1024 ** 3
+
+
 def scale_gate_enabled(report: dict) -> bool:
     """Whether this workspace's merge report asks for the scale gate to REFUSE.
 
@@ -344,6 +364,22 @@ def main() -> int:
             'duplicates the entire project. Free space, then rerun.',
             free_gb_now)
         out['dated_copy'] = {'skipped': 'low_disk', 'free_gb': round(free_gb_now, 1)}
+        flush()
+    elif done and project_size_gb(project) + MIN_FREE_GB > free_gb_now:
+        # A fixed threshold is not enough: it only asks "is there room to
+        # start", not "is there room to FINISH". On NA165/H2060 the run had
+        # 157 GB free - comfortably past 2x the floor - and wrote a 119.5 GB
+        # duplicate, leaving 43 GB and starving the export that came next.
+        # Size the check on the actual project instead.
+        size_gb = project_size_gb(project)
+        logger.error(
+            'SKIPPING the dated project copy: the project is %.1f GB and only '
+            '%.1f GB is free, which would leave under the %.0f GB floor. A '
+            'copy that fits but strands the next stage is not worth it.',
+            size_gb, free_gb_now, MIN_FREE_GB)
+        out['dated_copy'] = {'skipped': 'would_breach_floor',
+                             'project_gb': round(size_gb, 1),
+                             'free_gb': round(free_gb_now, 1)}
         flush()
     elif done:
         import merge_zones
