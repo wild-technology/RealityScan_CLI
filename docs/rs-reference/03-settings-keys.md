@@ -619,7 +619,7 @@ Production values below are from `RS_CLI/Metadata/AlignmentParams.xml`, which
 | `sfmCameraPriorAccuracyYaw` | float | `10.0` | ≥ 0 | **Yaw accuracy** | `10.0` |
 | `sfmCameraPriorAccuracyPitch` | float | `10.0` | ≥ 0 | **Pitch accuracy** | `10.0` |
 | `sfmCameraPriorAccuracyRoll` | float | `10.0` | ≥ 0 | **Roll accuracy** | `10.0` |
-| `sfmCameraPriorWeightOrientation` | float | `1.0` | ≥ 0 | **Orientation prior hardness** | `10.0` |
+| `sfmCameraPriorWeightOrientation` | float | `1.0` | ≥ 0 | **Orientation prior hardness** | `2.0` (was `10.0` until 2026-09-01) |
 | `sfmControPointImageMeasAccuracy` *(Epic's typo: no `l` in "Control")* | float | `2.0` | ≥ 0 | **Image measurement accuracy [px]** for control points | `4.0` |
 | `sfmControlPointXAccuracy` | float | `0.05` | ≥ 0 | **Control point position X accuracy** | **never applied**, §13.3 |
 | `sfmControlPointYAccuracy` | float | `0.05` | ≥ 0 | **Control point position Y accuracy** | **never applied**, §13.3 |
@@ -1466,7 +1466,7 @@ Replayed row-by-row from `RS_CLI/Metadata/AlignmentParams.xml` (filter `sfm`/`li
 |---|---|---|
 | `sfmEnableCameraPrior` | `true` | The GUI's "use camera priors for georeferencing"; required for georeferenced components |
 | `sfmCameraPriorWeight` | `10.0` | Proven on this data class (NA167 zone_13, 93.4%); documented fallback `1.0` if a zone under-registers — never exercised |
-| `sfmCameraPriorWeightOrientation` | `10.0` | Same |
+| `sfmCameraPriorWeightOrientation` | `2.0` | Same |
 | `sfmCameraPriorAccuracyYaw` / `Pitch` / `Roll` | `10.0` each | Defaults retained explicitly |
 | `sfmControPointImageMeasAccuracy` | `4.0` | Loosened from the `2.0` default |
 | `sfmDistortionModel` | `Division` | NA167 fisheye-through-dome legacy; the documented target for a rectilinear rig is `Brown3`. §13.5 makes the choice consequential |

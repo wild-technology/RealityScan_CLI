@@ -450,7 +450,7 @@ strongly they influence the alignment." [OFFICIAL: appbasics/alignsettings]
 | `sfmCameraPriorAccuracyYaw` | float | `10.0` | `10.0` | yes | "Yaw/Pitch/Roll accuracy … defines the range, in which the calculated orientations are going to be considered as equal to the prior values." [OFFICIAL] |
 | `sfmCameraPriorAccuracyPitch` | float | `10.0` | `10.0` | yes | as above |
 | `sfmCameraPriorAccuracyRoll` | float | `10.0` | `10.0` | yes | as above |
-| `sfmCameraPriorWeightOrientation` | float | `1.0` | `10.0` | yes | "Orientation prior hardness …" [OFFICIAL] |
+| `sfmCameraPriorWeightOrientation` | float | `1.0` | `2.0` | yes | "Orientation prior hardness …" [OFFICIAL]. Lowered from `10.0` on 2026-09-01 so a deliberately loose per-image pitch accuracy behaves loosely; locked by `testing/test_camera_orientation_frame.py` |
 | `sfmCameraDepthmapWeight` | float | — | `0.05` | yes | [UNDOCUMENTED: present in `AlignmentParams.xml` and the 2.2 binary; no Help coverage and no identified GUI control]. What it weights is unknown. [OPEN] |
 
 Note the units asymmetry: position accuracies are in **project CRS units** (metres here);
@@ -679,7 +679,7 @@ from `AlignZone.bat` (lines 80–88) into them verbatim.
 | 9 | `sfmMaxFeaturesPerMpx` | `0x36b0` | yes | = 14000 |
 | 10 | `sfmGPUAcceleration` | `true` | yes | [UNDOCUMENTED key] |
 | 11 | `sfmBackgroundDetectThreadPriority` | `Low` | yes | [UNDOCUMENTED key] |
-| 12 | `sfmCameraPriorWeightOrientation` | `10.0` | yes | |
+| 12 | `sfmCameraPriorWeightOrientation` | `2.0` | yes | lowered from `10.0`, 2026-09-01 |
 | 13 | `s236l` | `5.0` | no | `sfmCameraPriorAccuracyY` slot [INFERRED] |
 | 14 | `sfmEnableCameraPrior` | `true` | yes | |
 | 15 | `lisPreferImagesAsFeatureSource` | `false` | yes | the only `lis*` row |
@@ -1855,7 +1855,7 @@ rem  MUST precede -addFolder, or subfolders are silently skipped
 rem  -align takes NO params.xml: push every alignment key first
 "%RS%" -delegateTo %INST% -set "sfmEnableCameraPrior=true"
 "%RS%" -delegateTo %INST% -set "sfmCameraPriorWeight=10.0"
-"%RS%" -delegateTo %INST% -set "sfmCameraPriorWeightOrientation=10.0"
+"%RS%" -delegateTo %INST% -set "sfmCameraPriorWeightOrientation=2.0"
 "%RS%" -delegateTo %INST% -set "sfmCameraPriorAccuracyYaw=10.0"
 "%RS%" -delegateTo %INST% -set "sfmCameraPriorAccuracyPitch=10.0"
 "%RS%" -delegateTo %INST% -set "sfmCameraPriorAccuracyRoll=10.0"
