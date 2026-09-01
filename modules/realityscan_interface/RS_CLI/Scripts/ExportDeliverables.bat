@@ -103,10 +103,28 @@ call :run -exportModel "%comp%_Simplified_Textured" "%out_dir%\%comp%\obj\%comp%
 echo   FBX (by parts)
 call :run -exportModel "%comp%_Simplified_Textured" "%out_dir%\%comp%\fbx\%comp%.fbx" "%FbxParams%" || exit /b 1
 
-echo   Dense colored PLY from %comp%_HighPoly_Raw
-call :run -selectModel "%comp%_HighPoly_Raw" || exit /b 1
+:: DENSE PLY - optional, and skippable via RS_EXPORT_SKIP_PLY=1.
+::
+:: Its source model may not exist. GenerateModel's header says it keeps three
+:: models (_HighPoly_Raw, _HighPoly_Textured, _Simplified_Textured), but its
+:: cleanup loop and rename chain can leave only _Simplified_Textured behind,
+:: and its "Verifying the deliverable still exists" check only ever confirms
+:: THAT one - so losing the other two is silent. Measured on NA165/H2060
+:: (2026-09-01): neither high-poly model existed in the master project, while
+:: OBJ and FBX exported cleanly from _Simplified_Textured.
+::
+:: This is a SKIP, not a tolerated failure, on purpose: :run treats a
+:: non-empty errors file as fatal and that file is STICKY, so one tolerated
+:: failure would fail every following component too. One missing optional
+:: format cost 19 untouched components on the first attempt.
+if defined RS_EXPORT_SKIP_PLY (
+    echo   Dense PLY SKIPPED ^(RS_EXPORT_SKIP_PLY set^) - OBJ and FBX are complete
+    exit /b 0
+)
+echo   Dense colored PLY from %comp%_HighPoly_Textured
+call :run -selectModel "%comp%_HighPoly_Textured" || exit /b 1
 call :run -calculateVertexColors || exit /b 1
-call :run -exportModel "%comp%_HighPoly_Raw" "%out_dir%\%comp%\ply\%comp%_dense.ply" "%PlyParams%" || exit /b 1
+call :run -exportModel "%comp%_HighPoly_Textured" "%out_dir%\%comp%\ply\%comp%_dense.ply" "%PlyParams%" || exit /b 1
 exit /b 0
 
 :emptyList

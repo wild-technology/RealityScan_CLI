@@ -3817,3 +3817,47 @@ the designed safety net, and worth confirming on a `--dry-run` before any
 publish. The fix is to treat type 3 as EPSG:4978 (which the vertices prove) or
 to pin a project/output CRS so the attribute stops lying; no workflow pins one
 today, which is exactly the gap HANDOFF flagged.
+
+## [NA165] 2026-09-01 - the dense-PLY source model does not survive
+## GenerateModel, and one missing optional format killed a 20-component export
+
+`ExportDeliverables.bat` exports three formats per component from named
+models: OBJ and FBX from `<comp>_Simplified_Textured`, then the dense PLY from
+`<comp>_HighPoly_Raw`. On the H2060 master project the third step failed:
+
+    === Exporting zone_all_c17 ===
+      OBJ (Nira, by parts)          OK
+      FBX (by parts)                OK
+      Dense colored PLY from zone_all_c17_HighPoly_Raw
+    ERROR: RealityScan reported a failure during: -selectModel "zone_all_c17_HighPoly_Raw"
+
+`_HighPoly_Textured` is absent too - only `_Simplified_Textured` exists.
+GenerateModel's own header claims it keeps THREE models
+(`_HighPoly_Raw`, `_HighPoly_Textured`, `_Simplified_Textured`), but its
+rename chain (98 -> 124 -> 126) and intermediate-cleanup loop leave one, and
+its "Verifying the deliverable still exists" check only ever confirms
+`_Simplified_Textured` - so losing the other two is SILENT.
+
+**The expensive part was the blast radius.** `:run` treats a non-empty errors
+file as fatal, and that file is STICKY, so the failed `-selectModel` on the
+FIRST component aborted the whole workflow: 19 components that had nothing
+wrong with them were never touched, after component 1 had already written good
+OBJ and FBX.
+
+Note also that this is the SAME `0x80070057` that modelling shrugs off. It is
+benign there because nothing reads the errors file; in export it is fatal.
+"Benign" is a property of the CONSUMER, not of the code.
+
+Fix, in two halves that must agree:
+- `RS_EXPORT_SKIP_PLY=1` makes the .bat SKIP the PLY block. A skip, not a
+  tolerated failure: a tolerated failure would poison every later component
+  through the sticky errors file, and hard rule 4 forbids clearing it .bat-side.
+- `export_deliverables.expected_kinds()` drops `ply` from the CENSUS under the
+  same flag. Without this the census correctly failed a run whose OBJ and FBX
+  were complete. The census keeps full teeth for every format still requested -
+  `testing/test_export_kinds.py` pins that a missing OBJ is still caught while
+  PLY is exempt.
+
+Smoke fixture (one component) went rc=1 -> rc=1 -> rc=0 across the two halves;
+it caught BOTH a wrong fallback name and the census mismatch before either
+reached a 20-component run. Suite 578 -> 584.

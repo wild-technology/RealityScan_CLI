@@ -50,6 +50,24 @@ from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa
 EXPORT_KINDS = ('obj', 'fbx', 'ply')
 
 
+def expected_kinds() -> tuple[str, ...]:
+    """The formats this run is actually supposed to produce.
+
+    RS_EXPORT_SKIP_PLY makes ExportDeliverables.bat skip the dense PLY, whose
+    source model (`<comp>_HighPoly_Raw` / `_HighPoly_Textured`) does not
+    survive GenerateModel in this build. The census must agree with the
+    workflow: without this it reported "1 of 3 expected deliverable folder(s)
+    hold no file: <comp>/ply" and failed a run whose OBJ and FBX were both
+    complete (NA165/H2060, 2026-09-01).
+
+    Deliberately env-driven and narrow - the census keeps its teeth for every
+    format the run DID ask for.
+    """
+    if os.environ.get('RS_EXPORT_SKIP_PLY'):
+        return tuple(k for k in EXPORT_KINDS if k != 'ply')
+    return EXPORT_KINDS
+
+
 def read_component_names(names_file: str) -> list[str]:
     """Non-blank component names from the list file, BOM-tolerant."""
     with open(names_file, encoding='utf-8-sig') as fh:
@@ -67,8 +85,9 @@ def missing_exports(exports_dir: str, names: list[str]) -> list[str]:
     therefore not evidence a deliverable exists (audit 2026-08-07).
     """
     missing = []
+    kinds = expected_kinds()
     for name in names:
-        for kind in EXPORT_KINDS:
+        for kind in kinds:
             kind_dir = os.path.join(exports_dir, name, kind)
             try:
                 produced = any(
@@ -173,7 +192,7 @@ def main() -> int:
                 'success for do-nothing exports (a selection-driven export '
                 'under -silent can export NOTHING), so the exit code alone '
                 'proves nothing. Log: %s',
-                len(missing), len(names) * len(EXPORT_KINDS),
+                len(missing), len(names) * len(expected_kinds()),
                 ', '.join(missing[:12]) + (' ...' if len(missing) > 12 else ''),
                 result.log_path)
             return 1
