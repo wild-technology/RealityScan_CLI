@@ -3930,3 +3930,34 @@ Verified on a one-component smoke fixture: rc=0 in 4.1 min, producing
 `zone_all_c17_dense.ply` at 781.2 MB alongside OBJ, FBX and 18 texture pages.
 
 RS_EXPORT_SKIP_PLY survives as an escape hatch but is no longer needed.
+
+## [NA165] 2026-09-02 - RESOLVED: the merge peel harvest scanned the wrong
+## directory in pool mode (closes the OPEN item from 2026-08-31)
+
+The 2026-08-31 entry left this open with a hypothesis. The hypothesis was
+right and the fix is one line.
+
+`-exportXMPForSelectedComponent` writes sidecars BESIDE THE SOURCE IMAGES. In
+pool layout those live in `RS_ALIGN_POOL_DIR`; a pool zone folder under
+`RS_MERGE_IMAGES_ROOT` holds only an `.imagelist` and a flight log - no
+images, and therefore no `.xmp` to find. MergeZoneComponents.bat:262 harvested
+`%RS_MERGE_IMAGES_ROOT%` unconditionally, found zero files, and the driver
+aborted:
+
+    RuntimeError: cluster_0 attempt 1: peel harvest returned EMPTY but
+    ...cluster_0_a1_c0.rsalign exists - the measurement channel is broken
+
+The merge had FUSED - `cluster_0_a1_c0..c5.rsalign` were on disk after ~8
+minutes - and was thrown away unscored because the thing that measures it
+looked in an empty folder.
+
+`AlignZone.bat:56-57` already carries the correct pattern (`harvest_dir`
+defaults to the input dir, overridden by `RS_ALIGN_POOL_DIR`). Mirrored here.
+
+This is the FIFTH consumer in this codebase to break the same way: pool layout
+moves where data lives, and a consumer keeps looking in the pre-pool location.
+The other four were `component_manifest.bbox_from_flight_log`,
+`merge_zones.build_union_flight_log`, `scale_oracle.load_nav_positions`, and
+the align stage's own `RS_ALIGN_POOL_DIR` gate. When adding a pool-mode
+consumer, grep for `RS_MERGE_IMAGES_ROOT`, `images_root` and `split(';')[0]`
+first.
