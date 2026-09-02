@@ -3961,3 +3961,51 @@ The other four were `component_manifest.bbox_from_flight_log`,
 the align stage's own `RS_ALIGN_POOL_DIR` gate. When adding a pool-mode
 consumer, grep for `RS_MERGE_IMAGES_ROOT`, `images_root` and `split(';')[0]`
 first.
+
+## [NA165] 2026-09-02 - the STICKY errors file is what turned every small
+## fault into a total run loss (design note, not yet fixed)
+
+`:run` decides success by testing whether `errors_<instance>.txt` is
+NON-EMPTY after each delegated command. That file is per-instance and
+persists for the whole RealityScan session; only `RealityScanCLI` clears it,
+pre-run. Two consequences, both hit this week:
+
+1. **Misattribution.** The file records the last error from ANY source, so
+   `:run` blames whatever command it just issued. The dense-PLY bug looked
+   like "model missing" for hours because a failed `-selectModel` (0x80070057)
+   was reported against the model NAME rather than the missing component
+   context.
+2. **No tolerated failures.** A workflow cannot let one optional step fail and
+   continue, because the dirty file fails every following `:run`. Skipping the
+   PLY had to be a SKIP (`RS_EXPORT_SKIP_PLY`), not a caught failure - and one
+   optional format killed a 20-component export outright.
+
+The codebase already has the right primitive: `try_delete_model` /
+`try_filter` / `run_peelrename` MOVE the file to `expected_<reason>_<inst>.txt`
+- tolerating the error while preserving the evidence, without violating hard
+rule 4 (which forbids DELETING it .bat-side). That pattern is applied ad hoc
+per call site. A shared `:try_run <expected-tag> <cmd...>` would let any
+workflow mark one step as optional; today each one reinvents it or, more
+often, cannot tolerate anything at all.
+
+## [NA165] 2026-09-02 - the master project carries THREE CRS entries and no
+## workflow pins an output CRS (extends the 2026-09-01 export-CRS finding)
+
+`NA165_H2060_master.rsproj` contains:
+
+    name="epsg:32655 - WGS 84 / UTM zone 55N"   <- what the export declared
+    name="epsg:32702 - WGS 84 / UTM zone 2S"    <- the CORRECT frame for H2060
+    name="epsg:32757 - WGS 84 / UTM zone 57S"   <- NA173's zone, from another cruise
+
+So the right CRS was present in the project and the export still wrote the
+wrong one into `.rsInfo`. Combined with the earlier finding that
+`exportCoordinateSystemType="3"` puts the GEOMETRY in ECEF regardless, the
+`globalCoordinateSystem` attribute is not merely stale here - it is chosen
+from a list that accumulates across cruises, so it will keep being wrong in a
+way that varies by machine history.
+
+HANDOFF's export-readiness row already flagged "no workflow pins a project or
+output CRS" as the open risk. This is that risk, observed. Until a workflow
+pins it, treat `globalCoordinateSystem` in any `.rsInfo` this repo produces as
+untrusted, and derive the frame from the geometry (ECEF for type 3) or from
+the flight log's own zone tag.
