@@ -4009,3 +4009,55 @@ output CRS" as the open risk. This is that risk, observed. Until a workflow
 pins it, treat `globalCoordinateSystem` in any `.rsInfo` this repo produces as
 untrusted, and derive the frame from the geometry (ECEF for type 3) or from
 the flight log's own zone tag.
+
+## [NA165] 2026-09-02 - FIXED: pin the project/output CRS at flight-log import
+## (answers the [OPEN] in rs-reference 06 3.2; the 55N label was ARBITRARY)
+
+The 2026-09-01 entry called the exported `globalCoordinateSystem` "stale". It
+is worse than stale - it is ARBITRARY, which looks authoritative. Mechanism,
+read out of the master project XML:
+
+    <coordinateSystem name="epsg:32655 - UTM zone 55N" index="1" .../>
+    <coordinateSystem name="epsg:32757 - UTM zone 57S" index="2" .../>
+    <coordinateSystem name="epsg:32702 - UTM zone 2S"  index="3" .../>
+    <projectCoordinates index="2"/>
+    ... every image prior: absCs="3"
+
+Three separate things, none of them agreeing:
+* the project ACCUMULATES a list of coordinate systems across cruises (57S is
+  NA173's; 55N is older still - neither is in this cruise's params XML, so
+  they arrive via RealityScan's own app state);
+* the list ORDER is not stable - the align project held the same three as
+  57S/2S/55N and the master as 55N/57S/2S;
+* `projectCoordinates` selected a LEFTOVER (57S) in BOTH projects, never 2S.
+
+The dive's real CRS reached only the PER-OBJECT scope: all 2,372 image priors
+carry `absCs="3"` = 32702, correctly, from the flight-log params XML. The
+export then wrote the list's FIRST entry.
+
+rs-reference 06 3.2 already documented the three scopes, that Help says to set
+the project CRS BEFORE importing, that "this repo never calls
+-setProjectCoordinateSystem", and marked the consequence [OPEN]. This is the
+consequence.
+
+REFUTED along the way: the per-image XMP sidecars are NOT carrying coordinate
+data. All 29,069 in the pool are calibration-only (CalibrationGroup,
+FocalLength35mm, DistortionModel); ZERO contain `xcr:Position`, lat/lon or any
+CRS. Nothing needs eradicating on the input side - the priors come from the
+flight log, as intended. The ECEF geometry comes from
+`MvsExportcoordinatesystemtype=3` ("same as XMP"), an EXPORT setting.
+
+FIX: the align module derives `RS_PROJECT_CRS=epsg:<code>` from the flight
+log's own zone tag and AlignZone pins BOTH scopes with
+`-setProjectCoordinateSystem` / `-setOutputCoordinateSystem` BEFORE
+`-importFlightLog`; ExportDeliverables re-asserts the output scope on the
+project it loads. Both guarded on the var being defined and non-empty, so an
+unset value can never pass an empty argument.
+
+TRAP found while testing, worth its own line: `epsg_for_utm_zone` takes an
+MGRS BAND, and bands N..X are NORTHERN. `epsg_for_utm_zone(2,'S')` returns
+**32602 (north)**, not 32702 - because MGRS band S is northern, while the
+hemisphere notation "2S" that ROVDataConcat writes means SOUTH. Both notations
+are live in this pipeline. Pinned by test.
+
+Suite 589 -> 597.

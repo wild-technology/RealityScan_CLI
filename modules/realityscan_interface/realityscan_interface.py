@@ -10,6 +10,7 @@ from .. import align_fingerprint
 from .. import camera_registry
 from .. import component_manifest
 from ..flight_logs import (ensure_frame_match, find_flight_log,
+                           epsg_for_utm_zone,
                            utm_zone_from_flight_log_name,
                            write_flight_log_params)
 from .realityscan_cli import RealityScanCLI, METADATA_DIR, set_project_save_env
@@ -372,6 +373,22 @@ class RealityScanAlignment(RSModule):
                     flight_log_params_path, generated, zone, band, frame='utm')
                 self.logger.info(f'Flight log CRS: UTM zone {zone}{band} '
                                  f'(params: {generated})')
+                # PIN the project/output CRS to the frame the trajectory is
+                # actually in. CoordinateSystemFlightLog in the params XML
+                # declares only the PER-OBJECT scope - "the CRS the imported
+                # numbers are in" - and RealityScan's own Help says to set the
+                # PROJECT coordinate system BEFORE importing
+                # (docs/rs-reference/06 3.2, "Order matters for imports").
+                # This repo never did, and the consequence showed up at export
+                # on NA165/H2060: the project accumulates a LIST of coordinate
+                # systems from prior cruises, its selected one stayed on a
+                # leftover (57S, NA173's), and the .rsInfo took the list's
+                # FIRST entry (55N) - neither of them the dive's actual 2S.
+                # The geometry was fine; the declared CRS was arbitrary.
+                # AlignZone consumes this and applies both scopes.
+                os.environ['RS_PROJECT_CRS'] = f'epsg:{epsg_for_utm_zone(zone, band)}'
+                self.logger.info('Pinning project + output CRS to %s',
+                                 os.environ['RS_PROJECT_CRS'])
             else:
                 self.logger.warning(
                     f'Flight log "{os.path.basename(flight_log_path)}" carries no '

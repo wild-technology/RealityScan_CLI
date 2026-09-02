@@ -73,6 +73,17 @@ call :run -load "%scene_path%" || goto :fail
 :: One residual per component was observed and names are unique per project,
 :: so a six-component assembly can hold "Model 1".."Model 6"; sweep to 9 for
 :: headroom (absent names are skipped silently).
+:: Re-assert the OUTPUT coordinate system on the project we just loaded.
+:: The export writes globalCoordinateSystem into every .rsInfo, and a project
+:: assembled from imported components inherits a LIST of coordinate systems
+:: without a correct selection - NA165/H2060's master declared 55N for a 2S
+:: dive. Setting it here makes the sidecar say what the deliverable is in,
+:: rather than whichever leftover sorted first.
+if defined RS_PROJECT_CRS if not "%RS_PROJECT_CRS%" == "" (
+    echo Pinning output coordinate system to %RS_PROJECT_CRS%
+    call :run -setOutputCoordinateSystem %RS_PROJECT_CRS% || goto :fail
+)
+
 echo Sweeping default-named residual models
 for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do (
     call :try_delete_model %%M

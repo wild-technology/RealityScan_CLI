@@ -91,6 +91,27 @@ echo Adding images from %zone_list% (pool: %RS_ALIGN_POOL_DIR%)
 call :run -add "%zone_list%" || goto :fail
 :imagesAdded
 
+:: Pin the PROJECT and OUTPUT coordinate systems before importing the
+:: trajectory. RealityScan holds three CRS scopes: project (measuring and
+:: reporting), output (MODEL/MESH EXPORT), and per-object (the params XML's
+:: CoordinateSystemFlightLog - only "the CRS the imported numbers are in").
+:: This repo set only the third, and RealityScan's own Help says to set the
+:: project CRS FIRST, then import (docs/rs-reference/06 3.2).
+:: Consequence observed on NA165/H2060: the project accumulates a LIST of
+:: coordinate systems across cruises, kept its selection on a leftover
+:: (epsg:32757, NA173's 57S), and the exported .rsInfo declared the list's
+:: FIRST entry (epsg:32655, 55N) - while the dive is 2S. The geometry was
+:: correct; the DECLARED CRS was arbitrary, which is worse than wrong
+:: because it looks authoritative.
+:: RS_PROJECT_CRS is set by the align module from the flight log's own zone
+:: tag, so this can never disagree with the trajectory it is importing.
+if defined RS_PROJECT_CRS if not "%RS_PROJECT_CRS%" == "" (
+    echo Pinning project coordinate system to %RS_PROJECT_CRS%
+    call :run -setProjectCoordinateSystem %RS_PROJECT_CRS% || goto :fail
+    echo Pinning output coordinate system to %RS_PROJECT_CRS%
+    call :run -setOutputCoordinateSystem %RS_PROJECT_CRS% || goto :fail
+)
+
 if not "%flight_log_dir%" == "" (
     echo Importing flight log
     call :run -importFlightLog "%flight_log_dir%" "%flight_log_params_dir%" || goto :fail
