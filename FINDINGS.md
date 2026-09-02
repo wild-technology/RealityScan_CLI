@@ -421,9 +421,41 @@ This removes the mechanism that stripped 796 of 4,540 zone_1 images
 (17.5%) of their calibration priors. Implemented in `AlignZone.bat`
 behind the default path, old harvest kept at `RS_LEGACY_XMP_IDENTITY=1`.
 CAVEAT: `build_component_manifests` still reads `identity_r<K>`, so the
-legacy flag remains REQUIRED for a full run until that is ported. Also
-open: `-exportRegistration`'s params XML is not hand-authorable - it must
-be exported once from RealityScan's own "Export Registration" dialog.
+legacy flag remains REQUIRED for a full run until that is ported. RETRACTED 2026-09-02, and this
+is the useful part: the claim that `-exportRegistration`'s params XML "is
+not hand-authorable and must be exported once from RealityScan's Export
+Registration dialog" is WRONG, and it was wrong because of a bad probe.
+The keys were searched for as ASCII in RealityScan.exe; the exe stores them
+as **UTF-16LE**. Control test, four keys KNOWN to be valid
+(`gpsLogFileFormat`, `xmpMerge`, `MvsExportScaleZ`,
+`reprojectionTool_normal`): all four absent as ASCII, all four present as
+UTF-16LE. So the original probe could not have succeeded whatever the
+answer was, and "not documented well enough" was an artefact of the search,
+not a fact about RealityScan. Re-probed as UTF-16LE, the namespace is
+`calex*` (CALibration EXport), ~39 keys, including the two that matter -
+`calexFileFormatId` and `calexFileFormat`, the exact structural analogue of
+`gpsLogFileFormat`. The exe also carries "Unrecognized calibration export
+format '$(fileFormat)'.", confirming GUID resolution against
+`calibration.xml` exactly as flightlogs.xml works. Both RUMI GUIDs are
+already installed ({E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A48} membership +
+per-camera prior readback, and ...A49 membership only). The repo had
+already hand-authored the HARDER half in `calibration.xml`; only the
+one-line params file naming the format was missing:
+
+    <Configuration><entry key="calexFileFormatId"
+      value="{E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A48}"/></Configuration>
+
+GENERAL LESSON, worth more than the specific key: a negative result from a
+probe is worthless until the probe is shown to be capable of a positive.
+Run the control. This one belief blocked the merge stage on a whole dive
+and sent an operator to a GUI they never needed to open.
+DO NOT simply ship the file and delete the fallback: RealityScan's params
+files fall back SILENTLY rather than erroring - that is exactly how
+orientation accuracies were lost on every flight-log import before
+2026-08-16 - so exit code 0 does not prove the intended format was used.
+Gate on CONTENT: assert the CSV exists and its first line matches
+`#cameras <N>`. Turning today's loud, correctly-located failure into a
+silent success would be a worse bug than the one being fixed.
 
 ## [NA168] 2026-08-14 - H2082 Sony stillcam clock runs on Palau local time
 
@@ -3190,6 +3222,85 @@ from that run.
   (`FlushCache.bat`, main). Corroborates main's own note "7-day default kept
   918 GB". [NA168] (2026-08-31) ESTABLISHED
 
+- **The `identity_r<K>` migration left THREE readers unported, not one - and
+  one of them is a deliverable gate that is now dark.** `AlignZone.bat`
+  writes `identity\<scene>_c<K>.csv` (line 255) on the default path, with
+  the legacy XMP harvest surviving only behind `RS_LEGACY_XMP_IDENTITY=1`
+  (line 216). Three readers still expect the retired layout:
+
+    realityscan_interface.py:548  capture_component_identities  -> no manifest
+    scale_oracle.py:229           load_solved_positions(identity_r0)
+    run_models.py:81              identity_r0 beside the rsalign
+
+  The first is the known merge blocker (`merge_zones` exits 1 with "No
+  manifested components"). The second is worse in kind: `scale_oracle` is
+  called from `merge_zones.py:194` for EVERY input component, its own
+  docstring calls it "a DELIVERABLE GATE" added after a 0.236-scale
+  component reached a deliverable, and on the default align path it now
+  reads an absent `identity_r0`, gets `{}`, and returns **'unmeasured'**
+  instead of failing. A gate that reports 'unmeasured' for everything is
+  not a gate. `run_models.py:81` degrades the same way. Fused components
+  are unaffected - merge attempt dirs do get `identity_r0` from
+  `MergeZoneComponents.bat:248` - which is precisely why this stayed
+  invisible. When migrating a layout, grep for the OLD path name across the
+  whole repo and port every hit; porting the one that throws and leaving
+  the ones that degrade gracefully is how a safety net goes dark quietly.
+  [NA165] (2026-09-02)
+  ESTABLISHED
+
+- **`-selectModel` needs `-selectComponent` in TWO places in
+  ExportDeliverables.bat, and the second runs on every job.** The known
+  site is line 123 in `:export_component`. The sweep found line 146 in
+  `:try_delete_model`, driven by the "Model 1".."Model 9" residual loop at
+  lines 77-79, which fires immediately after `-load` on EVERY run with no
+  component ever selected. That helper is deliberately tolerant (it moves
+  the error marker to `expected_select_*` and returns 0), so every residual
+  owned by a non-active component is silently kept and line 82 still echoes
+  "residuals removed". `GenerateModel.bat:179` has the same shape and its
+  own comment states the premise - "by the sixth component the name can be
+  'Model 6'" - so those residuals are BY DEFINITION owned by a different
+  component than the one selected at line 93. `ModelToFinal.bat:146` is a
+  third instance and is unfixable from the caller: it attaches to a running
+  instance and takes no component argument at all.
+  Correction to an earlier note in this file: the line-123 failure is NOT
+  silent. `ErrorWriter.bat` appends the code and `:run` aborts on a
+  non-empty errors file, so the run dies at :fail before the PLY is
+  written - no wrong or uncoloured model can ship. The real cost is that
+  the whole multi-GB session is thrown away and every component AFTER the
+  failing one is never attempted. [NA168] (2026-09-02)
+  ESTABLISHED
+
+- **`install_all_managed()` - the only code that installs `calibration.xml`'s
+  RUMI formats - has zero callers.** Defined at `flightlog_format.py:203`;
+  a repo-wide grep finds the definition and nothing else. So the format the
+  registration export depends on is installed only if someone ran it by
+  hand. Any fix that ships `RegistrationExportParams.xml` must also call
+  this before the export and gate on the calex GUID, the way
+  `realityscan_interface.py:389` already gates flight logs. [NA165]
+  (2026-09-02)
+  ESTABLISHED
+
+- **Order a resource guard AFTER the reclaim it would trigger, not before.**
+  The NA168 driver checked free space and aborted the run at the top of each
+  batch, then flushed the RealityScan cache a few lines later:
+
+        if free_gb(PRODUCTS) < MIN_FREE_GB:   # abort, return 2
+            ...
+        if cache_gb() > CACHE_MAX_GB:         # never reached on that path
+            flush_cache()
+
+  Measured 2026-09-02 00:44 on NA168/H2080: free space 295 GB and falling at
+  66 GB/h, with **780 GB of flushable cache in hand** - i.e. the run could
+  have aborted for want of disk while holding more than twice the needed
+  space in a cache the very next statement would have released. Observed
+  flushes reclaimed 111-225 GB each (516.6 -> 404.9, 671.0 -> 446.4).
+  The guard is not wrong, it is just sequenced ahead of its own remedy.
+  Check free space, attempt every reclaim available, and only THEN abort on a
+  re-measured figure. Note also that the `batch done ... free X` log line is
+  emitted BEFORE the flush, so every boundary figure understates true free
+  space - do not read it as the post-batch state. [NA168] (2026-09-02)
+  ESTABLISHED
+
 - **A `-calculateHighModel` failure is NOT a verdict on the component — retry
   before recording it.** `NA168_H2080_c44` failed at step [1/8] after a clean,
   uninterrupted 6.0 min run, then **modelled successfully in 29.8 min** on
@@ -3204,8 +3315,32 @@ from that run.
   the run's own resource trace at failure shows 82.9 GB RAM available of
   127 GB, commit 49.8 of 156 GB, and 910.6 GB free disk. So `-calculateHighModel`
   can fail mid-computation with ample headroom, and the failure is transient.
+  REPRODUCED 2026-09-01 03:38 on `NA168_H2080_c28`: identical code
+  **2181038105 (0x82000019)** from the same operation id 20562, this time
+  450 s in, with resources again comfortable (CPU 79%, commit 51.7 GB,
+  81.1 GB RAM available, 824 GB free disk). REPRODUCED AGAIN 2026-09-01 13:21
+  on `NA168_H2080_c24`, same op 20562, same code, 1023 s in.
+  A full census of the 36 h driver log puts the two codes in proportion and
+  shows they mean OPPOSITE things - which is the trap for anyone grepping the
+  log for "error":
+
+    op 20562  0x82000019   4 distinct events   c44, c03, c28, c24   GENUINE
+    op 21856  0x80070057  90 occurrences      ~40 components       BENIGN
+    op 6      0x80004005   1 occurrence       c47 (export)
+
+  Every one of the 90 `0x80070057` hits is the known benign select-miss (see
+  the op-21856 entry above): 0 s each, and they fire on components that go on
+  to model AND export cleanly - c45, c26, c01, c25, c02, c18, c58, c27, c17
+  all carry 4-5 of them apiece and all delivered. So the ratio of benign to
+  genuine error lines in this log is better than 20:1, and code identity, not
+  the presence of the word "error", is the only sound failure signal.
+  Four occurrences of 0x82000019 across two nights - c44 (succeeded on
+  retry), c03, c28, c24 - make it a RECURRING mode of this pipeline, not an
+  anomaly. Elapsed times at failure were 314, 215, 450 and 1023 s, i.e.
+  spanning 5x with no clustering, and load was comfortable in every case, so
+  it correlates with neither duration nor pressure.
   Drivers should retry such failures at least once rather than treating them
-  as unmodellable. [NA168] (2026-08-31)
+  as unmodellable. [NA168] (2026-08-31, extended 2026-09-01)
   ESTABLISHED
 
 - **`assert_bat_safe` refuses RealityScan's own duplicate-component names.**
@@ -3534,3 +3669,40 @@ from that run.
   the destructive loop: reload `zone_N.rsproj`, select each component, export
   registration, build manifests - minutes per zone, no re-alignment.
   [NA168] (2026-08-31) ESTABLISHED
+
+- **A zone can align to NOTHING and the workflow still reports success.**
+  NA165/H2063 zone_9: 4,244 images, `AlignZone.bat` ran clean end to end - no
+  ERROR lines, "Saving project BEFORE the destructive identity loop", then
+  "Identity capture finished after 0 component(s)" and a normal shutdown. The
+  saved `zone_9.rsproj` holds **4,244 inputs and ZERO components**.
+  NOT a threshold artifact: `-setMinComponentSize` gates the EXPORT, not the
+  project, which the other zones prove - zone_5 kept 11 components in its
+  project and exported 9, zone_3 kept 5 and exported 3, zone_7 kept 8 and
+  exported 7. Zone_9 kept none, so the aligner produced none.
+  NOT explained by size or position either: zone_9 spans 23:27:57-00:39:40
+  with a 36 x 72 m UTM extent, comparable to zone_8 (53 x 77 m, 2,385 images,
+  4 components) and tighter than zone_5 (56 x 231 m, 4,124 images, 9
+  components). It is mid-dive, not the ascent.
+  So a clean exit and "0 component(s)" is the ONLY signal that 19% of a dive
+  registered nothing.
+  MEASURED FOLLOW-UP: the imagery is NOT the cause. Ten consecutive frames
+  sampled at random from zone_9 and from zone_8 (a control that aligned to
+  4 components), two seeds each, at matched scale:
+    * ORB keypoints saturate a 20,000 cap in BOTH zones;
+    * consecutive-pair RANSAC inliers - what a solve actually consumes -
+      are 9,078 and 5,376 for zone_9 against 8,021 and 6,567 for the
+      control, i.e. zone_9 matches as well or better;
+    * the ROV is moving, 0.062-0.077 m/frame with zero stalled steps,
+      while the CONTROL was nearly stationary in one sample (0.09 m over
+      10 frames, 5 near-zero steps) and still aligned - so slow motion is
+      not fatal either.
+  AlignmentParams.xml carries no minimum-component-size, so the aligner did
+  not discard by size, and the 35 settings were identical across all zones.
+  Abundant matchable features + real baseline + identical settings + zero
+  components = a RUN-level failure, not a data one. Re-running the zone is
+  the indicated remedy and the batched images and flight log are still in
+  place, so it costs one zone's runtime.
+  Any driver that counts zones completed rather than
+  components produced will report a fully successful campaign with a fifth of
+  the imagery silently contributing nothing. Check component counts per zone,
+  not exit status. [NA168] (2026-08-31) ESTABLISHED
