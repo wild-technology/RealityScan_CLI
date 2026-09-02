@@ -97,29 +97,37 @@ if not exist "%out_dir%\%comp%\obj" mkdir "%out_dir%\%comp%\obj"
 if not exist "%out_dir%\%comp%\fbx" mkdir "%out_dir%\%comp%\fbx"
 if not exist "%out_dir%\%comp%\ply" mkdir "%out_dir%\%comp%\ply"
 
+:: SELECT THE COMPONENT FIRST. -exportModel resolves a model by name on its
+:: own, which is why OBJ and FBX worked without this, but -selectModel needs
+:: component context and fails without it - with the SAME signature RealityScan
+:: emits for a genuinely missing model ("process 21856 ... result code
+:: 2147942487" = 0x80070057), which is what made this look like a missing
+:: model for so long. GenerateModel.bat:93 selects the component before its own
+:: -selectModel calls; this workflow never did.
+:: Cost of the omission on NA165/H2060 (2026-09-01): every dense PLY refused,
+:: and because :run treats a non-empty errors file as fatal, the FIRST
+:: component's failure killed a 20-component export outright.
+call :run -selectComponent "%comp%" || exit /b 1
+
 echo   OBJ (Nira, by parts)
 call :run -exportModel "%comp%_Simplified_Textured" "%out_dir%\%comp%\obj\%comp%.obj" "%ObjParams%" || exit /b 1
 
 echo   FBX (by parts)
 call :run -exportModel "%comp%_Simplified_Textured" "%out_dir%\%comp%\fbx\%comp%.fbx" "%FbxParams%" || exit /b 1
 
-:: DENSE PLY - optional, and skippable via RS_EXPORT_SKIP_PLY=1.
-::
-:: Its source model may not exist. GenerateModel's header says it keeps three
-:: models (_HighPoly_Raw, _HighPoly_Textured, _Simplified_Textured), but its
-:: cleanup loop and rename chain can leave only _Simplified_Textured behind,
-:: and its "Verifying the deliverable still exists" check only ever confirms
-:: THAT one - so losing the other two is silent. Measured on NA165/H2060
-:: (2026-09-01): neither high-poly model existed in the master project, while
-:: OBJ and FBX exported cleanly from _Simplified_Textured.
-::
-:: This is a SKIP, not a tolerated failure, on purpose: :run treats a
-:: non-empty errors file as fatal and that file is STICKY, so one tolerated
-:: failure would fail every following component too. One missing optional
-:: format cost 19 untouched components on the first attempt.
+:: DENSE PLY. Still skippable via RS_EXPORT_SKIP_PLY=1 as an escape hatch,
+:: but it is NOT expected to fail: <comp>_HighPoly_Raw is present for every
+:: component in the master project, and the earlier "missing model" was the
+:: absent -selectComponent above.
 if defined RS_EXPORT_SKIP_PLY (
-    echo   Dense PLY SKIPPED ^(RS_EXPORT_SKIP_PLY set^) - OBJ and FBX are complete
+    echo   Dense PLY SKIPPED ^(RS_EXPORT_SKIP_PLY set^)
     exit /b 0
+)
+echo   Dense colored PLY from %comp%_HighPoly_Raw
+call :run -selectModel "%comp%_HighPoly_Raw" || exit /b 1
+call :run -calculateVertexColors || exit /b 1
+call :run -exportModel "%comp%_HighPoly_Raw" "%out_dir%\%comp%\ply\%comp%_dense.ply" "%PlyParams%" || exit /b 1
+exit /b 0
 )
 echo   Dense colored PLY from %comp%_HighPoly_Textured
 call :run -selectModel "%comp%_HighPoly_Textured" || exit /b 1

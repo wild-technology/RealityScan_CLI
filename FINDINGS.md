@@ -3892,3 +3892,41 @@ question. The stall detector watched a hardcoded log list, the flush probe
 sampled an instance mid-teardown, the completion watcher grepped a whole log
 including history, and this one measured headroom without measuring the thing
 that would consume it.
+
+## [NA165] 2026-09-02 - RESOLVED: the dense-PLY "missing model" was a missing
+## -selectComponent, and 21856/0x80070057 is the SELECT-FAILED signature
+## (supersedes the 2026-09-01 entry, which misdiagnosed this)
+
+The earlier entry concluded the PLY source model "does not survive
+GenerateModel". **That was wrong.** The master project's own XML lists all
+three models for every one of the 20 components:
+
+    <model name="zone_all_c0_HighPoly_Raw"      fileName="...model57.dat" .../>
+    <model name="zone_all_c0_HighPoly_Textured" fileName="...model58.dat" .../>
+    <model name="zone_all_c0_Simplified_Textured" fileName="...model59.dat" .../>
+
+The real cause: **ExportDeliverables never calls -selectComponent.**
+`-exportModel` resolves a model by name on its own, which is why OBJ and FBX
+worked, but `-selectModel` needs component context and fails without it.
+GenerateModel.bat:93 selects the component before its own -selectModel calls;
+the export workflow never did.
+
+WHY IT LOOKED LIKE A MISSING MODEL, and the thing worth remembering:
+`process 21856 finished with result code 2147942487` (0x80070057) is
+RealityScan's signature for **-selectModel failing to resolve a name**. Proof:
+the `expected_select_<inst>_Model_9.txt` markers the sweep produces for
+deliberately-absent names contain that byte-identical string. So the same code
+means "no such model" AND "cannot select in this context", and the second
+reading never occurred to me until I read the marker files.
+
+I had also called this code "benign" after seeing it during MODELLING. It is
+benign there only because GenerateModel selects a component first and the code
+appears in tolerated try_delete_model paths. Benign is a property of the
+CALLER, not the code.
+
+Fix: `call :run -selectComponent "%comp%"` at the head of :export_component,
+and the PLY source restored to `_HighPoly_Raw` (the original, correct name).
+Verified on a one-component smoke fixture: rc=0 in 4.1 min, producing
+`zone_all_c17_dense.ply` at 781.2 MB alongside OBJ, FBX and 18 texture pages.
+
+RS_EXPORT_SKIP_PLY survives as an escape hatch but is no longer needed.
