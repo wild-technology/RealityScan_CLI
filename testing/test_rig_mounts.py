@@ -5,7 +5,8 @@ Three bugs motivated this, all found 2026-07-26:
 
 M5  The georeferencer matched literal cruise digits ('p231c', 'c231c'), so the
     next cruise's 'C245C0007_*.jpg' fell through to a ZERO lever arm and a 0 deg
-    pitch offset - Cinema losing its 45 deg down-look - asserted at 10 deg
+    pitch offset - Cinema losing the 45 deg down-look it carried at the time
+    (moved to UPPER by the 2026-08-14 owner correction) - asserted at 10 deg
     confidence, with one suppressed warning for the whole run. WCA Starboard
     ('S231C*') fell through even for the CURRENT cruise.
 
@@ -15,8 +16,9 @@ M4  geoall.py - which CLAUDE.md hard rule 6 and the README call the CANONICAL
 
 A design trap this test guards: geometry belongs to the FILENAME FAMILY, not to
 the physical camera. Legacy 'camlower' and WCA 'C###C' are the SAME Cinema unit
-mounted 35 deg apart, so keying geometry off camera_registry.identify() would
-silently rewrite every legacy dataset.
+on two different mounts (10 deg vs 0 deg since the 2026-08-14 correction; they
+were 35 deg apart before it), so keying geometry off camera_registry.identify()
+would silently rewrite every legacy dataset.
 
 Values below are the ones in force on 2026-07-26. If a change is intended,
 change them here deliberately - that is the point.
@@ -51,7 +53,8 @@ EXPECTED = {
     'legacy_cammid': ((1.0, 0.0, 1.0), 20.0, 10.0),
     'legacy_camlower': ((1.0, 0.0, 1.0), 10.0, 5.0),
     'wca_port': ((1.0, 0.0, 1.0), 0.0, 15.0),
-    'wca_cinema': ((1.0, 0.0, 0.0), 45.0, 15.0),
+    'wca_cinema': ((1.0, 0.0, 0.0), 0.0, 15.0),
+    'wca_upper': ((1.0, 0.0, 0.0), 45.0, 15.0),
 }
 
 SAMPLE = {
@@ -61,6 +64,7 @@ SAMPLE = {
     'legacy_camlower': 'camlower_0001.jpg',
     'wca_port': 'P231C0003_20231103235906_edt.jpg',
     'wca_cinema': 'C231C0003_20231103235906_edt.jpg',
+    'wca_upper': 'U001C6642_20241117052233.png',
 }
 
 
@@ -97,11 +101,14 @@ def test_anchored_wca_beats_a_herc_substring():
 
 
 def test_family_and_camera_are_separate_concepts():
-    """Same physical camera, two mounts 35 deg apart - the design trap."""
+    """Same physical camera, two different mounts - the design trap."""
     assert camera_registry.identify('camlower_1.jpg').key == 'cinema'
     assert camera_registry.identify('C231C0003_x.jpg').key == 'cinema'
     assert MOUNTS['legacy_camlower']['pitch'] == 10.0
-    assert MOUNTS['wca_cinema']['pitch'] == 45.0
+    # Owner correction 2026-08-14: the 45 deg down-look belongs to UPPER,
+    # not cinema. Cinema and mid point directly forward.
+    assert MOUNTS['wca_cinema']['pitch'] == 0.0
+    assert MOUNTS['wca_upper']['pitch'] == 45.0
 
 
 def test_every_family_maps_to_a_known_camera():
@@ -146,7 +153,7 @@ def test_port_sits_one_metre_below_cinema(geo):
 def test_next_cruise_digits_get_real_geometry(geo):
     """M5 regression: this used to be a zero lever arm at 10 deg confidence."""
     assert geo._get_camera_offsets('C245C0007_x.jpg') == (1.0, 0.0, 0.0)
-    assert geo._get_camera_pitch_offset('C245C0007_x.jpg') == 45.0
+    assert geo._get_camera_pitch_offset('C245C0007_x.jpg') == 0.0
     assert geo._get_camera_pitch_accuracy('C245C0007_x.jpg') == 15.0
 
 
@@ -190,8 +197,8 @@ def test_geoall_fallback_matches_the_module_for_unmapped_families(geo, filename)
 
 
 def test_geoall_covers_wca_at_all(geo):
-    """geoall had NO WCA branch, so Cinema lost its 45 deg down-look."""
-    assert geoall.get_camera_pitch_offset('C231C0003_x.jpg') == 45.0
+    """geoall had NO WCA branch at all (M4); WCA names must resolve."""
+    assert geoall.get_camera_pitch_offset('C231C0003_x.jpg') == 0.0
     assert geoall.get_camera_offsets('P231C0003_x.jpg') == (1.0, 0.0, 1.0)
 
 
@@ -313,9 +320,14 @@ def test_cameras_json_defaults_match_the_shared_accuracy_table():
     # The exclusion list is part of the contract, not an implementation detail.
     assert set(assumed['excluded_families']) == set(
         geo_module.NO_ASSUMED_MOUNT_FAMILIES)
-    # A MEASURED mount is never overridden by the assumption.
-    assert geoall.get_camera_pitch_offset('C231C0001.jpg') == 45.0
+    # A MEASURED mount is never overridden by the assumption. Cinema pitch
+    # is 0.0 since the owner correction of 2026-08-14 (b4bb97a); the 45 deg
+    # down-look lives on wca_upper - both are measured values, neither is
+    # the assumed 10.0.
+    assert geoall.get_camera_pitch_offset('C231C0001.jpg') == 0.0
     assert geoall.get_camera_pitch_accuracy('C231C0001.jpg') == 15.0
+    assert geoall.get_camera_pitch_offset('U001C0001.jpg') == 45.0
+    assert geoall.get_camera_pitch_accuracy('U001C0001.jpg') == 15.0
 
 
 def test_cameras_json_voyis_entries_registered_and_gated():

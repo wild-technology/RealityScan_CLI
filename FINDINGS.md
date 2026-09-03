@@ -26,8 +26,58 @@ THREE research lines:
   cites — read it before proposing any orientation cell here.
 
 Entries below carry their source tag. Cross-line reconciliations are
-tagged **[RECON]** and dated 2026-07-24. `testing/FINDINGS.md` is
+tagged **[RECON]** (dated 2026-07-24 for the three-line consolidation,
+2026-09-03 for the main / remove-xmp-sidecars merge). `testing/FINDINGS.md` is
 frozen as the NA167 raw log; all new findings go HERE.
+
+## [RECON] 2026-09-03 - prior-groups claim: main and remove-xmp-sidecars disagree
+
+Two entries in this section make opposite claims about
+`-setPriorCalibrationGroup` / `-setPriorLensGroup` issued from the delegated
+CLI. The 2026-09-03 reconciliation of `origin/main` (063add6) with
+`origin/remove-xmp-sidecars` (71d6030) keeps BOTH verbatim and settles
+nothing:
+
+- **main, [ON2026] 2026-08-08 "calibration-CLI probe results"**: both
+  commands are silently NON-FUNCTIONAL from the delegated CLI. Every
+  delegated invocation returned success, but after `-align` the exported
+  cameras showed `CalibrationGroup="-1"` and six DISTINCT solved focals on
+  the 6-image fixture, under both `-selectImage` forms (full-path + union,
+  and regex). The solved-focal-equality oracle proved it; exit codes and the
+  errors channel said nothing. Restated 2026-08-12 (member of the
+  silently-broken delegated-command class) and 2026-08-28 ([MAGIC] run3
+  fixture gate: delivered per-eye groups survive on NO channel).
+  `docs/PRODUCT_READINESS.md` DONE 2026-08-09 repeats it.
+- **remove-xmp-sidecars, [NA168] 2026-08-14 "XMP sidecars are NOT the only
+  way to group cameras"**: the same two commands set exactly the groups the
+  sidecar carried, against `-selectImage <regexp>`; implemented in
+  `modules/prior_groups.py`, delivered to `AlignZone.bat` as a command file
+  through `RS_PRIOR_GROUPS_FILE`, recorded as "NOT yet verified against a
+  live instance". NA168 H2080 and NA165 H2063 (2026-08-31, bottom of this
+  file) were then aligned with that step in the workflow, and no entry on
+  that side measures whether the groups took effect (no group echo, no
+  solved-focal census). The SUPERSEDED marker on the 2026-07-23 "ONLY way"
+  bullet under "Alignment behavior & settings" rests on this claim.
+
+Neither side refutes the other's measurement: main measured the EFFECT on
+the fixture; the sidecars side measured only that the commands ran. Merged
+state (owner rules 2026-09-03, R1/R3): both mechanisms stay in code.
+`AlignZone.bat` runs the XMP identity harvest by DEFAULT (main) and the
+non-destructive `-exportLatestComponents` + `-exportRegistration` capture
+when `RS_LEGACY_XMP_IDENTITY=0` (`=1`, the sidecars branch's spelling, is
+the same as unset); the every-exit-path `ensure_calibration_sidecars`
+repair in `realityscan_interface.py` follows the same switch; the
+prior-group command file is generated and applied on EVERY align regardless
+(additive, and its effect cannot be read from an exit code).
+
+DECISION D1, OPEN (owner): re-run the solved-focal-equality probe on the
+smoke fixture with the `RS_PRIOR_GROUPS_FILE` delivery and no sidecars in
+the tree. Identical solved focals within each family and a group echo other
+than "-1" in the exported cameras settles it for the sidecars side (then the
+CSV capture can become the default and hard rule 0 holds without exception);
+six distinct focals confirms main (then `prior_groups.py` is a no-op to be
+retired and the 2026-08-14 SUPERSEDED marker is itself superseded). Until
+then main's align-identity default stands. [RECON] (2026-09-03)
 
 ## [ON2026] 2026-08-12 - delegated COMPONENT ops silently no-op against
 ## the live GUI instance (night campaign, 3x census-verified)
@@ -290,6 +340,462 @@ from a SEPARATE xmp directory + manifest), never same-name sidecar
 auto-import. camera_registry XMP GENERATION is unchanged - the content
 is reused; only the delivery changes. [ON2026] (2026-08-08)
 
+## [NA168] 2026-08-14 - exports were stamped with the WRONG coordinate system
+
+**H2077 exported with
+`globalCoordinateSystemName="epsg:32757 - WGS 84 / UTM zone 57S"`.** H2077
+is 53N. 32757 is the placeholder zone sitting in `FlightLogParams.xml`.
+
+SCOPE - the GEOMETRY was never wrong. `ModelExportParamsOBJ_NiraParts`
+sets `exportCoordinateSystemType=3`, i.e. geocentric ECEF, and the
+exported vertices check out against H2077's own nav to within ~1 km
+(computed ECEF -4294961/4638621/833425 vs exported
+-4295946/4638342/832605, the residual being the survey patch's offset
+from the dive's on-bottom fix). The vertices are absolute, so they do not
+depend on a UTM zone at all. What was wrong is the METADATA LABEL - and
+that is what a GIS import, a Cesium tiler or a Nira upload reads to place
+the asset. Re-exporting changed the label and left the geometry
+byte-identical, which is the expected result and the proof of both
+claims.
+
+Cause: nothing in the pipeline ever set an output coordinate system, so
+the export inherits whatever the application last held.
+`write_flight_log_params()` rewrites the CRS of the flight log being
+**imported** - it has no bearing on what is **exported**. The two are
+separate settings and only the first was managed.
+
+RealityScan 2.2 has `-setProjectCoordinateSystem authority:id` and
+`-setOutputCoordinateSystem authority:id`; neither was called anywhere.
+`ExportDeliverables.bat` now issues both when `RS_OUTPUT_CRS` is set, and
+`export_deliverables.py` derives it from the flight log's own zone tag
+(`--flight-log`, via the existing `crs_for_flight_log`) or takes `--crs`
+directly. With neither, it now WARNS instead of silently inheriting.
+[RECON 2026-09-03: at the merge `RS_OUTPUT_CRS` was folded into main's repo-wide `RS_PROJECT_CRS`; `export_deliverables.py --crs/--flight-log` now set `RS_PROJECT_CRS`, which both `ExportDeliverables.bat` pin blocks and `AlignZone.bat` consume. Behaviour unchanged.]
+
+Note this is separate from the publish path, which already resolved a CRS
+per asset (`publish_batch.py`) - so the exports on disk were wrong while
+the upload was right, and nothing compared them.
+
+## [NA168] 2026-08-14 - the stillcam DNGs declare white_level 255 over 12-bit data
+
+**This silently produced 340 blank white frames and a 0-camera align.**
+`raw/still_cam/**.DNG` reports `white_level = 255` while the sensor data is
+12-bit (`raw_image` max 4095, median ~331, p99.9 ~1030). rawpy honours the
+declared level, so a plain `postprocess()` clips EVERY pixel to white:
+converted frames measured mean 255.0 / std 0.1, RealityScan detected no
+features, and the align exited **result code 0** with zero components.
+Nothing in the pipeline flagged it - a successful-looking run end to end.
+
+`raw.white_level` is read-only, but `raw.raw_image` is writable, so
+`tools/convert_dng.py` rescales the plane into the declared range before
+demosaic (fixed factor 0.2372, mapping p99.9 to ~245). The factor is
+FIXED, never per-image: a per-frame stretch gives overlapping frames
+different tone curves and works against the matcher.
+
+Camera WB also renders this imagery heavily magenta (RGB means
+229/122/223). The converter now applies a fixed `user_wb` of
+[2.1331, 1.3822, 1.2840] - the daylight WB times an averaged gray-world
+correction sampled over 8 frames, which agreed within a few percent. Note
+this is NOT the gray-world that hurt registration in the zone_9 A/B: that
+was correcting already-correct colour; this is fixing a real cast at
+conversion time.
+
+LESSON: verify converted imagery has actual content (a luminance std of
+0.1 is not an image) before spending a RealityScan run on it. Both failing
+aligns here reported success at every stage.
+
+## [NA168] 2026-08-16 - The flight-log FORMAT must be installed, or columns vanish silently
+
+`Metadata/FlightLogParams.xml` names its parser by GUID
+(`gpsLogFileFormat`). RealityScan resolves that GUID against
+`flightlogs.xml` **in its own installation directory**, never the repo
+copy. When the GUID is absent there the import does NOT fail: it falls
+back and DROPS the columns that format defined, exit code 0.
+
+Measured 2026-08-16: `grep -c B438A617 "<install>/flightlogs.xml"` = **0**.
+Our first ten columns coincide with stock `{97F08A22}`, so position and raw
+yaw/pitch/roll still landed and nothing looked wrong, while **columns
+10-12 (YawAccuracy, PitchAccuracy, RollAccuracy) were discarded on every
+import**, leaving `ifUseOriAcc=true` with nothing to consume. Every H2077 /
+H2082 / H2080 align to date ran on unweighted orientation priors.
+
+This is the SECOND occurrence. testing/PRIORS_DISTORTION_TEST_PLAN.md item
+1 records the same defect, hand-patched, with the note "verify it survives
+app updates". It did not - a RealityScan update reverted the file. A
+hand-run repair step is a fix with a half-life.
+
+FIXED, permanently: `modules/flightlog_format.py` asserts the configured
+GUID is registered in the INSTALL **before every import**, and SELF-HEALS
+by merging the repo's formats when it is not. Verified by reverting the
+install to stock and watching the guard detect, install and re-verify.
+Checking after an import cannot detect this, so it is checked before.
+
+RELATED FACT, and it retires the sidecars: the CSV flight-log reader's
+variable vocabulary is far wider than its shipped example formats suggest.
+Per `Help/en-US/tools/defineimportformat.htm` it also accepts
+**FocalLength, PrincipalU, PrincipalV, Skew, AspectRatio,
+RadialDistortion1-4, TangentialDistortion1-2** - i.e. a full per-image
+PRIOR CALIBRATION. New 14-column format `{D1F2A3B4-...}` adds FocalLength
+at index 13, sourced per camera from cameras.json. There is no CLI command
+that sets focal length (only `-setPriorCalibrationGroup` and
+`-setPriorLensGroup` exist), and the WCA units publish no EXIF focal tag,
+so before this the focal prior reached RealityScan by NO route at all once
+sidecars were removed.
+
+Registration EXPORT is customisable the same way (`calibration.xml`,
+`Help/.../defineexportformat.htm`). `-exportRegistration` runs against the
+SELECTED component, so `$ExportCameras` enumerates that component's members
+in one non-destructive pass, written to the OUTPUT tree - which is what
+finally makes the XMP identity harvest unnecessary.
+
+Two traps found while implementing:
+- `&tab;` is not a predefined XML entity, so a strict parser rejects both
+  files. The first draft SWALLOWED that ParseError and returned an empty
+  set, which reports a correctly installed format as missing.
+- An ElementTree round-trip reindents the whole stock file and rewrites
+  `&tab;` as `&#9;`. The installer splices at TEXT level instead.
+
+## [NA168] 2026-08-15 - Settings contract: the params XML is authoritative for what it names
+
+RealityScan serializes part of its own Alignment Settings dialog under
+OBFUSCATED numeric ids - `s235l`, `s236l`, `s237l`, `s251l`-`s254l` -
+instead of readable `sfm*` names. AlignZone's applier filtered on
+`findstr /b /c:"sfm" /c:"lis"`, so those 7 were silently skipped: **28 of
+35 entries applied**, the other 7 inheriting whatever the instance held,
+while the file header promised settings "never from instance defaults".
+
+Owner contract (2026-08-15): **settings named in the XML take priority and
+are ALL applied; settings it does not name are explicitly UNDEFINED** and
+inherit the instance. The old promise was never achievable anyway - the
+file names 35 settings, not RealityScan's whole namespace.
+
+Two traps found while implementing it:
+
+- **Never gate on token 1.** The obvious fix is to check that a line is an
+  `entry` line, but token 1 is `  (entry key=` and cmd reads that angle
+  bracket as a REDIRECTION operator: every `echo %%P| findstr` becomes a
+  hunt for a file named `entry`. Measured result: "The system cannot find
+  the file specified" x35 and TOTAL=0 - all 35 settings lost, worse than
+  the bug being fixed. Gate on the KEY (token 2) instead, requiring it to
+  start with a letter: that admits every real setting and rejects the
+  `(Configuration id="{GUID}")` header, whose quoted token is brace-led.
+- **Angle brackets in `echo` inside .bat** break the same way in error
+  messages - an `echo` describing the XML entry format silently redirected.
+
+`app*` keys now FAIL CLOSED (`:appGlobalKey`) rather than being skipped:
+they are application-wide, persist into the user's own GUI session, and
+need per-instance approval. `appIncSubdirs` is set deliberately in the
+workflow, not through the params file. Verified by running the parse
+standalone against the real XML: 35 of 35, GUID rejected. 484 tests pass.
+
+## [NA168] 2026-08-14 - RETRACTED: "Division registers ZERO on rectilinear imagery"
+
+**This entry previously reported a controlled A/B showing Division at 0
+cameras against Brown3 at 1,925. THE TEST WAS CONFOUNDED. Do not cite it.**
+
+The Division run was given a COPY of a batch tree taken AFTER a full
+align + identity-harvest cycle, so it carried 7,694 inherited calibration
+sidecars the Brown3 run had left behind, plus whatever else that cycle
+wrote. The distortion model was not the only variable, so the comparison
+establishes nothing about Division.
+
+Two further reasons the same measurement was unsound: the image set at the
+time was ~50% thumbnails (see the thumbnail entry below), and nothing
+verified sidecar currency before either run.
+
+Owner position, 2026-08-14: **Division is universal**; Brown3 is somewhat
+better for rectilinear, but Division is what the shipped
+`AlignmentParams.xml` uses and what the pipeline should run. Follow the
+code's logic. A clean A/B - fresh batch, no inherited sidecars, no
+thumbnails - has not been done; until it is, there is NO evidence here
+either way.
+
+What DOES survive from that work: H2082's registration ceiling is set by
+its transect geometry, not by the distortion model (see the transect
+entry), and the components that do form are metrically sound.
+
+## [NA168] 2026-08-14 - Division is the wrong global distortion model for rectilinear rigs
+
+`Metadata/AlignmentParams.xml` carries `sfmDistortionModel = Division`,
+commented as a global fallback because "the real distortion model is
+per-camera via XMP sidecars". But `batch_xmp_priors` DEFAULTS TO FALSE, so
+on a normal run no sidecar states a model and every camera aligns as
+FISHEYE. For NA168 both photogrammetry cameras are rectilinear (cinema and
+the Sony are brown3), so the H2077/H2082 aligns ran fisheye-on-rectilinear.
+Worked around per-run with `RS_ALIGN_PARAMS` pointing at a Brown3 variant
+rather than editing the canonical file, which the WCA fisheye line still
+depends on. The real fix is for the global to follow the rig actually
+present - open.
+
+## [NA168] 2026-08-14 - the survey imagery is H2077's, not H2082's
+
+NA168's only photogrammetry-grade stills are
+`raw/still_cam/survey_stills`: 340 cinemacam DNG at a **2 s median gap
+(p90 also 2 s)**, spanning 2024-11-11 22:16 - 11-12 05:34. That interval
+sits inside **H2077** (launch 11-11T19:17, recovery 11-12T10:54), not
+H2082. The folder is flat and undived, which is why it reads as generic.
+
+H2082's own stills are documentation, not survey: `still_cam/H2082` is
+103 frames at a 35 s median and **616 s p90** gap, and `still_cam_sony/
+H2082` is 306 frames across a 21 h dive. A first alignment attempt on
+H2082 (93 dualHD highlights + 306 Sony, CLAHE 2.0/8x8, loose 10/1/15
+priors) registered **0 cameras and produced 0 components** - consecutive
+frames are ~29 m apart at p90 over a 1254 x 2511 m box, so they share no
+visual field. That is a property of the imagery, not a pipeline fault.
+
+`processed/capture_highlights` (94 frames for H2082) is a curated subset
+of `processed/capture_pngs` (3,616 in-window frames, burst cadence);
+neither is usable here anyway - the dualHD grab is Unreal-only material
+by owner direction (2026-08-14), and its cam1/cam2 channels share one
+1920x1080 footprint, so they could not be separated by sensor size.
+
+Naming that matters: `still_cam` IS the cinemacam - its
+`C007C6418_<UTC14>.DNG` names already match the `^c\d+c` family pattern
+and resolve to calibration group 3 with no registry change. The Sony is a
+separate body, ILCE-7M3 with an `E 20mm F2.8 F050`; focal 20.0 mm is read
+from the EXIF sub-IFD rather than assumed.
+
+## [NA168] 2026-08-14 - capture_pngs carries a thumbnails/ subdir under the SAME filenames
+
+`processed/capture_pngs/<date>/` has a `thumbnails/` subdirectory holding a
+**350x197 copy of every frame under an identical filename**. Any recursive
+glob (`**/*.png`) therefore returns TWO files per timestamp, and half the
+staged set is 30x too small to match features against full-size imagery.
+
+Measured on H2082: 3,506 staged "frames" were **1,991 thumbnails + 1,753
+real**, and the zeuss camera registered at **4.4%** as a direct result.
+Nothing downstream notices - they are valid PNGs, with valid parseable
+timestamps, that resolve to the correct camera family. The only tell is
+image dimensions.
+
+Same trap applies to `dive_reports/<DIVE>/images/thumbnails` and
+`samples/<id>/vidcaps/thumbnails`. ALWAYS exclude a `thumbnails` path
+component when staging, and assert a single image dimension per camera
+afterwards - a dimension census is the cheap check that catches this.
+
+CAUTION: this invalidates any registration-rate comparison made against
+H2082 before 2026-08-14, including the "dropping the low-res camera hurt"
+entry below, which was measured on the contaminated set.
+
+## [NA168] 2026-08-14 - frames must be gated to ON BOTTOM, not launch-recovery
+
+Video-derived frames outside `[On Bottom Time, Off Bottom Time]` are
+descent and ascent - open water, no seafloor, nothing to match, and they
+pull the zone clustering toward a track that has no imagery worth aligning.
+
+Use the dive summary's On/Off Bottom columns, the SAME window and source
+`ROVDataConcat/processors/process_dat.filter_vfr_data` uses to gate DVL
+positions, so imagery and nav agree on what counts as the dive. For H2082
+that is 20:00:32 -> 16:33:34 against a 19:04:56 -> 17:24:44
+launch-recovery: ~56 min of descent and ~51 min of ascent trimmed.
+
+Gate at the VIDEO level first, not just the frame level: 6 of H2082's 90
+ProRes files fall entirely outside the window, and skipping them avoids
+~220 GB of copying and ~40 min of extraction before a single frame is
+written.
+
+## [NA168] 2026-08-14 - the RealityScan cache reached 1.2 TB and nearly stopped the box
+
+`%LOCALAPPDATA%\Temp\RealityScan` grew to **1,227 GB across 133,804 files,
+flat in one directory** - no per-session subfolders, so age is the only way
+to tell live cache from dead. Free space had fallen to 182 GB with a 39 GB
+ProRes staging pipeline and an alignment both writing.
+
+Deleting entries older than 24 h freed **562 GB with 0 files in use**, so
+the running align was untouched. The project must be SAVED before clearing
+cache younger than that. Bucket by `LastWriteTime` before deleting anything
+- a wholesale clear during a live align destroys it.
+
+## [NA168] 2026-08-14 - dropping the low-res camera HURT registration (negative result)
+
+Intuition said the 1920x1080 dualHD H.264 grabs were polluting a solve
+built on 5760x3240 stills. Measured, they were not - they were bridging.
+
+H2082, same imagery, same settings, only the camera set differs:
+
+| run | cinema registered | of | rate |
+|---|---|---|---|
+| cinema + zeuss + sony (6,656 imgs) | 1,759 | 2,844 | **61.8%** |
+| cinema ONLY (2,844 imgs)           | 1,613 | 2,844 | **56.7%** |
+
+The zeuss frames themselves registered at only 4.4% (154/3,506) and sony
+at 3.9% (12/306) - so by their own numbers they look like dead weight -
+yet REMOVING them cost the cinema camera 5 points. They supply
+intermediate views between the high-res bursts. Do not prune a camera on
+its own registration rate alone.
+
+## [NA168] 2026-08-14 - H2082 is a TRANSECT; it cannot yield one model
+
+H2082's survey is 3 s bursts strung along a line, not an area block. The
+component structure says so directly: 15 components over roughly
+100 x 350 m, each only 5-35 m wide, and merge_zones partitions those 15
+into **13 spatial clusters** - i.e. almost nothing overlaps anything.
+merge_zones' own words on the one cluster with neighbours: "shared-image
+graph does not span the subset - align-only rungs; a merge rung could
+only rigid-glue here".
+
+The metric-scale oracle agrees: **10 of 13 components FAIL** the
+0.90-1.10 gate (observed 0.79-1.17, and one component at 0.000). Weak
+geometry, not a settings problem.
+
+Consequence: H2082 yields a SET of disjoint patches, largest 409 cameras.
+Reprocessing will not change that; only a different survey pattern would.
+Compare H2077, an actual area survey: 92.4% into ONE 284-camera
+component.
+
+BUT the fragmentation is NOT the same as bad geometry, and the scale
+oracle separates the two cleanly. The three largest components PASS:
+zone_2_c0 409 cams at **scale 0.991, IQR width 0.040** (excellent),
+c2 163 cams at 1.033, c3 144 cams at 0.965 - 716 cameras of metrically
+sound reconstruction. The 10 failures are the small scattered fragments
+(0.485-1.166, one degenerate at 0.000), which is exactly the expected
+shape. So H2082's deliverable is three sound patches, not one site model
+and not a write-off. Do not read "13 clusters" as "the dive is unusable".
+
+## [NA168] 2026-08-14 - there is NO CLI command for a per-camera distortion model
+
+Searched the complete `set*` command list in Epic's own CLI reference. The
+only per-selection calibration commands are:
+
+    setPriorCalibrationGroup    setPriorLensGroup
+    setConstantCalibrationGroups    setCalibrationGroupByExif
+
+All four set GROUPING. `sfmDistortionModel` (Division | Brown3 | Brown4 |
+Brown3WithTangential2 | Brown4WithTangential2 | KplusBrown3WithTangential2
+| KplusBrown4WithTangential2) is a GLOBAL `sfm*` alignment key - one value
+for the whole scene.
+
+Consequence, and it NARROWS the supersession entry below: the CLI replaces
+sidecars for SEPARATING cameras, but **not** for stating a per-camera
+distortion model. On a MIXED rig - NA168 H2080 has fisheye upper
+(division) firing alongside rectilinear cinema and zeuss (brown3) - one
+global model is wrong for one of them, and the XMP `Camera:DistortionModel`
+entry remains the only mechanism that can say otherwise.
+
+Options for a mixed rig, none free: keep sidecars for the model only;
+align fisheye and rectilinear as separate zones and merge; or accept one
+global model and let the mismatched cameras self-calibrate within their
+own lens group. Unresolved - do not assume the sidecar-free path covers
+this case.
+
+## [NA168] 2026-08-14 - the 45 deg down-look was on the WRONG camera
+
+Owner, 2026-08-14: "upper is 45 degrees down, cinema and mid are pointed
+directly forward ... it's how they were loaded on this cruise and NA165."
+
+The registry had `wca_cinema` at **pitch 45** and `wca_starboard` (the
+upper) at **mount=None, never measured** - the tilt recorded against the
+camera that does not have it, and absent from the one that does.
+`camera_registry`'s own docstring repeated the error ("the same Cinema
+unit sits ... 45 deg under WCA names").
+
+Fixed: `wca_cinema` -> pitch 0, new `wca_upper` family (`^u\d+c`, the
+`U###C` WCA still prefix) -> starboard camera at pitch 45. `wca_port`
+(mid) already read 0 and was right. Lever arms untouched - those are the
+VALIDATED figures and were not in question.
+
+BLAST RADIUS: the NA156 H2023/H2024 WCA line was solved with cinema at 45.
+The owner vouched for NA168 and NA165 only. If that line is reprocessed,
+give it a cruise-scoped family rather than moving the row back.
+
+## [NA168] 2026-08-14 - flight log must be imported AFTER the sfm settings
+
+Owner sequence: load images -> select by camera pattern -> set
+priors/params -> load flight log for geo data. AlignZone.bat had
+`-importFlightLog` BEFORE the AlignmentParams `-set` loop, so the
+georeferencing priors were taken in while `sfmEnableCameraPrior`,
+`sfmCameraPriorWeight` and `sfmCameraPriorAccuracy*` still held whatever
+the instance last had - the very keys governing how those priors are
+weighted. Reordered.
+
+## [NA168] 2026-08-14 - XMP sidecars are NOT the only way to group cameras
+
+**SUPERSEDES** the line below reading "XMP calibration sidecars are the
+ONLY way to separate EXIF-identical cameras". RealityScan 2.2 ships
+`-setPriorCalibrationGroup <n>` and `-setPriorLensGroup <n>`, which set
+exactly the two groups the sidecar carried, against whatever
+`-selectImage <regexp>` has selected - and the registry already stores a
+per-family filename regex. Also present: `-setConstantCalibrationGroups`,
+`-removeCalibrationGroups`, `-setCalibrationGroupByExif`. Discovered by
+reading Epic's own "List of All CLI Commands" page while scoping the
+sidecar removal; the claim had never been re-checked against 2.2 docs.
+Implemented in `modules/prior_groups.py`. NOT yet verified against a live
+instance - the H2082 production run below still used the legacy path.
+
+## [NA168] 2026-08-14 - component identity without the destructive harvest
+
+`-exportLatestComponents <dir>` writes every component >= the
+`setMinComponentSize` gate as its own `.rsalign`, so the component SET is
+knowable without deleting anything; `-selectComponent` +
+`-exportRegistration` then reads each component's membership directly
+instead of inferring it by successive difference of XMP stem harvests.
+This removes the mechanism that stripped 796 of 4,540 zone_1 images
+(17.5%) of their calibration priors. Implemented in `AlignZone.bat`
+behind the default path, old harvest kept at `RS_LEGACY_XMP_IDENTITY=1`.
+CAVEAT: `build_component_manifests` still reads `identity_r<K>`, so the
+legacy flag remains REQUIRED for a full run until that is ported. RETRACTED 2026-09-02, and this
+is the useful part: the claim that `-exportRegistration`'s params XML "is
+not hand-authorable and must be exported once from RealityScan's Export
+Registration dialog" is WRONG, and it was wrong because of a bad probe.
+The keys were searched for as ASCII in RealityScan.exe; the exe stores them
+as **UTF-16LE**. Control test, four keys KNOWN to be valid
+(`gpsLogFileFormat`, `xmpMerge`, `MvsExportScaleZ`,
+`reprojectionTool_normal`): all four absent as ASCII, all four present as
+UTF-16LE. So the original probe could not have succeeded whatever the
+answer was, and "not documented well enough" was an artefact of the search,
+not a fact about RealityScan. Re-probed as UTF-16LE, the namespace is
+`calex*` (CALibration EXport), ~39 keys, including the two that matter -
+`calexFileFormatId` and `calexFileFormat`, the exact structural analogue of
+`gpsLogFileFormat`. The exe also carries "Unrecognized calibration export
+format '$(fileFormat)'.", confirming GUID resolution against
+`calibration.xml` exactly as flightlogs.xml works. Both RUMI GUIDs are
+already installed ({E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A48} membership +
+per-camera prior readback, and ...A49 membership only). The repo had
+already hand-authored the HARDER half in `calibration.xml`; only the
+one-line params file naming the format was missing:
+
+    <Configuration><entry key="calexFileFormatId"
+      value="{E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A48}"/></Configuration>
+
+GENERAL LESSON, worth more than the specific key: a negative result from a
+probe is worthless until the probe is shown to be capable of a positive.
+Run the control. This one belief blocked the merge stage on a whole dive
+and sent an operator to a GUI they never needed to open.
+DO NOT simply ship the file and delete the fallback: RealityScan's params
+files fall back SILENTLY rather than erroring - that is exactly how
+orientation accuracies were lost on every flight-log import before
+2026-08-16 - so exit code 0 does not prove the intended format was used.
+Gate on CONTENT: assert the CSV exists and its first line matches
+`#cameras <N>`. Turning today's loud, correctly-located failure into a
+silent success would be a worse bug than the one being fixed.
+
+## [NA168] 2026-08-14 - H2082 Sony stillcam clock runs on Palau local time
+
+The Sony ILCE-7M3 stills in `raw/still_cam_sony/H2082` carry EXIF
+`DateTime` on **UTC+9**, not UTC. Correcting by **-9 h** is what makes
+them georeferenceable at all; geoall reads time from the FILENAME, so the
+staging step bakes the corrected stamp in. Established three ways, because
+the dive-window test alone could not discriminate (offsets -6 h through
+-10 h all put 306/306 frames inside launch-recovery):
+1. cross-correlation against the UTC-named dualHD frames peaks at -9 h
+   (100 Sony frames within +/-120 s of a dualHD frame; next best 87);
+2. -9 h aligns the two cameras' FIRST frames to 41 s - every other offset
+   is out by an hour or more;
+3. NA168 sits at ~130.8 E, and Palau is UTC+9.
+Discovered when 260/306 frames fell inside the dive window and 46 did
+not - a partial fit, which is the signature of a clock offset rather than
+a data problem. A naive as-is import would have silently georeferenced
+those 46 frames against the wrong nav.
+
+## [NA168] 2026-08-14 - H2082 is UTM zone 52N, not 53N
+
+H2082 works at 4.68 N, 130.77 E - **zone 52N, EPSG:32652** - and the whole
+79,457-row track stays in one zone (no crossings). Worth recording because
+the neighbouring H2077 site is at 7.56 N, 132.80 E, which IS zone 53N:
+taking "the NA168 zone" from another dive's summary puts the whole model
+~350 km east. geoall derives the zone from the nav itself and tags the
+flight-log filename, which is the only thing downstream reads.
+
 ## [ON2026] 2026-08-08 - calibration-sidecar hygiene collision (test cell)
 
 Per-eye APPROXIMATE calibration sidecars (manufacturer resized-corrected
@@ -452,9 +958,13 @@ sidecar-free (95-99% registration, consistent).
   sfmImagesOverlap Low→Medium, sfmForceComponentRematch=false and
   sfmMergeGeoreferencedComponents=false for pass-1 zone aligns,
   appIncSubdirs=true always. [H2023] (2026-07-23)
-- **XMP calibration sidecars are the ONLY way to separate EXIF-identical
-  cameras** — WCA rendered JPGs are EXIF-identical across cameras (Z CAM
-  E2-F6, no focal tag). One calibration/lens group per PHYSICAL camera.
+- **SUPERSEDED (2026-08-14, see the [NA168] entry at the top): XMP
+  calibration sidecars are the ONLY way to separate EXIF-identical
+  cameras** — the PREMISE holds (WCA rendered JPGs are EXIF-identical
+  across cameras: Z CAM E2-F6, no focal tag, one calibration/lens group
+  per PHYSICAL camera), but "only way" does not: RealityScan 2.2's
+  `-setPriorCalibrationGroup` / `-setPriorLensGroup` set the same groups
+  in-session, with no file written beside the images.
   Old batcher values (camlower "12 mm fisheye"; actually rectilinear
   17 mm) were wrong and plausibly explain NA167's "priors hurt" A/B.
   [H2023] (2026-07-23)
@@ -4186,3 +4696,670 @@ Also corrected: the docs registry attributed `Texturing_MaxTextureCount4_16k.xml
 to `GenerateModel.bat` step [6/8]. That step actually sets
 `Texturing_MaxTextureCount4_8k.xml` ("8K cap, owner 2026-07-31"); the row was
 stale and made a compliant script look non-compliant.
+
+## H2080 per-component model+export campaign (2026-08-31)
+
+Driving 64 named components of a GUI-built `NA168_H2080.rsproj` through
+GenerateModel → ExportDeliverables, on an agent-owned COPY with a named
+headless instance while the operator's GUI stayed open. Findings below are all
+from that run.
+
+- **`-exportModel <name>` resolves a model name GLOBALLY, but `-selectModel
+  <name>` resolves it only within the ACTIVE component.** Established by
+  controlled comparison, not inference: `ExportDeliverables.bat` wrote
+  `NA168_H2080_c44`'s OBJ (2.1 GB, 15 files) and FBX (763 MB, 13 files) via
+  `-exportModel`, then failed on `-selectModel "NA168_H2080_c44_HighPoly_Raw"`
+  with **2147942487** (0x80070057) for a model verified present in the saved
+  scene. Failed twice under the stock workflow; succeeded on the first attempt
+  with a single `call :run -selectComponent "%comp%"` added ahead of the model
+  lookups. Operation id **21856 = selectModel** (same id/code appears in the
+  tolerated `expected_select_*Model N*` files from the residual sweep).
+  CONSEQUENCE: **`ExportDeliverables.bat` cannot export more than one
+  component per run** despite taking a multi-component name list — it has only
+  ever worked because observed runs exported the component the preceding
+  `GenerateModel` left active. The dense-PLY step is where it bites, being the
+  only step needing a model other than `<comp>_Simplified_Textured`.
+  Fix is a one-line `-selectComponent` in `:export_component`. [NA168]
+  (2026-08-31) ESTABLISHED
+
+- **The same scoping makes any TOLERANT model-delete silently no-op, and it
+  reports success.** `:try_delete_model` is deliberately forgiving of a failed
+  `-selectModel` (correctly — that is what lets the "Model 1".."Model 9" sweep
+  skip absent names). For a non-active component the select fails with the same
+  not-found code, the helper moves the marker to `expected_select_*` and
+  returns 0 WITHOUT deleting. Measured: a 4-component prune pass deleted only
+  the last-modelled (active) component and left **9 of 12 models** in the
+  scene, while the workflow exited 0. Any prune/sweep over multiple components
+  needs `-selectComponent` first, or its success means nothing. FIX VERIFIED:
+  with `call :run -selectComponent "%tag%"` added ahead of the deletes, the
+  next 3-component prune removed all 9 models (verified by parsing the saved
+  `.rsproj`, not by trusting the exit code), and the scene fell 56 -> 34.5 GB. [NA168]
+  (2026-08-31) ESTABLISHED
+
+- **`-deleteSelectedModel` + `-save` removes the model from the project graph
+  but does NOT reclaim its data files.** After modelling, exporting and pruning
+  ONE mid-size component the scene grew **23.7 → 30 GB** with **148 new files**
+  left behind — `model<GUID>_tex0..3_2.dat` at 576–706 MB each plus
+  `model<N>.dat_rnd.dat` at 343 MB — none referenced by the saved `.rsproj`.
+  Pruning models therefore bounds SAVE TIME but not DISK. Same shape as
+  "CLI component deletion does not persist through save". Practical reclaim on
+  a scratch scene is to discard and re-copy it from a pristine template, not to
+  prune harder. [NA168] (2026-08-31) ESTABLISHED
+
+- **Cache is the dominant disk consumer on a multi-day campaign, not the
+  deliverables.** Retention defaults to 7 days so nothing is reclaimed while a
+  campaign runs. Measured on H2080: **~20–30 GB of cache per component
+  modelled** (91 GB after 7, 159 GB after 9) against ~2.5 GB of deliverables
+  each. Budget the cache first and flush between batches
+  (`FlushCache.bat`, main). Corroborates main's own note "7-day default kept
+  918 GB". [NA168] (2026-08-31) ESTABLISHED
+
+- **The `identity_r<K>` migration left THREE readers unported, not one - and
+  one of them is a deliverable gate that is now dark.** `AlignZone.bat`
+  writes `identity\<scene>_c<K>.csv` (line 255) on the default path, with
+  the legacy XMP harvest surviving only behind `RS_LEGACY_XMP_IDENTITY=1`
+  (line 216). Three readers still expect the retired layout:
+
+    realityscan_interface.py:548  capture_component_identities  -> no manifest
+    scale_oracle.py:229           load_solved_positions(identity_r0)
+    run_models.py:81              identity_r0 beside the rsalign
+
+  The first is the known merge blocker (`merge_zones` exits 1 with "No
+  manifested components"). The second is worse in kind: `scale_oracle` is
+  called from `merge_zones.py:194` for EVERY input component, its own
+  docstring calls it "a DELIVERABLE GATE" added after a 0.236-scale
+  component reached a deliverable, and on the default align path it now
+  reads an absent `identity_r0`, gets `{}`, and returns **'unmeasured'**
+  instead of failing. A gate that reports 'unmeasured' for everything is
+  not a gate. `run_models.py:81` degrades the same way. Fused components
+  are unaffected - merge attempt dirs do get `identity_r0` from
+  `MergeZoneComponents.bat:248` - which is precisely why this stayed
+  invisible. When migrating a layout, grep for the OLD path name across the
+  whole repo and port every hit; porting the one that throws and leaving
+  the ones that degrade gracefully is how a safety net goes dark quietly.
+  [NA165] (2026-09-02)
+  ESTABLISHED
+
+- **`-selectModel` needs `-selectComponent` in TWO places in
+  ExportDeliverables.bat, and the second runs on every job.** The known
+  site is line 123 in `:export_component`. The sweep found line 146 in
+  `:try_delete_model`, driven by the "Model 1".."Model 9" residual loop at
+  lines 77-79, which fires immediately after `-load` on EVERY run with no
+  component ever selected. That helper is deliberately tolerant (it moves
+  the error marker to `expected_select_*` and returns 0), so every residual
+  owned by a non-active component is silently kept and line 82 still echoes
+  "residuals removed". `GenerateModel.bat:179` has the same shape and its
+  own comment states the premise - "by the sixth component the name can be
+  'Model 6'" - so those residuals are BY DEFINITION owned by a different
+  component than the one selected at line 93. `ModelToFinal.bat:146` is a
+  third instance and is unfixable from the caller: it attaches to a running
+  instance and takes no component argument at all.
+  Correction to an earlier note in this file: the line-123 failure is NOT
+  silent. `ErrorWriter.bat` appends the code and `:run` aborts on a
+  non-empty errors file, so the run dies at :fail before the PLY is
+  written - no wrong or uncoloured model can ship. The real cost is that
+  the whole multi-GB session is thrown away and every component AFTER the
+  failing one is never attempted. [NA168] (2026-09-02)
+  ESTABLISHED
+
+- **`install_all_managed()` - the only code that installs `calibration.xml`'s
+  RUMI formats - has zero callers.** Defined at `flightlog_format.py:203`;
+  a repo-wide grep finds the definition and nothing else. So the format the
+  registration export depends on is installed only if someone ran it by
+  hand. Any fix that ships `RegistrationExportParams.xml` must also call
+  this before the export and gate on the calex GUID, the way
+  `realityscan_interface.py:389` already gates flight logs. [NA165]
+  (2026-09-02)
+  ESTABLISHED
+
+- **A merge that cannot resume will eventually cost you the whole run.**
+  `merge_zones` wrote `merge_report.json` after every cluster but had no way
+  to READ it back, so any interruption meant re-merging every input from
+  scratch. Measured NA165/H2063 2026-09-03: a harness restart killed a 12 h
+  run that had already converged three clusters (10 of 40 inputs, 7 final
+  components) - all of it finished, self-contained work sitting on disk, and
+  all of it would have been redone. The manual recovery was to read the
+  report, diff its consumed inputs against the input list, and hand-build a
+  `.complist` of the remaining 30.
+  Now hardened in the tool: `--resume` (default TRUE) reuses CONVERGED
+  clusters from a prior report in the same output dir. Three rules make it
+  safe rather than merely fast:
+  1. **Fingerprint the question, not just the inputs.** The report records
+     ladder, merge_scope, pair_gate, loss_tolerance, min_size, assemble_only
+     and the sorted input SET. A prior report that differs on any of them is
+     refused with a message naming the difference. `loss_tolerance` is in
+     there because it changes what counts as an acceptable fusion - an
+     acceptance semantic on the deliverable, not a performance knob. Input
+     ORDER is deliberately excluded, since it does not affect partitioning.
+  2. **Only converged clusters.** A cluster that was mid-ladder when the run
+     died describes unfinished work; it is re-merged from its inputs.
+  3. **Verify the files still exist.** A carried record whose `.rsalign` has
+     been moved or cleaned would otherwise pass silently into the assembly
+     complist and fail there, hours later.
+  Clusters are matched by their INPUT SET, never by index: `partition_clusters`
+  numbers clusters in iteration order, so an index match would happily pair
+  one cluster's record with another cluster's work the moment the input list
+  changed. Covered by `testing/test_merge_resume.py` (10 cases).
+  GENERAL FORM: any stage that both costs hours and already writes a
+  structured progress record is one function away from being resumable, and
+  the gap is usually that nothing ever reads the record back. [NA165]
+  (2026-09-03)
+  ESTABLISHED
+
+- **`-clearCache` does NOT clear RealityScan's numbered cache slots, and they
+  grow without bound.** Measured NA168/H2080 2026-09-02, cache root 949.0 GB:
+
+      slot "1"             534.8 GB   31,437 files  stale 3.4 h
+      slot "2"             168.4 GB   10,319 files  stale 38.1 h
+      15,155 transients    246.1 GB                 active
+
+  The flush at the 07:39 batch boundary went 833.9 -> 705.4 GB, and
+  705.4 GB is the two slots (703.2 GB) plus noise. So `-clearCache` removes
+  only the transient entries; the numbered slots are never touched. This is
+  the whole explanation for the "flush is not flushing" symptom: across
+  eleven flushes the post-flush floor rose 153 -> 224 -> 261 -> 320 -> 358
+  -> 446 -> 523 -> 705 GB, and that floor is exactly the accumulating slots,
+  not a failing flush. Every individual flush succeeded and reclaimed
+  95-285 GB of genuinely transient data.
+  TWO OPERATIONAL CONSEQUENCES:
+  1. A cache ceiling below the stranded total is unsatisfiable. Once the
+     slots exceed `CACHE_MAX_GB`, `cache_gb() > CACHE_MAX_GB` is
+     permanently true, so a driver flushes at every boundary forever and
+     never gets under its own ceiling - it looks like a broken flush and is
+     actually a broken ASSUMPTION.
+  2. Budget disk for slot growth as a monotonic cost per campaign, not as a
+     steady state. On a 64-component job the slots reached 703 GB.
+  A correct reclaim must remove the stale numbered slots directly on disk;
+  no CLI verb was found that does it. Do that only with no RealityScan
+  instance running - the slots are regenerable cache, but deleting them
+  under a live instance was not tested here and was deliberately avoided
+  while a 36 h campaign was in flight. [NA168] (2026-09-02)
+  ESTABLISHED
+
+- **Order a resource guard AFTER the reclaim it would trigger, not before.**
+  The NA168 driver checked free space and aborted the run at the top of each
+  batch, then flushed the RealityScan cache a few lines later:
+
+        if free_gb(PRODUCTS) < MIN_FREE_GB:   # abort, return 2
+            ...
+        if cache_gb() > CACHE_MAX_GB:         # never reached on that path
+            flush_cache()
+
+  Measured 2026-09-02 00:44 on NA168/H2080: free space 295 GB and falling at
+  66 GB/h, with **780 GB of flushable cache in hand** - i.e. the run could
+  have aborted for want of disk while holding more than twice the needed
+  space in a cache the very next statement would have released. Observed
+  flushes reclaimed 111-225 GB each (516.6 -> 404.9, 671.0 -> 446.4).
+  The guard is not wrong, it is just sequenced ahead of its own remedy.
+  Check free space, attempt every reclaim available, and only THEN abort on a
+  re-measured figure. Note also that the `batch done ... free X` log line is
+  emitted BEFORE the flush, so every boundary figure understates true free
+  space - do not read it as the post-batch state. [NA168] (2026-09-02)
+  ESTABLISHED
+
+- **QUALIFIES the "transient, retryable" reading above: below ~20 estimated
+  cameras it is transient; at or above ~20 nothing has ever succeeded.**
+  Full census of NA168/H2080 at 56/64 exported, banding every component by
+  the `est_cameras` proxy from targets.json (the ladder runs SMALLEST FIRST,
+  so the large band is reached last and was invisible for most of the run):
+
+      band     done  failed  fail%
+      0-5        17       1     6%
+      5-10       26       2     7%
+      10-20      13       0     0%
+      20+         0       2   100%
+
+  59 components below 20 -> 3 failures (5%), every one of which is genuinely
+  transient (c44 failed then modelled cleanly on retry). Two components at
+  20+ -> two failures, zero successes. The two used DIFFERENT modes - c21
+  mode B (0x80004005, instant, step [5/8]), c30 mode A (0x82000019, 2896 s,
+  step [1/8]) - so it is not one flaky operation; two independent operations
+  fail in the same size band, which reads as a scale limit rather than a
+  transient. Note also that mode A's elapsed range widened to 215-2896 s
+  once a large component entered it, so "uncorrelated with duration" was an
+  artefact of only small components having been sampled.
+  RESOLVED SAME DAY, and the "hard wall" reading was WRONG. The two
+  outstanding components landed on opposite sides:
+
+      c07  est 42.4  SUCCEEDED after 3.6 h   <- refutes the wall outright
+      c04  est 68.2  failed after 70 min
+
+  Final tally for the 20+ band: 1 success in 4 (25%), against ~95% success
+  across n=59 below 20. So large components DO fail markedly more often,
+  but they are not impossible, and the effect is NOT monotonic in size -
+  c07 at 42.4 succeeded while c21 at 22.4 failed. Treat size as a strong
+  risk factor, never as a verdict: budget large components generously,
+  expect roughly one in four to survive, and retry them.
+  The methodological point is the reusable one. At n=2 this looked like a
+  100% wall; the next datapoint halved it. A band that is reached LAST by a
+  smallest-first ladder will always be under-sampled at the moment it first
+  looks alarming, so read early rates in such a band as provisional by
+  construction - the ordering, not the data, is what makes them extreme.
+  [NA168] (2026-09-02)
+  ESTABLISHED
+
+- **A SECOND, distinct model-failure mode: instant 0x80004005 at the
+  hole-closing step.** `NA168_H2080_c21`, 2026-09-02 06:31, proxy size
+  ~22.4 (large): **op 25, code 2147500037 (0x80004005), in 0 SECONDS**,
+  after the run had already passed [1/8] through [5/8]. Do not confuse it
+  with the recurring `-calculateHighModel` failure - every attribute
+  differs:
+
+      mode A  op 20562  0x82000019  215-1023 s  step [1/8]  c44 c03 c28 c24
+      mode B  op 25     0x80004005  0 s         step [5/8]  c21
+
+  Mode A burns real compute before failing; mode B fails instantly, so the
+  40 min c21 "took" was entirely the successful [1/8]-[5/8] work ahead of
+  it. A driver that times components will misread mode B as a slow failure
+  when it is an instant one at the end of a slow success. Both are recorded
+  as retryable. 0x80004005 is E_FAIL/unspecified and has appeared once
+  before in this campaign at op 6 (c47, export path), so the code alone
+  does not identify the operation - always pair code WITH op id.
+  [NA168] (2026-09-02)
+  ESTABLISHED
+
+- **A `-calculateHighModel` failure is NOT a verdict on the component — retry
+  before recording it.** `NA168_H2080_c44` failed at step [1/8] after a clean,
+  uninterrupted 6.0 min run, then **modelled successfully in 29.8 min** on
+  retry with identical settings, scene and recipe. Two further components the
+  size proxy had condemned (`c06`, `c00`) also modelled.
+  A second instance, `NA168_H2080_c03`, then failed the same step at 4.4 min
+  and gave the code: **2181038105 = `0x82000019`**, from operation 20562 at
+  76% progress after 215 s. That code is NOT otherwise recorded in this repo;
+  its documented sibling `2181038335` = `0x820000FF` is the warning-class
+  result the workflows already whitelist, and `0x82000019` is a different
+  member of the same RealityScan-internal family. **Not resource pressure** -
+  the run's own resource trace at failure shows 82.9 GB RAM available of
+  127 GB, commit 49.8 of 156 GB, and 910.6 GB free disk. So `-calculateHighModel`
+  can fail mid-computation with ample headroom, and the failure is transient.
+  REPRODUCED 2026-09-01 03:38 on `NA168_H2080_c28`: identical code
+  **2181038105 (0x82000019)** from the same operation id 20562, this time
+  450 s in, with resources again comfortable (CPU 79%, commit 51.7 GB,
+  81.1 GB RAM available, 824 GB free disk). REPRODUCED AGAIN 2026-09-01 13:21
+  on `NA168_H2080_c24`, same op 20562, same code, 1023 s in.
+  A full census of the 36 h driver log puts the two codes in proportion and
+  shows they mean OPPOSITE things - which is the trap for anyone grepping the
+  log for "error":
+
+    op 20562  0x82000019   4 distinct events   c44, c03, c28, c24   GENUINE
+    op 21856  0x80070057  90 occurrences      ~40 components       BENIGN
+    op 6      0x80004005   1 occurrence       c47 (export)
+
+  Every one of the 90 `0x80070057` hits is the known benign select-miss (see
+  the op-21856 entry above): 0 s each, and they fire on components that go on
+  to model AND export cleanly - c45, c26, c01, c25, c02, c18, c58, c27, c17
+  all carry 4-5 of them apiece and all delivered. So the ratio of benign to
+  genuine error lines in this log is better than 20:1, and code identity, not
+  the presence of the word "error", is the only sound failure signal.
+  Four occurrences of 0x82000019 across two nights - c44 (succeeded on
+  retry), c03, c28, c24 - make it a RECURRING mode of this pipeline, not an
+  anomaly. Elapsed times at failure were 314, 215, 450 and 1023 s, i.e.
+  spanning 5x with no clustering, and load was comfortable in every case, so
+  it correlates with neither duration nor pressure.
+  Drivers should retry such failures at least once rather than treating them
+  as unmodellable. [NA168] (2026-08-31, extended 2026-09-01)
+  ESTABLISHED
+
+- **`assert_bat_safe` refuses RealityScan's own duplicate-component names.**
+  RealityScan auto-names duplicates `Component N (K)`, and `(`/`)` are in
+  `CMD_METACHARACTERS`, so `run_models.py` / `export_deliverables.py` refuse
+  such a component outright. On H2080, 26 of 64 in-scope components carried a
+  `(K)` suffix. A GUI-built project therefore cannot be driven by this pipeline
+  until its components are renamed. Renaming by rewriting the
+  `<component name="...">` attributes in the `.rsproj` XML **is honoured by
+  RealityScan** (verified: `-selectComponent NA168_H2080_c37` succeeded after
+  an offline rename, 64/64 renamed, 196 components preserved). [NA168]
+  (2026-08-31) ESTABLISHED
+
+- **`schtasks` alone does not make a run shell-proof — `/IT` leaves a console
+  attached.** A task created with `/IT` runs in the operator's interactive
+  session WITH a console; closing an unrelated terminal window delivered a
+  console-close event to the process group and killed the Python driver
+  mid-batch (`scheduler.log` ends in a literal `^C`). The `GenerateModel.bat`
+  chain and its RealityScan instance SURVIVED - item 8 in reverse - and the
+  ORPHANED CHAIN RAN THE COMPONENT TO COMPLETION UNSUPERVISED: all 8 steps,
+  "Verifying the deliverable still exists", "Saving project", then a clean
+  `-quit`, 37 min after the driver died (verified in the workflow log and by
+  all three models present in the saved `.rsproj`). On this class of kill the
+  correct recovery is therefore to WAIT for the orphan and record its result,
+  not to kill it and re-model - but nothing external records that the run was
+  interrupted, which is the real hazard. Launch the driver through a `wscript` shim
+  (`WScript.Shell.Run "cmd /c <launcher>", 0, False`) so it gets a hidden
+  console owned by no terminal, the same reason `ErrorWriterLaunch.vbs` uses
+  wscript. [NA168] (2026-08-31) ESTABLISHED
+
+- **Benign, do not chase: the cache-relocation popup is auto-answered "No"
+  under `-silent`.** `Title: Resource Cache path is changing / Message: Would
+  you like to move cache files to? <RS_CACHE_DIR> / Action: &No` appears in
+  `RealityScan.log` on every boot that sets `appCacheCustomLocation`. It only
+  declines to MIGRATE pre-existing cache files; the new cache still goes to
+  `RS_CACHE_DIR`. Investigated because it is the same class as the recorded
+  "export auto-answers its dialog and exports nothing" hazard — it is not that.
+  Suppressible with `-set "PUS-6-323328742=1"` if migration is ever wanted.
+  [NA168] (2026-08-31) ESTABLISHED
+
+## NA165 H2063 extraction start (2026-08-31)
+
+- **A killed `robocopy /MT` leaves FULL-SIZE, zero-tailed files — size equality
+  is NOT a completeness check.** Aborting a 559 GB `robocopy /E /MT:8` mid-run
+  left 8 destination `.mov` files whose sizes were byte-for-byte equal to the
+  source (robocopy pre-allocates the destination), while everything past the
+  written point was zeros. Proof: md5 of a 4 MB window at 60% of the file and
+  another 16 MB from the end were IDENTICAL TO EACH OTHER in the local copy
+  and different from the source at both offsets — the signature of a zero
+  fill, not of a short write. All 4 files that were retained tested corrupt.
+  Any resume logic that trusts `os.path.getsize()` (or `os.path.exists()`)
+  will silently reuse these. Verify a late-offset hash against the source, or
+  delete and re-copy. [NA168] (2026-08-31) ESTABLISHED
+
+- **The Extract Images module reports `Success: True` after decoding 43 of
+  26,974 frames.** Same incident: the corrupt ProRes decoded for 43 s and then
+  emitted `[prores @ ...] invalid frame header` continuously, yet the module's
+  own summary read `Success: True`, `Total Input Frame Count: 26974`,
+  `Total Extracted Frame Count: 43`, and `main.py` exited 0. Exit code and the
+  module's Success flag are therefore NOT evidence that a video was extracted
+  — the extracted count must be compared against duration x rate. This is
+  exactly the check `tools/extract_pipeline.py` already performs ("43 frames
+  but expected ~900 from 900s - truncated read?"), and it is the only reason
+  the corruption was caught; it also correctly KEPT the local copy rather than
+  deleting it. Do not extract without that comparison. [NA168] (2026-08-31)
+  ESTABLISHED
+
+- **Latent hazard in `tools/extract_pipeline.py`: staging reuse is keyed on
+  existence alone.** `if not os.path.exists(dst)` skips the copy, so a video
+  whose staged copy is short or zero-tailed is never re-copied; its extraction
+  then fails verification on every subsequent run, and because the failure
+  path deliberately KEEPS the local copy, the file can never recover without
+  manual intervention. A size-and-late-offset check before the skip would close
+  it. [NA168] (2026-08-31) ESTABLISHED
+
+- **A HIDDEN console is still a TTY, and the Extract Images module hangs
+  forever on one.** Running the extraction under
+  `wscript ... WScript.Shell.Run "cmd /c ...", 0, False` (the shim that makes a
+  long run survive a terminal close) produced a `main.py` that consumed
+  **0.00 CPU seconds over 15 s** with no ffmpeg child and no output, on a video
+  that was demonstrably good. The same command with stdin from a pipe or from
+  `/dev/null` extracted normally (259 CPU-seconds, 565 frames and climbing).
+  Window style 0 hides the console but does not remove it, so `isatty()` stays
+  TRUE and an interactive read blocks on input that can never arrive -
+  `RS_NO_INTERACTIVE=1` did not prevent it. FIX: redirect stdin explicitly in
+  the launcher (`python driver.py < NUL >> log 2>&1`); verified working.
+  Applies to ANY scheduled/detached invocation of this pipeline, not just
+  extraction - the hidden-console launcher is otherwise the correct pattern.
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **`tools/extract_pipeline.py` never implemented the per-video output dir its
+  own docstring documents — so it extracts exactly ONE video and then fails
+  every remaining one, keeping each staged copy.** `extract_one`'s docstring
+  reads *"Extract into a PER-VIDEO output dir ... Reusing one output dir
+  therefore works for the FIRST video and fails for every one after it - which
+  is exactly what happened on 2026-08-15 ... 25 of those filled the disk. Each
+  video gets its own directory; frames are collected afterwards."* The code
+  under it passes the SHARED `out_dir` straight to `-o`, is called as
+  `extract_one(local, args.out, ...)`, and `grep` finds no move/collect step
+  anywhere in the file. The documented fix was lost; the regression it
+  describes is live. Reproduced on NA165/H2063 2026-08-31 08:56: video 0005 ok
+  (701 frames, 199 pruned outside the on-bottom window), then 0006 and 0007
+  back-to-back `ERROR: Extracted images folder already exists and this run is
+  non-interactive - refusing to overwrite it` / `exit 1`, each keeping its
+  ~17 GB copy, `progress 3/26 videos, 0 frames total`. FIX: extract into
+  `<out>/_extract_<stem>`, then move `frames_dir(per_video)` into
+  `frames_dir(out)` before `verify()` runs — verify and prune both read
+  `frames_dir(out_root)` and need no change. [NA168] (2026-08-31) ESTABLISHED
+
+- **geoall silently falls back to an ARBITRARY nav CSV when the merged
+  `final_datatable.csv` is absent — and the alphabetically-first candidate is
+  the SURFACE VESSEL's USBL.** `find_rov_datafiles` prefers
+  `*final_datatable.csv` and otherwise takes `paths[0]`. On NA165/H2063, whose
+  `RUMI_processed` dir had only ROVDataConcat STAGE 1 output, that fallback
+  chose `NA165_H2063_USBL_Atalanta.csv` - Atalanta, not Hercules - and printed
+  only a `Note:` while ignoring the DVL, octans and sealog files. A dive whose
+  Kalman stage has not been run will therefore georeference against the wrong
+  platform, with no orientation columns at all, and the only signal is an
+  easily-missed Note line. It should refuse instead: no `final_datatable`
+  means no authoritative nav. Discovered because the run also hit an unrelated
+  path error first; had the paths been right it would have proceeded.
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **ROVDataConcat is TWO stages and a dive can look "pre-processed" while
+  missing the one geoall needs.** Stage 1 (`main.py`, expedition-wide) emits
+  `*_pitch_roll_heading_octans.csv`, `*_dvl_lat_long.csv`, `*_USBL_Hercules.csv`,
+  `*_USBL_Atalanta.csv`, `*_sealog_sensors_merged.csv`. Stage 2
+  (`main_kalman.py --base <root> --expedition <EXP> --dive <DIVE>`, per dive)
+  is what produces `*_filtered_datatable.csv`, `*_kalman_filtered_data.csv` and
+  the `*_final_datatable.csv` that geoall treats as authoritative. NA165/H2060
+  has all of stage 2; NA165/H2063 had none of it, while still looking like a
+  populated `RUMI_processed/<DIVE>` folder. Check for `*final_datatable.csv`
+  before georeferencing, not for a non-empty directory. [NA168] (2026-08-31)
+  ESTABLISHED
+
+- **The extractor's frame layout does not match what geoall expects.**
+  `extract_pipeline.py --out X` writes frames to `X/raw_images`
+  (`frames_dir()`), but geoall's `--image-base-dir` wants the frames directly
+  inside an `edt` directory - the H2060 precedent is
+  `raw/zeuss/edt/*.jpg`. Passing `--out .../raw/zeuss/edt` therefore yields
+  `raw/zeuss/edt/raw_images/*.jpg` and geoall reports
+  "Reading 0 images from 1 edt directories" and exits. Either pass
+  `--out .../raw/zeuss` and rename `raw_images` to `edt`, or move the frames
+  up one level after extraction. [NA168] (2026-08-31) ESTABLISHED
+
+- **geoall.py and modules/georeference/ have diverged on the ONE column that
+  carries focal length — and CLAUDE.md points you at the wrong one.**
+  `modules/georeference/georeference_images.py` writes a **14-column** flight
+  log ending in `FocalLength`, which its own `_get_camera_focal_length`
+  documents as "THE ONLY ROUTE this value has to RealityScan": sidecars are
+  forbidden, and per `modules/prior_groups.py` neither
+  `-setPriorCalibrationGroup` nor `-setPriorLensGroup` carries a focal length
+  ("the two CLI commands set GROUPING only"). `geoall.py` still writes **13
+  columns** and drops it silently. Verified: geoall's NA165/H2063 output, and
+  the existing NA165/H2060 and NA168/H2080 logs, are all 13-column with no
+  FocalLength. CLAUDE.md rule 6 calls geoall canonical and says to port
+  improvements FROM it INTO the module - here the improvement went the other
+  way and was never back-ported, so following the documented guidance loses
+  the focal prior. Use the module (`RS_MODULES='Georeference Images'`,
+  `--g_type Zeuss`, `--g_flight_log <final_datatable.csv>`) when a numeric
+  focal prior matters. Confirmed working: 22,770 rows, 14 columns,
+  `FocalLength 28.000000` throughout. [NA168] (2026-08-31) ESTABLISHED
+
+- **`RS_NO_INTERACTIVE` must be set BEFORE the repo is imported, not before
+  the call.** Setting it inside a wrapper's `main()` and then importing
+  `main.py` is too late - parameters are built at import time and the run
+  stops on `Whether to continue automatically after each module [False]:`.
+  Set it at module scope ahead of every repo import. Same family as the
+  hidden-console TTY hang: both are "the non-interactive gate did not take".
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **A CLI value that EQUALS the declared default is treated as "not supplied"
+  and loses to rs_settings.json.** `batch_directory._explicit_cli_value` tests
+  explicitness as `value != param.get_default_value()`, so
+  `--b_max_zone 4000` (declared default 4000) returns None, is deemed
+  unanswered, and `_stored_default` falls through to the `batch` section -
+  which on this machine holds **max_zone_size 8000**. Measured NA165/H2063
+  2026-08-31: batching was invoked with `--b_max_zone 4000` and
+  `batch_inputs.json` recorded `"batch_max_zone_size": "8000"`, producing a
+  zone of **7,842 images (6,535 base + 1,307 overlap)** against an operator
+  cap of 6,000. The guard's own docstring says an explicit flag "must WIN
+  over rs_settings.json" - and it does, EXCEPT when the operator's chosen
+  value coincides with the default, which is exactly when they are most
+  likely to type it. Worse, both keys feed `_input_fingerprint`, so the wrong
+  zoning is recorded as legitimate provenance (the same failure mode the
+  2026-08-07 audit closed for the stored-value-beats-CLI case). Workaround:
+  pass a value that differs from the default. Real fix: track suppliedness
+  from argparse rather than inferring it by comparison. [NA168] (2026-08-31)
+  ESTABLISHED
+
+- **`-load` of a large scene can fail with 2147500037 (`0x80004005`, E_FAIL)
+  and it is transient, not a corrupt project.** NA168/H2080 2026-08-31 12:37:
+  the export session for `c54` reached only "Loading project" in its workflow
+  log and aborted after 12 s with `process 6 finished with result code
+  2147500037`. Operation id 6 is the load. The scene was 69 GB with ~12 live
+  models; resources were NOT tight (97.7 GB RAM free, commit 77 of 171 GB), and
+  a second RealityScan instance was aligning another campaign concurrently.
+  The next component's export loaded the SAME project seconds later without
+  incident, so the project is intact. This code is not otherwise recorded in
+  the repo; its documented neighbours are the RealityScan-internal `0x82...`
+  family and `0x80070057`. Treat a load failure as retryable - keep the
+  component's models and re-export on a later pass rather than re-modelling.
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **AlignZone's "save BEFORE the destructive identity loop" earned its keep:
+  the align survived while the identity capture failed.** (SUPERSEDED in
+  part: first attributed to memory pressure - WRONG. zone_2 reproduced it
+  with commit 70.2 GB and 79.9 GB RAM free. Real cause is the missing
+  RegistrationExportParams.xml - see the entry below.) NA165/H2063 zone_1 (4,060 images) ran 6 h 17 m and completed
+  scene build, prior groups, 35 alignment settings, flight-log import and the
+  alignment itself, logged "Saving project BEFORE the destructive identity
+  loop", then failed at
+  `-exportRegistration ".../zone_1/identity/zone_1_c0.csv"` with **2147500037
+  (0x80004005)**. `AlignZone.bat` exited 1 and the module logged the zone as
+  failed - but **three components totalling 2.8 GB were already on disk** in
+  `aligned_components/zone_1/latest_components/`, so no alignment work was
+  lost. A zone reported as FAILED by the workflow is therefore not necessarily
+  a zone without usable components; check `latest_components/` before
+  re-running a 6-hour align.
+  Resource peaks for that zone: **CPU 100%, commit 139.4 GB of 156 (89%),
+  minimum available RAM 37.6 GB** - and Windows GREW the commit limit to
+  185 GB during the run. A second campaign (NA168/H2080 modelling) was running
+  concurrently. Immediately afterwards, with the much smaller zone_2 (1,983
+  images) in flight, commit was 51.4 GB (28%). THE SIZE RULE I FIRST DREW
+  FROM THIS IS REFUTED by zone_5, which is LARGER than zone_1 (4,124 vs 4,060
+  images) yet peaked at 96.2 GB and finished in ~50 min:
+
+  | zone | images | commit peak | min RAM | duration |
+  |---|---:|---:|---:|---:|
+  | 1 | 4,060 | **139.4 GB** | 37.6 | **6 h 17 m** |
+  | 2 | 1,983 | 70.2 GB | 79.9 | ~15 m |
+  | 3 | 2,718 | 66.1 GB | 71.4 | ~23 m |
+  | 4 | 2,059 | 69.2 GB | 68.5 | ~26 m |
+  | 5 | 4,124 | 96.2 GB | 54.0 | ~50 m |
+
+  zone_1 is an OUTLIER in BOTH time and memory and zone SIZE explains neither.
+  It was the campaign's first zone (cold cache) and ran against the concurrent
+  H2080 campaign's heaviest phase. Do NOT budget alignment by image count on
+  this evidence. What IS reliable: the identity/registration tail fails on
+  every zone regardless, while the align and -exportLatestComponents succeed
+  throughout.
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **AlignZone's non-destructive identity capture CANNOT WORK as shipped:
+  `RegistrationExportParams.xml` does not exist, and the documented fallback
+  does not hold on a freshly booted instance.** `AlignZone.bat` sets
+  `RegistrationParams=%Metadata%\RegistrationExportParams.xml`, blanks it when
+  the file is absent, and relies on the comment *"-exportRegistration falls
+  back to the instance's current settings when no params xml is given"*. That
+  file is NOT shipped (its own comment says so - RealityScan must write it from
+  the "Export Registration" dialog) and does not exist anywhere on this
+  machine. A fresh headless instance has no "current settings" to fall back
+  to, so `-exportRegistration` fails immediately with **2147500037
+  (0x80004005)** and `AlignZone.bat` exits 1.
+  Measured NA165/H2063 2026-08-31 on BOTH zones run so far - zone_1 (4,060
+  images, commit peak 139.4 GB) and zone_2 (1,983 images, commit peak 70.2 GB,
+  min RAM 79.9 GB). Identical failure at identical step, three hours apart, at
+  opposite ends of the memory envelope: **it is not memory pressure**, it is
+  the missing params file. My first diagnosis blamed memory on the zone_1
+  evidence alone; zone_2 refuted it.
+  IMPACT - CORRECTED. I first called this bounded ('only provenance'). It is
+  worse than that: it BLOCKS THE MERGE. `merge_zones` refuses components
+  without a manifest ('Components WITHOUT a manifest are refused: the
+  feature-aware loop needs membership'), and the manifests are built from
+  the identity CSVs this step produces - the chain is
+  `-exportRegistration -> identity CSV -> member stems -> <rsalign>.manifest.json -> merge_zones`. No CSVs means no manifests means
+  no merge. Membership cannot be recovered from the .rsalign either: it is
+  binary TBSM and contains no image filenames at all (0 occurrences of
+  '.jpg' in a 151 MB component).
+  RECOVERY IS CHEAP THOUGH, because AlignZone saves before the destructive
+  loop: every zone keeps `zone_N.rsproj` AND an `RC_projects` dated copy, so
+  once a params file exists the identity capture can be re-run per zone in
+  minutes - load, select component, export - with NO re-alignment. An
+  8-hour campaign is not at risk.
+  `-exportLatestComponents` runs BEFORE the identity loop
+  and succeeds, so every zone still yields its components - zone_1 three
+  (2.7 GB), zone_2 seven (1.7 GB) - which is what a merge `.complist` consumes.
+  What is lost is per-component MEMBERSHIP: `<zone>/identity/` is empty on
+  every zone, so census and provenance cannot be computed. The zone is also
+  reported FAILED, which understates what actually happened.
+  FIX: export a registration preset once from the RealityScan GUI's "Export
+  Registration" dialog, drop it at
+  `RS_CLI/Metadata/RegistrationExportParams.xml` (or point
+  RS_REGISTRATION_PARAMS at it), and every later run gets identity data. Until
+  then the identity capture is dead code on any machine that has never saved
+  those settings. [NA168] (2026-08-31) ESTABLISHED
+
+- **No component manifest is EVER produced on this branch - two independent
+  breaks, and fixing either alone is not enough.** Root-caused NA165/H2063
+  2026-08-31 after `merge_zones` was found to be blocked:
+
+  **Break 1 - the CSV is never written.** `AlignZone.bat`'s `:identityOne`
+  calls `-exportRegistration "<identity>\<zone>_c<K>.csv"` with NO params
+  file, because `RS_CLI/Metadata/RegistrationExportParams.xml` is not shipped
+  and nothing generates or prompts for it. The .bat's own comment relies on
+  "-exportRegistration falls back to the instance's current settings", and
+  RealityScan's Help agrees - but a FRESHLY BOOTED HEADLESS instance has no
+  such settings, so the call fails with **2147500037 (0x80004005)** and the
+  zone exits 1. Confirmed on every zone run, at both ends of the memory
+  envelope. The settings can only be produced from the GUI's Export
+  Registration dialog (Help: "You can export the settings file from the
+  application in the Export Registration dialog"); `-exportGlobalSettings`
+  does not help - it writes a BINARY `.rcconfig` (TBES magic), not readable
+  keys.
+
+  **Break 2 - nothing would read the CSV even if it existed.** The .bat was
+  migrated to the non-destructive registration-CSV method; the Python side was
+  not. `RealityScanAlignment.capture_component_identities()` still reads the
+  RETIRED harvest layout - `identity_r<K>/*.xmp`, membership by successive
+  difference - not `identity/*.csv`. It therefore finds nothing and logs "No
+  usable identity harvests". (Its own comment says `identity_c<K>` while the
+  code reads `identity_r{index}` - the two halves disagree in the source.)
+  A grep confirms NOTHING in the repo parses `identity/*.csv`.
+
+  CONSEQUENCE: `<rsalign>.manifest.json` is never written, and `merge_zones`
+  refuses components without one, so the merge stage cannot run at all.
+  Membership is not recoverable from the `.rsalign`: it is binary TBSM with
+  ZERO occurrences of '.jpg' in a 151 MB component.
+
+  FIX (both halves needed): (a) export the registration preset once from the
+  GUI to `RS_CLI/Metadata/RegistrationExportParams.xml`; (b) parse the CSVs
+  into schema-v1 manifests - the format is pinned in the repo's own
+  `calibration.xml` as `#cameras N` / `#name,x,y,z,...` with the image name in
+  field 0, so a parser is ~20 lines against `component_manifest.build_manifest`.
+  Recovery for already-aligned zones is cheap because AlignZone saves BEFORE
+  the destructive loop: reload `zone_N.rsproj`, select each component, export
+  registration, build manifests - minutes per zone, no re-alignment.
+  [NA168] (2026-08-31) ESTABLISHED
+
+- **A zone can align to NOTHING and the workflow still reports success.**
+  NA165/H2063 zone_9: 4,244 images, `AlignZone.bat` ran clean end to end - no
+  ERROR lines, "Saving project BEFORE the destructive identity loop", then
+  "Identity capture finished after 0 component(s)" and a normal shutdown. The
+  saved `zone_9.rsproj` holds **4,244 inputs and ZERO components**.
+  NOT a threshold artifact: `-setMinComponentSize` gates the EXPORT, not the
+  project, which the other zones prove - zone_5 kept 11 components in its
+  project and exported 9, zone_3 kept 5 and exported 3, zone_7 kept 8 and
+  exported 7. Zone_9 kept none, so the aligner produced none.
+  NOT explained by size or position either: zone_9 spans 23:27:57-00:39:40
+  with a 36 x 72 m UTM extent, comparable to zone_8 (53 x 77 m, 2,385 images,
+  4 components) and tighter than zone_5 (56 x 231 m, 4,124 images, 9
+  components). It is mid-dive, not the ascent.
+  So a clean exit and "0 component(s)" is the ONLY signal that 19% of a dive
+  registered nothing.
+  MEASURED FOLLOW-UP: the imagery is NOT the cause. Ten consecutive frames
+  sampled at random from zone_9 and from zone_8 (a control that aligned to
+  4 components), two seeds each, at matched scale:
+    * ORB keypoints saturate a 20,000 cap in BOTH zones;
+    * consecutive-pair RANSAC inliers - what a solve actually consumes -
+      are 9,078 and 5,376 for zone_9 against 8,021 and 6,567 for the
+      control, i.e. zone_9 matches as well or better;
+    * the ROV is moving, 0.062-0.077 m/frame with zero stalled steps,
+      while the CONTROL was nearly stationary in one sample (0.09 m over
+      10 frames, 5 near-zero steps) and still aligned - so slow motion is
+      not fatal either.
+  AlignmentParams.xml carries no minimum-component-size, so the aligner did
+  not discard by size, and the 35 settings were identical across all zones.
+  Abundant matchable features + real baseline + identical settings + zero
+  components = a RUN-level failure, not a data one. Re-running the zone is
+  the indicated remedy and the batched images and flight log are still in
+  place, so it costs one zone's runtime.
+  Any driver that counts zones completed rather than
+  components produced will report a fully successful campaign with a fifth of
+  the imagery silently contributing nothing. Check component counts per zone,
+  not exit status. [NA168] (2026-08-31) ESTABLISHED

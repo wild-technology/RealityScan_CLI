@@ -34,6 +34,19 @@ from module_base.parameter import Parameter
 # superseded-by modules/cameras.json families[].mount - pending migration step (c+)
 MOUNTS: dict[str, dict | None] = {
     'zeuss': {'fwd': 0.5, 'lat': 0.0, 'down': 0.5, 'pitch': 30.0, 'p_acc': 30.0},
+    # NA168 forward-facing stills. pitch 0 is OWNER-STATED (2026-08-14:
+    # "both stillcam and sonycam are facing forward"); the lever arm is
+    # NOT surveyed and reuses the cinema magnitude. Only the tilt is a
+    # fact here - if the arm is ever measured, replace these.
+    #
+    # na168_stillcam is the SAME optical body as wca_cinema (owner:
+    # "stillcam is actually cinemacam", calibration group 3) but needs its
+    # own family because the family IS the mount identity. When this row
+    # was added wca_cinema still carried 45 deg down (the tilt sat on the
+    # wrong camera until the 2026-08-14 owner correction below); the rows
+    # stay separate so each cruise's mount remains independently editable.
+    'sony_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
+    'na168_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
     'legacy_camupper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 70.0, 'p_acc': 10.0},
     'legacy_cammid': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 20.0, 'p_acc': 10.0},
     'legacy_camlower': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 10.0, 'p_acc': 5.0},
@@ -45,7 +58,22 @@ MOUNTS: dict[str, dict | None] = {
     # briefly re-applied 2026-07-26 until a contradiction audit caught it).
     # Pitch accuracy is 15 deg, not 3-5: tighter FRAGMENTS the solve (PD-0).
     'wca_port': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
-    'wca_cinema': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
+    # OWNER CORRECTION 2026-08-14: "upper is 45 degrees down, cinema and mid
+    # are pointed directly forward ... it's how they were loaded on this
+    # cruise and NA165". Cinema was carrying 45 deg while wca_starboard (the
+    # upper) carried mount=None - the tilt was on the WRONG camera. Cinema
+    # is now 0 (forward) and the 45 moved to wca_upper below.
+    # BLAST RADIUS: pre-NA168 WCA datasets (the NA156 H2023/H2024 line) were
+    # solved with cinema at 45. The owner vouched for NA168 and NA165 only.
+    # If that line is ever reprocessed, give it a cruise-scoped family
+    # rather than moving this row back.
+    'wca_cinema': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 0.0, 'p_acc': 15.0},
+    # WCA upper stills (U###C). 45 deg down is owner-stated; the lever arm
+    # is NOT surveyed and reuses the cinema magnitude.
+    'wca_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
+    # Same camera as wca_upper, reached through the stager's UTC-first
+    # filename (the U###C prefix does not survive the rename).
+    'na168_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
     # Starboard's mount has NEVER been measured. The owner excludes Starboard
     # from photogrammetry, so this should not be reached - and if it is, the run
     # must SAY SO rather than invent a zero lever arm and a 0 deg tilt.
@@ -368,6 +396,36 @@ class GeoreferenceImages(RSModule):
                     'so it gets no position or orientation prior - measure the '
                     'mount or exclude the camera, do not guess')
         return mount
+
+    def _get_camera_focal_length(self, filename: str) -> float | None:
+        """35mm-equivalent focal length prior for this image, or None.
+
+        THE ONLY ROUTE this value has to RealityScan. It used to travel in
+        an XMP calibration sidecar; sidecars are now forbidden, and neither
+        -setPriorCalibrationGroup nor -setPriorLensGroup carries a focal
+        length (those two are the ONLY prior-setting CLI commands that
+        exist). The WCA units publish no EXIF focal length or lens tag
+        either, so without this column RealityScan solves focal from
+        scratch on the weakest imagery in the set.
+
+        FocalLength is a documented prior-calibration variable of
+        RealityScan.Import.CSVFlightLog - see Help/en-US/tools/
+        defineimportformat.htm. Requires the 14-column format
+        {D1F2A3B4-...}; modules/flightlog_format.assert_format_installed()
+        fails closed if that format is not registered in the RealityScan
+        INSTALL, because a missing format silently drops columns.
+
+        None (empty field) when the family or camera is unknown - the same
+        contract as the pitch prior: say nothing rather than invent a lens.
+
+        RECON 2026-09-03: 'forbidden' above is the remove-xmp-sidecars rule
+        (CLAUDE.md hard rule 0). On the reconciled tree main's align default
+        still delivers calibration via XMP sidecars pending decision D1
+        (FINDINGS [RECON] 2026-09-03); this column is the sidecar-free route
+        and is written regardless of which mechanism is in force.
+        """
+        cam = camera_registry.identify(filename)
+        return cam.focal_length_35mm if cam else None
 
     def _get_camera_offsets(self, filename: str) -> tuple[float, float, float]:
         """(forward, lateral, down) lever arm in metres; zeros when unknown."""
@@ -859,8 +917,14 @@ class GeoreferenceImages(RSModule):
         self.stats['orientation_accuracy_deg'] = yaw_acc
 
         with open(flight_log_filename, "w") as f:
+            # 14 columns, matching flight-log format {D1F2A3B4-...}. Column
+            # 13 (FocalLength) is the per-image calibration prior that used
+            # to live in an XMP sidecar; see _get_camera_focal_length.
+            # The format MUST be registered in the RealityScan install or
+            # trailing columns are dropped silently - flightlog_format
+            # .assert_format_installed() gates the import on exactly that.
             f.write(
-                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
+                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy;FocalLength\n"
             )
 
             for image in accepted_images:
@@ -891,7 +955,8 @@ class GeoreferenceImages(RSModule):
                     fmt(rc_roll),
                     fmt(yaw_acc),
                     fmt(pitch_acc),
-                    fmt(roll_acc)
+                    fmt(roll_acc),
+                    fmt(self._get_camera_focal_length(image["FILENAME"]))
                 ])
                 f.write(line + "\n")
 

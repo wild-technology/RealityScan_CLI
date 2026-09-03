@@ -2,12 +2,17 @@
   <entry key="s237l" value="0.5"/>
   <entry key="sfmFeatureDetectionQuality" value="RealityScan.FeatureDetector.RSa1"/>
   <entry key="s251l" value="0.05"/>
-  <entry key="sfmMaxFeaturesPerImage" value="0xc350"/>
+  <entry key="sfmMaxFeaturesPerImage" value="0x61a8"/>
   <entry key="sfmForceComponentRematch" value="false"/>
-  <!-- Global fallback only: mixed rig, so the real distortion model is
-       per-camera via XMP sidecars (fisheye Port/Starboard: division;
-       rectilinear Cinema/Zeuss: brown3). Division was the NA167
-       fisheye-era global. See docs/settings-evaluation-2026-07.md. -->
+  <!-- GLOBAL, and the only distortion model in play. This is an sfm* key,
+       so it applies to every camera in the scene; NO CLI command sets a
+       per-camera distortion model. The former per-camera split (fisheye
+       division / rectilinear brown3) was only ever reachable through XMP
+       calibration sidecars, and those were removed in favour of
+       -setPriorCalibrationGroup / -setPriorLensGroup (modules/
+       prior_groups.py), which carry group identity but NOT distortion.
+       Division is universal and is what ships. See
+       docs/settings-evaluation-2026-07.md. -->
   <entry key="sfmDistortionModel" value="Division"/>
   <entry key="sfmCameraPriorAccuracyRoll" value="10.0"/>
   <entry key="sfmMaxFeatureReprojectionError" value="1.29999995"/>

@@ -20,7 +20,10 @@ hash. Every fix ships with a test or an empirical verification transcript.
   calibration-prior-free; VOYIS values retained in cameras.json as
   reference data only. Explicit `-addImageWithCalibration` delivery
   validated; `-setPriorCalibrationGroup` proven silently
-  non-functional from the CLI. FINDINGS 2026-08-09.
+  non-functional from the CLI. FINDINGS 2026-08-09. Disputed by
+  remove-xmp-sidecars 2026-08-14 (`modules/prior_groups.py`, run on
+  NA168 H2080 / NA165 H2063 without measuring the effect) — open
+  decision D1, FINDINGS `[RECON] 2026-09-03`.
 - 2026-08-08/09 flight-log-first architecture (owner directive):
   docs/FLIGHTLOG_ARCHITECTURE.md design of record; probes closed
   (path rows match EXACT-PATH; params format GUID decorative on 2.2 —
@@ -157,8 +160,12 @@ hash. Every fix ships with a test or an empirical verification transcript.
   local-frame decision reads first-in-walk-order log; add unanimity check
   (partially fixed 7a22b51 — verify remaining gap).
 - Wildcard attach bypasses the per-instance lock contract.
-- AlignZone applier silently drops the 7 GUI-obfuscated keys
-  (s235l/s236l/s237l/s251l–s254l) from AlignmentParams.xml.
+- ~~AlignZone applier silently drops the 7 GUI-obfuscated keys
+  (s235l/s236l/s237l/s251l–s254l) from AlignmentParams.xml.~~ **CLOSED
+  2026-08-15.** Settings contract restated: the params XML is
+  authoritative for every key it names (all 35 now applied, verified by
+  parse); keys it does not name are explicitly UNDEFINED and inherit the
+  instance. `app*` keys fail closed rather than being dropped.
 - Direct .bat invocation path: instance-name collision at boot yields a
   raw HRESULT; frame guard not applied.
 - Silent 900 s shutdown-verify wait on cancel/failure; orphaned instance

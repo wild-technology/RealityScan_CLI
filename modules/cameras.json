@@ -138,11 +138,29 @@
       "principal_point_u": 0.01313138,
       "principal_point_v": -0.00757196,
       "opt_in_env": "RS_VOYIS_CALIB_SIDECARS"
+    },
+    "sony_a7m3": {
+      "_provenance": "NA168 H2082 still_cam_sony. Sony ILCE-7M3 (a7 III) + Sony E 20mm F2.8 (LensModel \"E 20mm F2.8 F050\"), 3936x2624. Focal 20.0 mm read from the EXIF sub-IFD (FocalLength and FocalLengthIn35mmFilm both 20) - MEASURED from the imagery, not inherited. Its own calibration/lens group (7; 1-4 rig, 5-6 Voyis) because it is a different physical sensor from the 1920x1080 dualHD.",
+      "calibration_group": "7",
+      "calibration_prior": "Approximate",
+      "focal_length_35mm": 20.0,
+      "lens_distortion_group": "7",
+      "lens_distortion_prior": "Approximate",
+      "distortion_model": "brown3"
+    },
+    "starboard_1to1": {
+      "_provenance": "NA168 H2080 upper, CROPPED to 1:1 (owner directive 2026-08-16). Physically the same unit as 'starboard', but the imagery is no longer the same sensor format: 5760x3240 -> 3190x3190, taken at x=1285,y=0 so the bottom 50 px are dropped. 35mm-equivalent focal scales with the SENSOR DIAGONAL, which the crop shortens from 6608.7 px to 4511.3 px (ratio 1.46491), so 16.0 -> 23.44 mm. Its OWN calibration/lens group (8; 1-4 rig, 5-6 Voyis, 7 Sony) because cropped and uncropped frames do not share intrinsics and must not be solved as one group. Distortion stays division (same fisheye glass). Uncropped 'starboard' is untouched - NA165/NA167 wca_upper and legacy_camupper still use it.",
+      "calibration_group": "8",
+      "calibration_prior": "Approximate",
+      "focal_length_35mm": 23.44,
+      "lens_distortion_group": "8",
+      "lens_distortion_prior": "Approximate",
+      "distortion_model": "division"
     }
   },
   "families": [
     {
-      "_comment": "The family is the MOUNT identity, the camera the OPTICAL identity - deliberately separate: the same Cinema unit sits 10 deg down under legacy camlower names and 45 deg under WCA names, so keying geometry off the camera would silently change every legacy dataset by tens of degrees. Mount fields: fwd/lat/down = lever arm in metres (+ahead/+right/+below the vehicle reference point), pitch = camera down-tilt from the vehicle forward axis (deg), p_acc = claimed accuracy of that pitch prior (deg). A null mount means WARN, never zeros. WCA Port/Cinema lever arms VALIDATED on two independent metrically sound solves (bow c2, zone_2/PD-2b): C above P by +1.12 m and +1.03 m against the +1.00 m implied here; do NOT flatten them - the 0.22 m / 0.00 m FINDINGS figures came from the 0.175-scale hull and are scale-corrupted. WCA p_acc is 15 deg, not 3-5: tighter FRAGMENTS the solve (PD-0). timestamp_formats port the WCA/ZEUSS/WCA2025 constants; modules/file_metadata_parser.py accepts both forms for any family.",
+      "_comment": "The family is the MOUNT identity, the camera the OPTICAL identity - deliberately separate: the same Cinema unit sits 10 deg down under legacy camlower names and 0 deg (forward) under WCA names since the 2026-08-14 owner correction (45 deg before it), so keying geometry off the camera would silently change every legacy dataset by tens of degrees. Mount fields: fwd/lat/down = lever arm in metres (+ahead/+right/+below the vehicle reference point), pitch = camera down-tilt from the vehicle forward axis (deg), p_acc = claimed accuracy of that pitch prior (deg). A null mount means WARN, never zeros. WCA Port/Cinema lever arms VALIDATED on two independent metrically sound solves (bow c2, zone_2/PD-2b): C above P by +1.12 m and +1.03 m against the +1.00 m implied here; do NOT flatten them - the 0.22 m / 0.00 m FINDINGS figures came from the 0.175-scale hull and are scale-corrupted. WCA p_acc is 15 deg, not 3-5: tighter FRAGMENTS the solve (PD-0). timestamp_formats port the WCA/ZEUSS/WCA2025 constants; modules/file_metadata_parser.py accepts both forms for any family.",
       "family": "wca_port",
       "pattern": "^p\\d+c",
       "camera": "port",
@@ -168,13 +186,14 @@
         "fwd": 1.0,
         "lat": 0.0,
         "down": 0.0,
-        "pitch": 45.0,
+        "pitch": 0.0,
         "p_acc": 15.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S",
         "%Y%m%dT%H%M%SZ"
-      ]
+      ],
+      "_comment": "OWNER CORRECTION 2026-08-14: \"upper is 45 degrees down, cinema and mid are pointed directly forward ... it is how they were loaded on this cruise and NA165\". Cinema carried 45 deg while wca_starboard (the upper) carried mount=None - the tilt was on the WRONG camera. BLAST RADIUS: pre-NA168 WCA datasets (NA156 H2023/H2024) were solved with cinema at 45; the owner vouched for NA168/NA165 only. Give that line a cruise-scoped family rather than moving this row back. Lever arms are unchanged and remain the VALIDATED ones."
     },
     {
       "_comment": "Starboard's mount has NEVER been measured. The owner excludes Starboard from photogrammetry, so this should not be reached - and if it is, the run must SAY SO rather than invent a zero lever arm and a 0 deg tilt. Inventing rig numbers is what produced the Port-1 m incident.",
@@ -299,6 +318,76 @@
       "family": "voyis_right_original",
       "pattern": "(^|[_])image_right_",
       "camera": "voyis_right"
+    },
+    {
+      "_comment": "NA168 forward-facing mount (owner, 2026-08-14: \"both stillcam and sonycam are facing forward\"). pitch 0 = no down-tilt from the vehicle forward axis. Lever arm is NOT surveyed - it reuses the cinema/zeuss 1.0/0.0/1.0 magnitude; only the TILT is owner-stated. p_acc 15 deg per PD-0 (3-5 fragments the solve). Replaces the Zeuss mount this entry first inherited.",
+      "family": "sony_stillcam",
+      "pattern": "(^|[_\\-.])sonystill([_\\-.]|$)",
+      "camera": "sony_a7m3",
+      "era": "all",
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 1.0,
+        "pitch": 0.0,
+        "p_acc": 15.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S"
+      ]
+    },
+    {
+      "_comment": "NA168 forward-facing mount (owner, 2026-08-14: \"both stillcam and sonycam are facing forward\"). pitch 0 = no down-tilt from the vehicle forward axis. Lever arm is NOT surveyed - it reuses the cinema/zeuss 1.0/0.0/1.0 magnitude; only the TILT is owner-stated. p_acc 15 deg per PD-0 (3-5 fragments the solve). Same optical body as wca_cinema (group 3) but its own family because MOUNT is the family identity: wca_cinema carried 45 deg down when this row was added (corrected to 0 on 2026-08-14) and the rows stay separate so neither cruise's mount can silently re-point the other. Matched on the _na168still token the H2082/H2077 stager writes, so it can never shadow the C###C prefix rows.",
+      "family": "na168_stillcam",
+      "pattern": "(^|[_\\-.])na168still([_\\-.]|$)",
+      "camera": "cinema",
+      "era": "all",
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 1.0,
+        "pitch": 0.0,
+        "p_acc": 15.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S"
+      ]
+    },
+    {
+      "_comment": "WCA upper stills (U###C prefix, e.g. U001C6642_20241117052233). Owner-stated 2026-08-14: UPPER IS 45 DEG DOWN, cinema and mid point directly forward. Note wca_starboard previously carried mount=None (never measured) while the 45 deg sat on wca_cinema - see FINDINGS. Lever arm still NOT surveyed; it reuses the wca_cinema magnitude. Only the tilt is owner-stated. p_acc 15 per PD-0 (3-5 fragments the solve).",
+      "family": "wca_upper",
+      "pattern": "^u\\d+c",
+      "camera": "starboard",
+      "era": "wca",
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 0.0,
+        "pitch": 45.0,
+        "p_acc": 15.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
+      ]
+    },
+    {
+      "_comment": "NA168 WCA upper stills staged as <UTC14>_na168upper.jpg. Same physical camera as wca_upper (the U###C prefix) - starboard, calibration group 4, DIVISION because it is the fisheye - but the stager rewrites the name to a UTC-first form, so the U###C prefix is gone and a token family is needed. Owner 2026-08-14: upper is 45 deg DOWN. Lever arm not surveyed; reuses the cinema magnitude.",
+      "family": "na168_upper",
+      "pattern": "(^|[_\\-.])na168upper([_\\-.]|$)",
+      "camera": "starboard_1to1",
+      "era": "all",
+      "mount": {
+        "fwd": 1.0,
+        "lat": 0.0,
+        "down": 0.0,
+        "pitch": 45.0,
+        "p_acc": 15.0
+      },
+      "timestamp_formats": [
+        "%Y%m%d%H%M%S",
+        "%Y%m%dT%H%M%SZ"
+      ]
     }
   ],
   "rigs": {

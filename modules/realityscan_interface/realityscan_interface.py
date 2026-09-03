@@ -9,6 +9,8 @@ from module_base.parameter import Parameter
 from .. import align_fingerprint
 from .. import camera_registry
 from .. import component_manifest
+from .. import flightlog_format
+from .. import prior_groups
 from ..flight_logs import (ensure_frame_match, find_flight_log,
                            epsg_for_utm_zone,
                            utm_zone_from_flight_log_name,
@@ -396,7 +398,83 @@ class RealityScanAlignment(RSModule):
                     'template as-is (frame checked: it does not declare UTM). '
                     'Verify this cruise really uses local:1 priors!')
 
+            # FAIL CLOSED on an unregistered flight-log format. RealityScan
+            # resolves gpsLogFileFormat against flightlogs.xml in its INSTALL
+            # directory; when the GUID is absent there the import does not
+            # error - it falls back to a stock parser and silently DROPS the
+            # trailing columns. Because our first ten columns coincide with
+            # stock {97F08A22}, position and raw yaw/pitch/roll still landed
+            # and nothing looked wrong, while YawAccuracy/PitchAccuracy/
+            # RollAccuracy were discarded on EVERY import (found 2026-08-16;
+            # previously found, hand-patched and LOST again - see
+            # testing/PRIORS_DISTORTION_TEST_PLAN.md item 1). Checking after
+            # the import cannot detect this, so it is checked before.
+            flightlog_format.assert_format_installed(
+                flight_log_params_path, self.logger)
+
+        # Sidecars must describe the images that are ACTUALLY here. A stale
+        # set is silent: pose-bearing sidecars re-import the previous solve's
+        # poses (B7), orphans describe images that are gone, wrong-group ones
+        # contradict the registry. Owner, 2026-08-14: "you must check the
+        # sidecar files are always up to date - this is a recurring and
+        # dangerous bug." Refuse the align rather than corrupt the solve.
+        # hygiene_root, not input_folder: in pool layout the sidecars sit
+        # beside the POOL images.
+        camera_registry.assert_sidecars_current(hygiene_root, self.logger)
+
         files_before = set(os.listdir(output_folder))
+
+        # Calibration/lens prior groups, applied IN-SESSION instead of via
+        # XMP sidecars beside the images (modules/prior_groups.py). The WCA
+        # JPGs are EXIF-identical and NA168's dualHD channels share one
+        # footprint, so without an explicit group RealityScan calibrates
+        # physically different cameras as one. Delivered as a file because
+        # a regexp carries delimiters cmd would split (hard rule 8).
+        groups_file = os.path.join(log_dir, f'prior_groups_{scene_name}.cmds')
+        # Walk hygiene_root: in pool layout the zone folder holds only an
+        # .imagelist, and -selectImage <regexp> only ever matches images
+        # already in the scene, so the wider walk is safe.
+        try:
+            families = prior_groups.write_command_file(hygiene_root, groups_file)
+        except Exception as exc:                                  # noqa: BLE001
+            self.logger.error('Prior-group generation failed for %s: %s - '
+                              'aligning WITHOUT explicit calibration groups',
+                              hygiene_root, exc)
+            families = 0
+        if families:
+            os.environ['RS_PRIOR_GROUPS_FILE'] = groups_file
+            self.logger.info('Applying prior calibration/lens groups for %d '
+                             'camera family/families (%s)', families, groups_file)
+        else:
+            # No recognised family: leave the variable UNSET so AlignZone
+            # skips the block entirely rather than replaying a stale file
+            # from a previous zone.
+            os.environ.pop('RS_PRIOR_GROUPS_FILE', None)
+            self.logger.warning(
+                'No known camera family under %s - aligning without explicit '
+                'calibration groups; cameras will be grouped by EXIF alone',
+                hygiene_root)
+
+        # FAIL CLOSED on the registration-export format, the OUT direction
+        # of the guard above. AlignZone.bat's identity capture reads each
+        # component's membership with -exportRegistration, which resolves
+        # RegistrationExportParams.xml's calexFileFormatId against
+        # calibration.xml in the INSTALL directory - and an unresolved id
+        # does not error, it falls back to the instance's current export
+        # settings and writes a different layout with exit code 0. Same
+        # failure shape as the flight-log format, same treatment.
+        #
+        # install_all_managed() is the ONLY code that puts the RUMI export
+        # formats there and had no callers at all until this line, so the
+        # export was reproducible only on a machine where someone had run
+        # `python -m modules.flightlog_format --install` by hand. Install
+        # first, then verify; the CSV content check in AlignZone.bat's
+        # :identityOne is the second half of the gate.
+        flightlog_format.install_all_managed(logger=self.logger)
+        flightlog_format.assert_calibration_format_installed(
+            os.environ.get('RS_REGISTRATION_PARAMS')
+            or os.path.join(METADATA_DIR, 'RegistrationExportParams.xml'),
+            self.logger)
 
         # RS_ALIGN_SCRIPT: test-cell override (calibration ladder
         # 2026-08-08). A variant .bat with the SAME contract can be
@@ -423,23 +501,51 @@ class RealityScanAlignment(RSModule):
                 'identity harvest?) - restored/removed for hygiene',
                 leftover)
 
-        # RUNS ON EVERY EXIT PATH. The identity harvest MOVES pose sidecars
-        # out of the image tree and never re-exports the last-peeled
-        # component's, leaving those images with NO calibration prior at
-        # all; sanitize_and_census above only touches sidecars that are
-        # STILL PRESENT, so it cannot repair that. This call used to sit
-        # after the failure and no-component returns below, i.e. it was
-        # skipped precisely when the operator re-runs - re-opening the
-        # FINDINGS 2026-07-25 defect (796 of 4,540 zone_1 images left
-        # ungrouped, which CONFOUNDED PD-4/PD-4a) that the same entry
-        # records as fixed (audit 2026-08-07). Idempotent: (0, 0) on a
-        # complete tree.
-        created, no_camera = camera_registry.ensure_calibration_sidecars(
-            hygiene_root)
-        if created:
+        # RUNS ON EVERY EXIT PATH when the XMP identity harvest is the
+        # mechanism in force (the default - see the switch below). The
+        # harvest MOVES pose sidecars out of the image tree and never
+        # re-exports the last-peeled component's, leaving those images with
+        # NO calibration prior at all; sanitize_and_census above only
+        # touches sidecars that are STILL PRESENT, so it cannot repair that.
+        # This call used to sit after the failure and no-component returns
+        # below, i.e. it was skipped precisely when the operator re-runs -
+        # re-opening the FINDINGS 2026-07-25 defect (796 of 4,540 zone_1
+        # images left ungrouped, which CONFOUNDED PD-4/PD-4a) that the same
+        # entry records as fixed (audit 2026-08-07). Idempotent: (0, 0) on
+        # a complete tree.
+        #
+        # SWITCH (merge 2026-09-03, owner rules R1/R3; decision D1 open -
+        # FINDINGS [RECON] 2026-09-03): RS_LEGACY_XMP_IDENTITY unset or "1"
+        # = AlignZone ran the XMP harvest (main default) and this repair
+        # runs; "0" = AlignZone ran the non-destructive -exportRegistration
+        # capture and this repair is SKIPPED. Same test as the top of
+        # AlignZone.bat's identity section - keep them in step.
+        #
+        # Why the skip branch exists (remove-xmp-sidecars 2026-08-16, owner
+        # directive "nothing has sidecar files for images"): on the CSV path
+        # nothing strips priors, so the repair is obsolete AND harmful - it
+        # WROTE per-image XMPs carrying DistortionModel=brown3 and
+        # FocalLength35mm=16.0 into the batch tree, contradicting the GLOBAL
+        # sfmDistortionModel=Division and duplicating the group the CLI had
+        # already set via prior_groups.py. Measured on H2080 2026-08-16:
+        # 6,024 sidecars re-created across zone_2/zone_3 in a tree that
+        # assert_sidecars_current had just certified as clean ("0
+        # sidecar(s), 4194 image(s) without one"), so the NEXT run would
+        # have imported priors nobody chose. On that path, if an image needs
+        # a calibration prior, add its family to cameras.json instead.
+        xmp_harvest = os.environ.get('RS_LEGACY_XMP_IDENTITY', '1') != '0'
+        if xmp_harvest:
+            created, no_camera = camera_registry.ensure_calibration_sidecars(
+                hygiene_root)
+            if created:
+                self.logger.info(
+                    'Restored %d calibration sidecar(s) displaced by the '
+                    'identity harvest in %s', created, hygiene_root)
+        else:
             self.logger.info(
-                'Restored %d calibration sidecar(s) displaced by the identity '
-                'harvest in %s', created, hygiene_root)
+                'Calibration-sidecar repair skipped (RS_LEGACY_XMP_IDENTITY=0: '
+                'non-destructive identity capture; priors are applied '
+                'in-session via prior_groups.py)')
 
         if not result.success:
             self.logger.error(f"RealityScan workflow failed for {input_folder}: "
@@ -483,10 +589,10 @@ class RealityScanAlignment(RSModule):
         except OSError as exc:
             self.logger.warning('Could not write %s: %s',
                                 align_fingerprint.FINGERPRINT_NAME, exc)
-        # (The calibration-sidecar repair ran above, on every exit path -
-        # capture_component_identities also regenerates each member's
-        # sidecar as it walks the harvest, so nothing is lost by the move.)
-        camera_registry.ensure_calibration_sidecars(input_folder)
+        # (No second calibration-sidecar repair here: the every-exit-path
+        # call above already ran, gated on RS_LEGACY_XMP_IDENTITY. Base's
+        # duplicate success-path call was dropped on the sidecars side as a
+        # literal duplicate; nothing else writes into the image tree here.)
 
         registered = 0
         for mp in manifest_paths:
@@ -512,16 +618,142 @@ class RealityScanAlignment(RSModule):
 
     # Bounded per-component identity loop: zones fragment into 2-5
     # components; 20 is a generous ceiling against a pathological scene.
+    # Legacy-harvest reader only - the CSV reader enumerates what is on
+    # disk and needs no ceiling.
     MAX_IDENTITY_COMPONENTS = 20
 
     def capture_component_identities(self, input_folder, output_folder,
                                      scene_name, flight_log_path):
-        """Build manifests from the identity_r<K> harvest folders written
-        by AlignZone.bat's in-session identity loop.
+        """Build manifests for the components AlignZone.bat just exported.
 
         Public because drivers that invoke AlignZone.bat directly (the
         testing/ PD cells) must reuse THIS implementation - a component
         without a manifest is refused by the feature-aware merge.
+
+        Two on-disk layouts, tried in that order:
+
+        1. ``identity/<scene>_c<K>.csv`` - written when AlignZone.bat runs
+           the non-destructive capture (RS_LEGACY_XMP_IDENTITY=0; the
+           sidecars branch's default, opt-in on the reconciled tree pending
+           decision D1). -exportRegistration runs against the SELECTED
+           component, so membership is READ, not inferred: one CSV per
+           component, written into the output tree only, nothing deleted.
+        2. ``identity_r<K>/*.xmp`` - the destructive harvest, the DEFAULT
+           on the reconciled tree (RS_LEGACY_XMP_IDENTITY unset or 1) and
+           still the shape of any harvest an older run left on disk.
+
+        LAYOUT, not the env var, selects the reader: a harvest sitting in
+        an output folder must stay readable whether or not the variable
+        that produced it is still set in this process.
+        """
+        manifest_paths = self.__manifests_from_identity_csv(
+            output_folder, scene_name, flight_log_path)
+        if not manifest_paths:
+            manifest_paths = self.__manifests_from_xmp_harvest(
+                input_folder, output_folder, scene_name, flight_log_path)
+        if not manifest_paths:
+            self.logger.error(
+                'Neither identity CSVs (%s) nor a usable identity_r<K> '
+                'harvest under %s - manifests unavailable for zone %s',
+                os.path.join(output_folder, 'identity'), output_folder,
+                scene_name)
+        return manifest_paths
+
+    @staticmethod
+    def __identity_csv_members(path):
+        """Image filenames from one -exportRegistration CSV.
+
+        Shape pinned by the repo's own calibration.xml (RUMI format
+        {E7C3B1A9-...-0A48}): '#' comment lines, then one row per camera
+        whose field 0 is the image filename. The trailing columns are the
+        per-camera prior READBACK, not membership, so they are ignored
+        here. A row with an empty name is DROPPED rather than becoming a
+        phantom member - camera_count is the number the merge does its
+        subset-sum attribution with, so a malformed row must not inflate
+        it.
+        """
+        images = []
+        with open(path, encoding='utf-8-sig', errors='replace') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                name = line.split(',', 1)[0].strip().strip('"')
+                if name:
+                    images.append(name)
+        return images
+
+    def __manifests_from_identity_csv(self, output_folder, scene_name,
+                                      flight_log_path):
+        """Manifests from the non-destructive identity/<name>.csv layout.
+
+        The .bat names the CSV and the exported .rsalign from the SAME
+        %comp_index%, so the two always agree by name and there is no
+        ordinal reconstruction to get wrong. A CSV whose .rsalign is
+        missing is skipped rather than shifting every component after it -
+        the failure mode successive difference could not avoid.
+        """
+        identity_dir = os.path.join(output_folder, 'identity')
+        if not os.path.isdir(identity_dir):
+            return []
+
+        def ordinal(name):
+            # '<scene>_c9' must precede '<scene>_c10'; an unexpected name
+            # keeps a stable alphabetical place after the numbered ones.
+            tail = name.rsplit('_c', 1)[-1]
+            return (0, int(tail), name) if tail.isdigit() else (1, 0, name)
+
+        names = sorted((os.path.splitext(f)[0]
+                        for f in os.listdir(identity_dir)
+                        if f.lower().endswith('.csv')), key=ordinal)
+        manifest_paths = []
+        for component_name in names:
+            rsalign_path = os.path.join(output_folder,
+                                        component_name + '.rsalign')
+            if not os.path.isfile(rsalign_path):
+                self.logger.warning(
+                    'identity/%s.csv has no %s beside it - the identity '
+                    'capture ended mid-component; no manifest for it',
+                    component_name, os.path.basename(rsalign_path))
+                continue
+            csv_path = os.path.join(identity_dir, component_name + '.csv')
+            try:
+                members = self.__identity_csv_members(csv_path)
+            except OSError as exc:
+                self.logger.error('Could not read %s: %s - no manifest for %s',
+                                  csv_path, exc, component_name)
+                continue
+            if not members:
+                self.logger.error(
+                    '%s holds no camera rows - membership for %s is unknown; '
+                    'no manifest written', csv_path, component_name)
+                continue
+
+            bbox = component_manifest.bbox_from_flight_log(
+                flight_log_path or None, members)
+            if flight_log_path and bbox is None:
+                self.logger.warning(
+                    'No flight-log rows matched the %d member(s) of %s - '
+                    'manifest bbox_utm will be null', len(members), component_name)
+
+            manifest = component_manifest.build_manifest(
+                zone=scene_name, component=component_name,
+                rsalign_path=rsalign_path, images=members, bbox_utm=bbox)
+            manifest_paths.append(component_manifest.write_manifest(manifest))
+            self.logger.info(
+                'Manifest %s: %d camera(s), bbox %s',
+                os.path.basename(manifest_paths[-1]), len(members),
+                'null' if bbox is None else
+                '[%.1f, %.1f, %.1f, %.1f]' % tuple(bbox))
+        return manifest_paths
+
+    def __manifests_from_xmp_harvest(self, input_folder, output_folder,
+                                     scene_name, flight_log_path):
+        """Manifests from the identity_r<K> harvest layout.
+
+        This is the DEFAULT identity path after the 2026-09-03 merge;
+        RS_LEGACY_XMP_IDENTITY=0 selects the non-destructive CSV capture
+        above instead (open decision D1, FINDINGS [RECON] 2026-09-03).
 
         Naming rule (FINDINGS 2026-07-23, four consistent datapoints):
         -exportXMP writes STEM-named sidecars, while
@@ -530,10 +762,10 @@ class RealityScanAlignment(RSModule):
         harvests the stems of ALL components still in the scene
         (identity_r<K>), then the maximal component <scene>_c<K> is
         exported and deleted. members(c<K>) = stems(r<K>) - stems(r<K+1>).
-        The harvest also displaced the calibration sidecars beside the
-        images (pose exports overwrite <stem>.xmp and the harvest MOVES
-        them), so calibration-only sidecars are regenerated here for
-        every member (B7 hygiene is automatic).
+        The harvest also displaces the calibration sidecars beside the
+        images, which is why the remove-xmp-sidecars line made the CSV
+        capture its default; main kept the harvest as the default pending
+        D1.
         """
         # stem -> (image basename, full path), one walk of the zone tree
         stem_to_image = {}
@@ -581,13 +813,14 @@ class RealityScanAlignment(RSModule):
                     members.append(stem)
                     continue
                 members.append(entry[0])
-                # Regenerate the displaced calibration-only sidecar
-                camera = camera_registry.identify(entry[0])
-                if camera is not None:
-                    sidecar = os.path.splitext(entry[1])[0] + '.xmp'
-                    if not os.path.exists(sidecar):
-                        with open(sidecar, 'w', encoding='utf-8') as fh:
-                            fh.write(camera_registry.calibration_xmp(camera))
+                # NO SIDECAR REGENERATION here (removed 2026-08-16 on the
+                # sidecars side; kept removed at the merge as a literal
+                # duplicate of the every-exit-path repair in __align_zone,
+                # which already recreated every missing sidecar for known,
+                # non-env-gated cameras before this reader runs - and,
+                # unlike that repair, this writer never honoured
+                # Camera.opt_in_env). Nothing writes into the image tree
+                # from this loop.
 
             bbox = component_manifest.bbox_from_flight_log(
                 flight_log_path or None, members)
@@ -605,11 +838,6 @@ class RealityScanAlignment(RSModule):
                 os.path.basename(manifest_paths[-1]), len(members),
                 'null' if bbox is None else
                 '[%.1f, %.1f, %.1f, %.1f]' % tuple(bbox))
-
-        if not manifest_paths:
-            self.logger.error(
-                'No usable identity harvests under %s - manifests '
-                'unavailable for zone %s', output_folder, scene_name)
         return manifest_paths
 
     @staticmethod

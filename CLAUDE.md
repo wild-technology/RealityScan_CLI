@@ -22,7 +22,7 @@ Read in this order, then say in one line what you are about to do:
    index. It sends any RealityScan question to one of 14 documents in one
    hop. Do not answer a CLI question from general knowledge; route it.
 
-**Do not read `FINDINGS.md` cover to cover** (2,400+ lines). It is a
+**Do not read `FINDINGS.md` cover to cover** (5,300+ lines). It is a
 grep target: search it for the command, key, or symptom you care about.
 Same for `docs/` and `testing/` — they are cited sources, not orientation
 reading.
@@ -33,8 +33,9 @@ Baseline before touching anything:
 py -3.13 -m pytest testing -q
 ```
 
-498 tests, ~30 s. If they do not pass on a clean checkout, stop and report
-— you have inherited a broken tree and anything you build on it is suspect.
+639 tests pass (1 skipped offline: geoid grid), ~25 s. If they do not pass
+on a clean checkout, stop and report — you have inherited a broken tree and
+anything you build on it is suspect.
 
 ## Working practices for any session
 
@@ -177,7 +178,9 @@ Exceptions that must NOT be renamed:
   runnable model/export/publish stages over the same drivers.
 - `merge_zones.py` — iterative component-merge driver (escalating
   mechanism/flags, per-attempt RealityScan.log snapshots + census,
-  `merge_report.json`).
+  `merge_report.json`). `--resume` (default true) reuses converged clusters from a prior
+  `merge_report.json` whose `run_fingerprint` matches the current inputs and
+  settings (sidecars branch 2026-09-03; `testing/test_merge_resume.py`).
 - `grow_zone.py` — incremental grow-from-neighbor driver, the workaround
   for zones that fail to align standalone.
 - `run_models.py` — per-component model generation, scale-gated.
@@ -200,12 +203,22 @@ Exceptions that must NOT be renamed:
   through the shared `:run` subroutine: `-delegateTo %RS_INSTANCE%` →
   double `-waitCompleted` with a grace period → abort if
   `RS_CLI/Errors/errors.txt` is non-empty.
-  - Production: `AlignZone` (canonical per-zone align — applies
-    `AlignmentParams.xml`, saves the scene, then runs the destructive
-    in-session identity loop: per lap `-exportXMP` stems are harvested to
-    `identity_r<K>`, the maximal component is renamed `<zone>_c<K>`,
-    exported and deleted; membership = successive difference, census =
-    manifest sum; quits WITHOUT saving; NO model generation),
+  - Production: `AlignZone` (canonical per-zone align — adds the zone,
+    pins both CRS scopes from `RS_PROJECT_CRS`, replays the
+    `RS_PRIOR_GROUPS_FILE` command file, applies EVERY
+    `AlignmentParams.xml` key (refusing `app*` keys), imports the flight
+    log LAST, aligns, saves the scene, then
+    by DEFAULT runs the destructive in-session identity loop: per lap
+    `-exportXMP` stems are harvested to `identity_r<K>`, the maximal
+    component is renamed `<zone>_c<K>`, exported and deleted; membership
+    = successive difference, census = manifest sum; quits WITHOUT saving;
+    NO model generation. `RS_LEGACY_XMP_IDENTITY=0` selects the
+    non-destructive alternative instead — `-exportLatestComponents`, then
+    per component `-selectComponent` / `-renameSelectedComponent` /
+    `-exportRegistration` into `<output>/identity/<zone>_c<K>.csv` using
+    `RegistrationExportParams.xml`, read back by
+    `capture_component_identities` (layout-driven). Which one is the
+    default is open decision D1 — see hard rule 0),
     `MergeZoneComponents` (`.complist` of in-place `.rsalign` paths;
     merge|align mode; min size; `key:value` settings — driven iteratively
     by `merge_zones.py`), `GenerateModel` (mesh/cull/texture/simplify
@@ -243,6 +256,12 @@ Exceptions that must NOT be renamed:
 - `RS_CLI/Metadata/*.xml` — parameter presets passed to CLI commands.
   Documented profile by profile in
   `docs/rs-reference/09-xml-parameter-files.md`.
+  `RegistrationExportParams.xml` (sidecars branch, 2026-09-03) is the
+  `-exportRegistration` preset for the non-destructive identity capture:
+  its `calexFileFormatId` resolves against `calibration.xml` in the
+  RealityScan INSTALL dir, so `flightlog_format.install_all_managed()` +
+  `assert_calibration_format_installed()` run before every AlignZone;
+  override the path with `RS_REGISTRATION_PARAMS`.
 
 **Domain modules**
 
@@ -258,6 +277,34 @@ Exceptions that must NOT be renamed:
   EPSG → FlightLogParams XML; never hand-edit the template's zone).
   Consumers match by NORMALIZED BASENAME. Architecture and the P1/P3/P4
   probe closures: `docs/FLIGHTLOG_ARCHITECTURE.md`.
+- `modules/flightlog_format.py` — guarantees the flight-log FORMAT is
+  installed where RealityScan looks. Format GUIDs (`gpsLogFileFormat`)
+  resolve against `flightlogs.xml` **in the RealityScan install
+  directory**, not this repo, and a missing GUID does NOT error — the
+  import falls back and silently DROPS the columns that format defined.
+  `assert_format_installed()` runs before every import and SELF-HEALS by
+  merging the repo's formats. It also manages `calibration.xml`
+  (registration export). Both install files are reverted by RealityScan
+  updates, which is why repair is code, not a chore (this bug shipped
+  twice — see FINDINGS 2026-08-16).
+- `modules/prior_groups.py` — calibration/lens prior GROUPING applied
+  in-session instead of via calibration XMPs beside the images.
+  `write_command_file(image_root, dest)` turns the `camera_registry`
+  filename families present under `image_root` into one
+  `-deselectAllImages` / `-selectImage "<regexp>"` /
+  `-setPriorCalibrationGroup <n>` / `-setPriorLensGroup <n>` block per
+  family, written as a command FILE (hard rule 8) that
+  `realityscan_interface.py` hands to `AlignZone.bat` through
+  `RS_PRIOR_GROUPS_FILE` (unset when no family is recognised, so a stale
+  file is never replayed; generated from the pool root in pool layout).
+  Grouping only — numeric intrinsics come from the flight log's
+  `FocalLength` column (or, on main's default path, the calibration XMP).
+  **OPEN DECISION D1** (FINDINGS `[RECON] 2026-09-03 - prior-groups
+  claim: main and remove-xmp-sidecars disagree`): main measured
+  `-setPriorCalibrationGroup` as silently non-functional from the
+  delegated CLI (2026-08-08, solved-focal-equality oracle); the sidecars
+  branch ran NA168 H2080 and NA165 H2063 with this delivery in the
+  workflow but never measured the effect. Treat neither claim as settled.
 - `modules/calibration_sidecars.py` — per-eye approximate calibration XMPs
   from manufacturer values, plus the sensor registry. The A/B/C ladder
   verdict (prior content collapses registration) is in `FINDINGS.md`.
@@ -322,8 +369,9 @@ section wins. Every rule traces to a recorded incident.
    ORIGINALS are, where the NAV is, where OUTPUTS go, and what is
    PROTECTED. Owner signs off; then work.
 2. **Source data is read-only, forever.** This pipeline writes sidecars
-   into input folders — an agent aligns only from trees it created
-   (hardlinks/copies) or with explicit consent.
+   into input folders (hard rule 0 forbids this; main's default identity
+   harvest is exactly such a writer, pending D1) — an agent aligns only
+   from trees it created (hardlinks/copies) or with explicit consent.
 3. **Protected paths** (charter list) are never touched, cleaned, or
    reorganized. Deliverables are never overwritten — collisions are
    stop-and-ask.
@@ -349,6 +397,28 @@ section wins. Every rule traces to a recorded incident.
 
 ## Hard rules
 
+0. **NO XMP SIDECARS. The input image tree is READ-ONLY to this
+   pipeline.** Owner directive 2026-08-16: "Sidecars are forbidden in the
+   workflow — they keep messing things up." The reason is structural, not
+   stylistic: an `.xmp` beside an image is READ BY RealityScan on import,
+   so anything left there silently becomes a PRIOR for the next run (7,694
+   inherited sidecars once confounded a distortion A/B; 6,024 were
+   re-created on H2080 in a tree that had just been certified clean).
+   Priors travel IN via the flight log — position, orientation, their
+   accuracies, and `FocalLength` (a documented CSV flight-log variable,
+   along with PrincipalU/V, Skew, AspectRatio and the distortion
+   coefficients) — plus `-setPriorCalibrationGroup` / `-setPriorLensGroup`
+   in-session. Identity travels OUT via `-exportRegistration` into the
+   OUTPUT tree. Anything a stage produces goes to the output tree; if a
+   new writer needs to put a file next to an image, the design is wrong.
+   NOTE (merge 2026-09-03): main's `AlignZone` identity default still
+   harvests `-exportXMP` sidecars in-session (and `realityscan_interface.py`
+   repairs calibration XMPs on every exit path); the non-destructive
+   `-exportRegistration` CSV path is kept behind `RS_LEGACY_XMP_IDENTITY=0`,
+   the VOYIS sidecar writer stays env-gated off (`RS_VOYIS_CALIB_SIDECARS`),
+   and `prior_groups.py` groups run on every align — which mechanism
+   RealityScan honours is open decision D1, FINDINGS `[RECON] 2026-09-03 -
+   prior-groups claim: main and remove-xmp-sidecars disagree`.
 1. Never add a second way to launch/monitor RealityScan — extend
    `RealityScanCLI` and the `:run` pattern instead.
 2. Never infer completion from process names (`tasklist`); the pre-2.x code

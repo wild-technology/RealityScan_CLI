@@ -137,7 +137,8 @@ def test_measured_mounts_are_unchanged_by_the_assumption():
     assert MOUNTS['legacy_cammid']['pitch'] == 20.0
     assert MOUNTS['legacy_camlower']['pitch'] == 10.0
     assert MOUNTS['wca_port']['pitch'] == 0.0
-    assert MOUNTS['wca_cinema']['pitch'] == 45.0
+    assert MOUNTS['wca_cinema']['pitch'] == 0.0
+    assert MOUNTS['wca_upper']['pitch'] == 45.0
     assert MOUNTS['wca_starboard'] is None
     for family in NO_ASSUMED_MOUNT_FAMILIES:
         assert MOUNTS[family] is None

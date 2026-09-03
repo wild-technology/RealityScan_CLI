@@ -22,8 +22,24 @@ families (owner-confirmed 2026-07-23):
 Calibration/lens groups are per PHYSICAL camera, never per lens type:
 Port and Starboard share a lens spec but are different units with
 different real intrinsics. Groups matter because the WCA JPGs are
-EXIF-identical (Z CAM E2-F6, no focal tag) -- without the XMP groups
+EXIF-identical (Z CAM E2-F6, no focal tag) -- without an explicit group
 RealityScan cannot separate the cameras at all.
+
+Those groups are now applied IN-SESSION through the RealityScan CLI
+(`-selectImage` + `-setPriorCalibrationGroup` / `-setPriorLensGroup`, see
+modules/prior_groups.py), NOT by writing XMP sidecars beside the images.
+The sidecar path is retired: it was never the only mechanism, and owning
+every image-adjacent .xmp is what let the identity harvest strip 17.5% of
+zone_1's calibration priors and sweep ON2026's hand-placed files.
+
+RECON 2026-09-03: on the reconciled tree the paragraph above is the
+remove-xmp-sidecars position, not a settled fact. main's align path still
+writes and harvests XMP by DEFAULT (ensure_calibration_sidecars below runs
+on every exit path of __align_zone unless RS_LEGACY_XMP_IDENTITY=0), and
+the in-session prior-group file (modules/prior_groups.py,
+RS_PRIOR_GROUPS_FILE) is applied alongside it. Which of the two RealityScan
+honours from the delegated CLI is open decision D1 - FINDINGS.md
+`[RECON] 2026-09-03`.
 
 Mount geometry (pitch offsets, lever arms) keys off family() below, not
 off the camera: the same Cinema unit sits 10 deg down under legacy
@@ -203,6 +219,18 @@ def _assert_parity() -> None:
 _assert_parity()
 
 
+def families_in_match_order() -> tuple[dict, ...]:
+    """The family specs in the SAME most-specific-first order family() walks.
+
+    Exposed for modules/prior_groups.py, which must emit its per-family
+    `-selectImage` / `-setPrior*Group` commands in this order: the patterns
+    deliberately overlap (an unanchored zeuss/herc token would otherwise
+    beat an anchored WCA prefix), so a later selection must be allowed to
+    re-group images an earlier, broader one already touched.
+    """
+    return _FAMILIES
+
+
 def family(filename: str) -> str | None:
     """Mount family for an image filename, or None when unknown.
 
@@ -342,6 +370,123 @@ def ensure_calibration_sidecars(image_root: str) -> tuple[int, int]:
         logger.warning('%d image(s) of unknown camera type left without a '
                        'calibration sidecar', skipped)
     return created, skipped
+
+
+def assert_sidecars_current(image_root: str, logger=None, strict: bool = True) -> dict:
+    """Refuse to align against sidecars that do not match the images present.
+
+    A STALE sidecar set is silent and dangerous, and it recurs. The failure
+    modes this catches, all seen in practice:
+
+    - POSE-BEARING sidecars beside images. RealityScan auto-imports those as
+      EXACT-POSE priors on any later add (bug B7), so a re-align inherits the
+      previous solve's poses and cannot disagree with it.
+    - ORPHANED sidecars - a `.xmp` whose image is gone. That means the tree
+      was rebuilt from a different image set and the sidecars were not, so
+      they describe images that are not here. On 2026-08-14 an H2082 batch
+      carried 7,694 sidecars for a set that had become 4,903 images after
+      thumbnail contamination was removed.
+    - WRONG-GROUP sidecars - the calibration group does not match what the
+      filename's family resolves to, i.e. the registry changed (or the file
+      was written for another cruise) and the sidecars were not regenerated.
+
+    Returns a dict of counts. Raises RuntimeError when strict and anything
+    is wrong, because every one of these silently corrupts a solve rather
+    than failing it.
+    """
+    import logging
+    import os
+
+    log = logger or logging.getLogger(__name__)
+    exts = ('.jpg', '.jpeg', '.png', '.heif')
+    pose: list[str] = []
+    orphaned: list[str] = []
+    wrong_group: list[str] = []
+    uncovered = 0
+    sidecars = 0
+
+    for root, _dirs, files in os.walk(image_root):
+        # identity_r<K>/ folders are the harvest's OWN output - pose sidecars
+        # live there by design and are not beside any image.
+        if os.path.basename(root).startswith('identity_'):
+            continue
+        names = {f.lower() for f in files}
+        for filename in files:
+            if not filename.lower().endswith('.xmp'):
+                continue
+            sidecars += 1
+            path = os.path.join(root, filename)
+            stem = os.path.splitext(filename)[0]
+            if not any((stem + e).lower() in names for e in exts):
+                orphaned.append(path)
+                continue
+            try:
+                content = open(path, encoding='utf-8', errors='replace').read()
+            except OSError:
+                continue
+            if 'xcr:Position' in content:
+                pose.append(path)
+            camera = identify(filename)
+            if camera is not None:
+                g = camera.calibration_group
+                # Both sidecar shapes this registry writes: the element form
+                # from calibration_xmp() and the attribute form from
+                # _calibration_xmp_full_intrinsics() (principal-point cameras,
+                # i.e. the env-gated VOYIS eyes). Reconciled 2026-09-03.
+                if (f'<Camera:CalibrationGroup>{g}<' not in content
+                        and f'xcr:CalibrationGroup="{g}"' not in content):
+                    wrong_group.append(path)
+        for filename in files:
+            if not filename.lower().endswith(exts):
+                continue
+            if identify(filename) is None:
+                continue
+            if (os.path.splitext(filename)[0] + '.xmp').lower() not in names:
+                uncovered += 1
+
+    result = {
+        'sidecars': sidecars,
+        'pose_bearing': len(pose),
+        'orphaned': len(orphaned),
+        'wrong_group': len(wrong_group),
+        'images_without_sidecar': uncovered,
+    }
+
+    # Pose-bearing sidecars are WARNED, not refused. The align path already
+    # announces them ("HEADS UP: ... contains N pose-bearing .xmp") because
+    # the identity harvest moves them out and never returns them, and that
+    # announcement is a documented contract with a test behind it
+    # (testing/test_align_and_rollback_safety.py). Raising here would take
+    # that warning away and turn a handled case into a hard stop.
+    if pose:
+        log.warning('%d pose-bearing sidecar(s) beside images under %s - they '
+                    'auto-import as EXACT-POSE priors (bug B7) and the harvest '
+                    'will move them out without returning them.',
+                    len(pose), image_root)
+
+    problems = []
+    if orphaned:
+        problems.append(f'{len(orphaned)} ORPHANED sidecar(s) with no matching '
+                        f'image - the tree was rebuilt but the sidecars were '
+                        f'not, e.g. {os.path.basename(orphaned[0])}')
+    if wrong_group:
+        problems.append(f'{len(wrong_group)} sidecar(s) whose calibration group '
+                        f'contradicts the registry, e.g. '
+                        f'{os.path.basename(wrong_group[0])}')
+
+    if problems:
+        message = (f'Sidecars under {image_root} are NOT current: '
+                   + '; '.join(problems)
+                   + '. Regenerate them (ensure_calibration_sidecars) or delete '
+                     'them before aligning - a stale sidecar corrupts a solve '
+                     'silently rather than failing it.')
+        if strict:
+            raise RuntimeError(message)
+        log.error(message)
+    else:
+        log.info('Sidecar check OK under %s: %d sidecar(s), %d image(s) '
+                 'without one', image_root, sidecars, uncovered)
+    return result
 
 
 def sanitize_and_census(image_root: str) -> tuple[int, int, int]:

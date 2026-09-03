@@ -43,6 +43,7 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 from module_base.settings_store import SettingsStore, realityscan_env  # noqa: E402
+from modules.flight_logs import crs_for_flight_log  # noqa: E402
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa: E402
 
 
@@ -140,6 +141,14 @@ def main() -> int:
     parser.add_argument('--log_dir', default=None,
                         help='driver log directory '
                              '(default: <exports parent>/logs)')
+    parser.add_argument('--flight-log', default=None,
+                        help='zone-tagged flight log whose UTM zone becomes '
+                             'the export CRS; overrides --crs')
+    parser.add_argument('--crs', default=None,
+                        help='output coordinate system as authority:id '
+                             '(e.g. epsg:32653). Without one the export '
+                             'uses an inherited RS_PROJECT_CRS or, failing '
+                             'that, whatever CRS the app last held')
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -170,6 +179,38 @@ def main() -> int:
                      "report's final_components first.", args.names)
         return 1
     logger.info('exporting %d component(s): %s', len(names), ', '.join(names))
+
+    # Output CRS. The exports are raw metric coordinates; the coordinate
+    # SYSTEM they are stamped with comes from the application, and nothing
+    # here ever set it - H2077 (a 53N cruise) exported as
+    # "epsg:32757 - UTM zone 57S", the stale FlightLogParams placeholder
+    # zone (2026-08-14). write_flight_log_params only governs the CRS of
+    # the flight log being IMPORTED, never the export.
+    # Merge 2026-09-03: the remove-xmp-sidecars branch carried this as
+    # RS_OUTPUT_CRS; it is folded into main's repo-wide RS_PROJECT_CRS, the
+    # variable realityscan_interface.py sets at align time from the flight
+    # log's zone and AlignZone.bat / ExportDeliverables.bat consume. An
+    # inherited RS_PROJECT_CRS is honoured when neither flag is given;
+    # --flight-log overrides both.
+    crs = args.crs or os.environ.get('RS_PROJECT_CRS')
+    if args.flight_log:
+        derived = crs_for_flight_log(args.flight_log)
+        if derived:
+            crs = derived.lower()
+        else:
+            logger.error('--flight-log %r carries no UTM zone tag, so no '
+                         'export CRS could be derived from it',
+                         args.flight_log)
+            return 1
+    if crs:
+        os.environ['RS_PROJECT_CRS'] = crs
+        logger.info('export coordinate system (RS_PROJECT_CRS): %s', crs)
+    else:
+        logger.warning(
+            'No export CRS given (--crs / --flight-log) and RS_PROJECT_CRS '
+            'is not set. The models will be stamped with whatever coordinate '
+            'system the application last held, which is NOT necessarily '
+            'this cruise - pass one.')
 
     # Prompt-with-default on a TTY, silent stored/fallback when unattended
     # (SettingsStore.ask); values already in the environment are never
