@@ -169,7 +169,14 @@ def decimate(rs, comp, seed_suffix, budget, export_dir, log):
     unwrap = os.path.join(META, 'Unwrapping_AdaptiveTexel_4k.xml')
     simplify = os.path.join(META, 'SimplifySmooth_80per_Params.xml')
     reproj = os.path.join(META, 'ReprojectionParams.xml')
-    export = os.path.join(META, 'ModelExportParamsObj.xml')
+    # METRIC, not the stock OBJ preset. ModelExportParamsObj.xml carries
+    # MvsExportScale{X,Y,Z}=100 and the Unreal transformation preset, which is
+    # right for a game engine and wrong for survey: it would put these OBJs at
+    # 100x the scale of every deliverable already shipped for this dive (the
+    # H2060 exports used ModelExportParamsOBJ_NiraParts.xml, scale 1.0). The
+    # metric variant is scale 1.0 and writes jpg for BOTH the colour and normal
+    # layers, which is what was asked for.
+    export = os.path.join(META, 'ModelExportParamsObj_Metric.xml')
     for f in (tex, unwrap, simplify, reproj, export):
         if not os.path.exists(f):
             return dict(rec, status='fail', why=f'missing parameter file {f}')
@@ -276,6 +283,11 @@ def main():
     ap.add_argument('--seed-suffix', default='Simplified_Textured')
     ap.add_argument('--report', default='')
     ap.add_argument('--save-every', type=int, default=1)
+    ap.add_argument('--crs', default=os.environ.get('RS_PROJECT_CRS', ''),
+                    help='output coordinate system to pin, e.g. epsg:32702. A project '
+                         'accumulates a LIST of coordinate systems across cruises and the '
+                         'export writes whichever is selected - H2060 exports were labelled '
+                         'epsg:32655 (UTM 55N), a leftover, because nothing pinned it.')
     ap.add_argument('--keep-stale', action='store_true',
                     help='do not delete the superseded *_Simplified_Textured / '
                          '*_HighPoly_Textured models after a verified export')
@@ -288,6 +300,16 @@ def main():
     if not rs.alive():
         raise SystemExit(f"instance {args.instance} unreachable - boot it and -load "
                          f"the project first (this script never resets a scene)")
+
+    # Pin the OUTPUT scope before any export. ExportDeliverables.bat already
+    # does this; run_decimate.py must too, or the .rsInfo inherits an arbitrary
+    # entry from the project's coordinate-system list.
+    if args.crs:
+        rs.cmd('-setOutputCoordinateSystem', args.crs)
+        print(f'output coordinate system pinned to {args.crs}', flush=True)
+    else:
+        print('WARNING: no --crs given; the export will label itself with whichever '
+              'coordinate system the project happens to have selected', flush=True)
 
     report_path = args.report or os.path.join(root, 'decimate_report.json')
     comps = ([c.strip() for c in args.components.split(',') if c.strip()]
@@ -345,7 +367,7 @@ def main():
 
     rs.cmd('-save')
     with open(report_path, 'w', encoding='utf-8') as fh:
-        json.dump({'budget': args.budget, 'models': results}, fh, indent=2)
+        json.dump({'budget': args.budget, 'crs': args.crs, 'models': results}, fh, indent=2)
 
     ok = [r for r in results if r.get('status') in ('ok', 'skip')]
     log(f'=== {len(ok)}/{len(comps)} at or under {args.budget:,} triangles ===')
