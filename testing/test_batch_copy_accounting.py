@@ -16,6 +16,10 @@ Also here:
   - rs_settings.json's 'batch' section beat the command line: with the
     stored min_zone_size=300 and --b_min 2000, the batcher zoned at 300 -
     and both keys feed the provenance fingerprint
+  - and beat it again for a value that EQUALS the declared default:
+    --b_max_zone 4000 (default 4000) read as "not supplied", because
+    supplied-ness was inferred as value != default, so the stored
+    max_zone_size=8000 won and a zone landed at 7,842 against a 6,000 cap
 
 Offline: no RealityScan, no plotting (the zone maths is bypassed - these
 tests exercise the copy accounting and the log parser directly).
@@ -313,7 +317,10 @@ def test_stored_value_still_wins_when_the_caller_said_nothing(unattended):
     EXPLICIT answer."""
     store = FakeStore({'batch': {'min_zone_size': 300}})
     module = _module(store)
-    module.params = {'batch_min_zone_size': _int_param(1000, 1000)}
+    # Never assigned: a Parameter still holding its declared default is
+    # the state main.parse_arguments leaves an absent flag in.
+    module.params = {'batch_min_zone_size': Parameter(
+        'n', None, 'n', int, 1000, prompt_user=False)}
     assert module._explicit_param('batch_min_zone_size') is None
     assert module._stored_default('min_zone_size', 1000, None) == 300
     assert module._prompt_int('min_zone_size', 'Minimum zone size', 1000,
@@ -329,6 +336,43 @@ def test_cli_float_also_outranks_the_stored_value(unattended):
     without = _module(FakeStore({'batch': {'overlap_percent': 5.0}}))
     assert without._prompt_float('overlap_percent', 'Overlap', 12.0,
                                  0.0, 100.0) == 5.0
+
+
+def test_a_cli_value_equal_to_the_default_still_outranks_the_store(unattended):
+    """Measured on NA168: --b_max_zone 4000 against the declared default
+    of 4000. Supplied-ness was inferred as value != default, so the flag
+    read as absent, the stored batch.max_zone_size=8000 won, and a zone
+    came out at 7,842 images against the 6,000 cap."""
+    store = FakeStore({'batch': {'max_zone_size': 8000}})
+    module = _module(store)
+    module.params = {'batch_max_zone_size': _int_param(4000, 4000)}
+    assert module._explicit_param('batch_max_zone_size') == 4000
+    assert module._prompt_int('max_zone_size', 'Maximum zone size', 4000,
+                              cli_value=4000) == 4000
+
+
+def test_parse_arguments_marks_a_flag_that_matches_the_default(unattended):
+    """The seam the loss came through: argparse's None is the last record
+    that a flag was absent, so parse_arguments has to write it down.
+    prompt_user=False here, so nothing is written to rs_settings.json."""
+    main_mod = pytest.importorskip('main')
+
+    def _max_zone():
+        return Parameter(name='Maximum Zone Size', cli_short='b_max',
+                         cli_long='b_max_zone', type=int, default_value=4000,
+                         description='Maximum images in a zone',
+                         prompt_user=False)
+
+    given = {'batch_max_zone_size': _max_zone()}
+    main_mod.parse_arguments(['main.py', '--b_max_zone', '4000'], given,
+                             QUIET)
+    assert given['batch_max_zone_size'].get_value() == 4000
+    assert given['batch_max_zone_size'].is_explicit()
+
+    absent = {'batch_max_zone_size': _max_zone()}
+    main_mod.parse_arguments(['main.py'], absent, QUIET)
+    assert absent['batch_max_zone_size'].get_value() == 4000
+    assert not absent['batch_max_zone_size'].is_explicit()
 
 
 def test_explicit_param_ignores_an_unset_parameter():

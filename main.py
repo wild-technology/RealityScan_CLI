@@ -180,6 +180,13 @@ def parse_arguments(argv, params, logger) -> None:
 
     for p in params.values():
         val = getattr(args, p.cli_long, None)
+        # argparse's None is the ONLY record that a flag was absent, and
+        # it dies with this loop: a supplied value is allowed to EQUAL the
+        # declared default, so no consumer downstream can tell the two
+        # apart by comparing them. Measured on NA168 - --b_max_zone 4000
+        # (default 4000) read as absent, the stored batch.max_zone_size
+        # won, and a zone came out at 7,842 images against a 6,000 cap.
+        supplied = val is not None
         if val is None and p.prompt_user:
             last_value = settings.get('main', p.cli_long, p.get_default_value())
             prompt = f'{p.get_description()}'
@@ -205,9 +212,13 @@ def parse_arguments(argv, params, logger) -> None:
                 val = p.get_default_value()
             if val is not None:
                 settings.set('main', p.cli_long, val)
+                # Just persisted as this run's answer, so it IS one -
+                # typed, or the stored 'main' value taken on an EOF stdin.
+                # Only the declared-default fallback below is unanswered.
+                supplied = True
         if val is None and not p.prompt_user:
             val = p.get_default_value()
-        p.set_value(val)
+        p.set_value(val, explicit=supplied)
 
 def update_parameters(params, modules) -> None:
     """

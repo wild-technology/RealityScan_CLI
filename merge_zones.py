@@ -1128,6 +1128,89 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
 # Main
 # ----------------------------------------------------------------------
 
+def run_fingerprint(input_keys, ladder_name, merge_scope, pair_gate,
+                    loss_tolerance_frac, min_size, assemble_only) -> dict:
+    """Everything that changes what a cluster's result MEANS.
+
+    Resume is only sound when the new run would have asked the same question.
+    The input SET matters (a different set repartitions the clusters), as do
+    the ladder, the scope and the pair gate; loss_tolerance matters because it
+    changes what counts as an acceptable fusion, which is an acceptance
+    semantic on the deliverable itself. Order is deliberately ignored -
+    sorted() - because input order does not affect partitioning.
+    """
+    return {
+        'inputs': sorted(input_keys),
+        'ladder': ladder_name,
+        'merge_scope': merge_scope,
+        'pair_gate': pair_gate,
+        'loss_tolerance': loss_tolerance_frac,
+        'min_size': min_size,
+        'assemble_only': bool(assemble_only),
+    }
+
+
+def load_resumable_clusters(output_dir, fingerprint, logger) -> dict:
+    """Converged clusters from a prior report, keyed by their input set.
+
+    Refuses rather than guesses. A prior report written by a DIFFERENT
+    question (other ladder, other gate, other inputs) is not resumable, and
+    saying so loudly beats silently blending two runs' semantics into one
+    deliverable.
+
+    Also verifies every carried component file still EXISTS: a record whose
+    .rsalign was moved or cleaned away would otherwise sail through into the
+    assembly complist and fail there, hours later.
+    """
+    path = os.path.join(output_dir, 'merge_report.json')
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding='utf-8') as f:
+            prior = json.load(f)
+    except (OSError, ValueError) as exc:
+        logger.warning('--resume: could not read %s (%s) - starting fresh',
+                       path, exc)
+        return {}
+
+    prior_fp = prior.get('run_fingerprint')
+    if prior_fp is None:
+        logger.warning(
+            '--resume: %s predates run fingerprints, so it cannot be shown to '
+            'describe the same question - starting fresh. This run writes a '
+            'fingerprint, so a future restart WILL be resumable.', path)
+        return {}
+    if prior_fp != fingerprint:
+        differing = sorted(k for k in set(prior_fp) | set(fingerprint)
+                           if prior_fp.get(k) != fingerprint.get(k))
+        logger.warning('--resume: prior report describes a DIFFERENT run '
+                       '(differs on: %s) - starting fresh, nothing reused',
+                       ', '.join(differing) or 'unknown')
+        return {}
+
+    out, skipped = {}, 0
+    for rec in prior.get('clusters') or []:
+        if not rec.get('converged'):
+            skipped += 1
+            continue
+        missing = [c.get('rsalign') for c in rec.get('final_components') or []
+                   if not (c.get('rsalign') and os.path.isfile(c['rsalign']))]
+        if missing:
+            logger.warning('--resume: %s converged previously but %d of its '
+                           'component file(s) are gone - re-merging it',
+                           rec.get('cluster'), len(missing))
+            skipped += 1
+            continue
+        key = frozenset(rec.get('inputs') or [])
+        if key:
+            out[key] = rec
+    logger.info('--resume: %d converged cluster(s) reusable from %s%s',
+                len(out), path,
+                (', %d not reusable (unconverged or missing files)' % skipped)
+                if skipped else '')
+    return out
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger('merge_zones')
@@ -1182,6 +1265,11 @@ def main() -> int:
                         help='true = skip the merge ladder entirely; collect '
                              'every input component into ONE georeferenced '
                              'project and stop (hull-import staging)')
+    parser.add_argument('--resume', default=None,
+                        help='true (default) = reuse CONVERGED clusters from an '
+                             'existing merge_report.json in --output and merge '
+                             'only what is left. false = start fresh, ignoring '
+                             'any prior report')
     parser.add_argument('--scale_gate', default=None,
                         help='true (default) = refuse to MODEL a component whose '
                              'metric scale is out of band or unmeasurable')
@@ -1243,6 +1331,7 @@ def main() -> int:
         logger.error('--pair_gate must be overlap or border, got %r', pair_gate)
         return 1
     assemble_only = truthy(ask('assemble_only', args.assemble_only, 'false'))
+    resume = truthy(ask('resume', args.resume, 'true'))
     loss_tolerance_frac = float(ask('loss_tolerance', args.loss_tolerance, 0.0))
     if not 0.0 <= loss_tolerance_frac < 1.0:
         logger.error('--loss_tolerance must be a fraction in [0, 1), got %r',
@@ -1334,12 +1423,43 @@ def main() -> int:
                             'twin_resolutions': plan.get('twin_resolutions', [])},
               'clusters': []}
 
+    report['run_fingerprint'] = run_fingerprint(
+        report['inputs'], ladder_name, merge_scope, pair_gate,
+        loss_tolerance_frac, min_size, assemble_only)
+
     def flush():
         with open(os.path.join(output_dir, 'merge_report.json'), 'w',
                   encoding='utf-8') as f:
             json.dump(report, f, indent=2)
 
+    # Reuse converged clusters from a previous run of the SAME ladder over the
+    # SAME inputs. A cross-zone merge costs hours per cluster - NA165/H2063
+    # lost a 12 h run to a harness restart with three clusters already
+    # converged - and each converged cluster is a finished, self-contained
+    # result already on disk. Only CONVERGED clusters are reused; one that was
+    # mid-ladder when the run died is redone from its inputs.
+    resumable = {}
+    if resume:
+        resumable = load_resumable_clusters(
+            output_dir, report['run_fingerprint'], logger)
+
     for i, cluster in enumerate(clusters):
+        # Match on the INPUT SET, never the cluster index: partition_clusters
+        # numbers clusters by iteration order, so a changed input list would
+        # silently pair one cluster's record with another cluster's work.
+        prior = resumable.get(
+            frozenset(component_analysis.component_key(m) for m in cluster))
+        if prior is not None:
+            logger.info('cluster_%d: RESUMED from a previous run - %d input(s) '
+                        'already converged to %d component(s), not re-merged',
+                        i, len(prior.get('inputs') or []),
+                        len(prior.get('final_components') or []))
+            prior = dict(prior)
+            prior['cluster'] = 'cluster_%d' % i
+            prior['resumed'] = True
+            report['clusters'].append(prior)
+            flush()
+            continue
         if assemble_only:
             # Owner-directed staging (2026-07-28): the inputs are already at
             # their maximum - collect, georeference, save. No ladder. Every

@@ -35,17 +35,23 @@ set "AlignmentParams=%Metadata%\AlignmentParams.xml"
 :: a variant params file without touching the canonical Metadata copy.
 if defined RS_ALIGN_PARAMS if not "%RS_ALIGN_PARAMS%" == "" set "AlignmentParams=%RS_ALIGN_PARAMS%"
 
-:: Registration-export settings for the identity capture below. OPTIONAL:
-:: -exportRegistration falls back to the instance's current settings when
-:: no params xml is given. Unlike AlignmentParams this file is NOT shipped -
-:: RealityScan writes it from its own "Export Registration" dialog (the
-:: same way every other Metadata\*.xml here was produced), and the format
-:: keys are not documented well enough to hand-author safely. Drop the
-:: exported file at the path below (or point RS_REGISTRATION_PARAMS at it)
-:: to make the export reproducible instead of instance-dependent.
+:: Registration-export settings for the identity capture below. REQUIRED,
+:: and SHIPPED: Metadata\RegistrationExportParams.xml names the export
+:: format by GUID under calexFileFormatId - the exact structural analogue
+:: of gpsLogFileFormat in FlightLogParams.xml.
+::
+:: It used to be optional, on the belief that RealityScan had to write it
+:: from its own "Export Registration" dialog because the keys were "not
+:: documented well enough to hand-author safely". That belief came from a
+:: probe that searched RealityScan.exe for the keys as ASCII; the exe
+:: stores them as UTF-16LE, so the probe could not have found them
+:: whatever the answer was (FINDINGS 2026-09-02: run the control before
+:: trusting a negative result). The fallback it justified is worse than
+:: the gap it covered - -exportRegistration with no params xml blocks
+:: forever headless (HANDOFF), and with the WRONG format it writes a CSV
+:: the membership parser cannot read, silently, exit code 0.
 set "RegistrationParams=%Metadata%\RegistrationExportParams.xml"
 if defined RS_REGISTRATION_PARAMS if not "%RS_REGISTRATION_PARAMS%" == "" set "RegistrationParams=%RS_REGISTRATION_PARAMS%"
-if not exist "%RegistrationParams%" set "RegistrationParams="
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
@@ -63,6 +69,11 @@ if "%min_component_size%" == "" set "min_component_size=50"
 
 if not exist "%input_dir%" ( echo ERROR: input directory not found: %input_dir% & exit /b 1 )
 if not exist "%AlignmentParams%" ( echo ERROR: AlignmentParams.xml not found: %AlignmentParams% & exit /b 1 )
+:: Hard error, exactly like AlignmentParams above. A missing registration
+:: params file used to blank %RegistrationParams% and fall through to the
+:: instance's own export settings - the silent-fallback shape this
+:: workflow refuses everywhere else.
+if not exist "%RegistrationParams%" ( echo ERROR: RegistrationExportParams.xml not found: %RegistrationParams% & exit /b 1 )
 if not exist "%output_dir%" mkdir "%output_dir%"
 
 echo Zone Input: %input_dir%
@@ -251,14 +262,48 @@ exit /b 0
 :identityOne
 call :run -selectComponent "%~1" || exit /b 1
 call :run -renameSelectedComponent "%scene_name%_c%comp_index%" || exit /b 1
-if defined RegistrationParams (
-    call :run -exportRegistration "%identity_dir%\%scene_name%_c%comp_index%.csv" "%RegistrationParams%" || exit /b 1
-) else (
-    call :run -exportRegistration "%identity_dir%\%scene_name%_c%comp_index%.csv" || exit /b 1
-)
+set "registration_csv=%identity_dir%\%scene_name%_c%comp_index%.csv"
+call :run -exportRegistration "%registration_csv%" "%RegistrationParams%" || exit /b 1
+
+:: GATE ON CONTENT, NOT ON THE EXIT CODE. RealityScan resolves this file's
+:: calexFileFormatId against calibration.xml in its INSTALL directory, and
+:: an id it cannot resolve does NOT error - it falls back to the instance's
+:: current export settings and writes some other layout, exit code 0. That
+:: is the same silent-fallback that dropped the flight log's orientation
+:: accuracies on every import before 2026-08-16, so a green :run here
+:: proves nothing about the format. Our format's body opens with
+:: "#cameras $(cameraCount)", so line 1 of the CSV is the proof.
+:: /n plus a "1:" match pins it to the FIRST line; the inner match is
+:: deliberately NOT anchored with /b so a byte-order mark ahead of the
+:: hash cannot fail a good export.
+if not exist "%registration_csv%" goto :registrationMissing
+%SystemRoot%\System32\findstr.exe /n /r /c:"#cameras [0-9][0-9]*" "%registration_csv%" | %SystemRoot%\System32\findstr.exe /b /c:"1:" >nul
+if errorlevel 1 goto :registrationFormat
+
 call :run -exportSelectedComponentDir "%output_dir%" || exit /b 1
 set /a comp_index+=1
 exit /b 0
+
+:: Both of these return from :identityOne (exit /b 1), NOT goto :fail - the
+:: caller already turns a non-zero return into goto :fail, and jumping
+:: there from inside the call would run the teardown twice.
+:registrationMissing
+echo ERROR: -exportRegistration wrote no CSV for %scene_name%_c%comp_index%
+echo   expected: %registration_csv%
+echo   The delegated command reported success, which is exactly what a
+echo   silent params/format fallback looks like. Check %RegistrationParams%
+echo   and that its calexFileFormatId GUID is defined in RealityScan's own
+echo   calibration.xml: python -m modules.flightlog_format --install
+exit /b 1
+
+:registrationFormat
+echo ERROR: %registration_csv% does not start with the "#cameras N" header.
+echo   The export succeeded but ran a DIFFERENT format: an unresolved
+echo   calexFileFormatId falls back to the instance's current export
+echo   settings instead of erroring, and the membership parser cannot read
+echo   the CSV that produces. Check %RegistrationParams% and reinstall the
+echo   RUMI formats: python -m modules.flightlog_format --install
+exit /b 1
 
 :legacyIdentity
 echo WARNING: RS_LEGACY_XMP_IDENTITY=1 - using the retired destructive XMP

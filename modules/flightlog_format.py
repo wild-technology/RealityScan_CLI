@@ -104,11 +104,23 @@ def installed_flightlogs(install_dir: str | None = None) -> str | None:
     return installed_path('flightlogs.xml', install_dir)
 
 
-def configured_guid(params_path: str) -> str | None:
-    """The gpsLogFileFormat GUID named by a FlightLogParams xml."""
+# The key a params xml uses to name a format by GUID, one per direction:
+# priors IN through the flight log, solved identity OUT through the
+# registration export. calex* = CALibration EXport; that namespace was found
+# by probing RealityScan.exe as UTF-16LE, which is how the exe stores its
+# setting keys - an ASCII probe finds NONE of them, and a control test with
+# four keys known to be valid confirms the probe, not the absence
+# (FINDINGS 2026-09-02).
+FLIGHTLOG_FORMAT_KEY = 'gpsLogFileFormat'
+CALIBRATION_EXPORT_FORMAT_KEY = 'calexFileFormatId'
+
+
+def configured_guid(params_path: str,
+                    key: str = FLIGHTLOG_FORMAT_KEY) -> str | None:
+    """The format GUID a params xml names under `key`."""
     root = _parse(params_path)
     for entry in root.findall('entry'):
-        if entry.get('key') == 'gpsLogFileFormat':
+        if entry.get('key') == key:
             value = (entry.get('value') or '').strip()
             m = _GUID_RE.search(value)
             return m.group(0).upper() if m else (value or None)
@@ -197,6 +209,70 @@ def assert_format_installed(params_path: str, logger=None,
     if logger:
         logger.info('Flight-log format %s installed in %s (%s columns)',
                     guid, inst, n if n is not None else '?')
+    return guid
+
+
+def assert_calibration_format_installed(params_path: str, logger=None,
+                                        install_dir: str | None = None) -> str:
+    """Raise unless the registration-export format named by params_path is
+    installed.
+
+    The OUT direction of the mechanism assert_format_installed() guards on
+    the way in, and it fails the same way: RealityScan resolves
+    `calexFileFormatId` against calibration.xml in its INSTALL directory,
+    and an id it cannot resolve does NOT error - it falls back to the
+    instance's current export settings and writes a CSV in some other
+    layout, exit code 0. So the GUID is checked BEFORE the export, and
+    AlignZone.bat checks the exported CSV's first line after it. Neither
+    half is sufficient alone: this one cannot see which format actually
+    ran, and the content check cannot run before there is a CSV.
+
+    Self-heals through install_all_managed() rather than
+    install_repo_formats(), because calibration.xml is a managed file in
+    its own right - and until this guard existed, NOTHING in the pipeline
+    installed it (install_all_managed had zero callers, so the RUMI export
+    formats were present only where someone had run --install by hand).
+    """
+    guid = configured_guid(params_path, CALIBRATION_EXPORT_FORMAT_KEY)
+    if not guid:
+        raise FlightLogFormatError(
+            f'{params_path} names no {CALIBRATION_EXPORT_FORMAT_KEY} GUID')
+
+    inst = installed_path('calibration.xml', install_dir)
+    if not inst:
+        raise FlightLogFormatError(
+            "Could not find RealityScan's calibration.xml in any of: "
+            + ', '.join(INSTALL_DIRS))
+
+    if guid.upper() not in defined_guids(inst):
+        if logger:
+            logger.warning(
+                'Registration-export format %s missing from %s - installing '
+                'it now (RealityScan reverts this file on update; an id it '
+                'cannot resolve does not error, it SILENTLY exports a '
+                'different layout)', guid, inst)
+        try:
+            install_all_managed(install_dir=install_dir, logger=logger)
+        except Exception as exc:                        # noqa: BLE001
+            raise FlightLogFormatError(
+                f'Registration-export format {guid} is missing from {inst} '
+                f'and could not be installed automatically: {exc}\n'
+                f'  Run: python -m modules.flightlog_format --install') from exc
+
+        if guid.upper() not in defined_guids(inst):
+            raise FlightLogFormatError(
+                f'Registration-export format {guid} is NOT defined in '
+                f'{inst}, and auto-install did not provide it.\n'
+                f'  -exportRegistration resolves calexFileFormatId against\n'
+                f'  the INSTALL directory, not this repo. An unresolved id\n'
+                f'  does not error - it falls back to the instance\'s own\n'
+                f'  export settings, so component membership comes back in a\n'
+                f'  layout the parser cannot read, with exit code 0.\n'
+                f'  Check that {REPO_CALIBRATION} defines {guid}.')
+
+    if logger:
+        logger.info('Registration-export format %s installed in %s',
+                    guid, inst)
     return guid
 
 
@@ -300,8 +376,12 @@ if __name__ == '__main__':
     args = ap.parse_args()
 
     if args.install:
-        n, path = install_repo_formats(logger=log)
-        log.info('%d format(s) added to %s', n, path)
+        # EVERY managed file, not just flightlogs.xml. calibration.xml
+        # carries the registration-export formats, and this command is what
+        # the pipeline's error messages tell an operator to run - it has to
+        # install what they were told it installs.
+        for name, added in install_all_managed(logger=log).items():
+            log.info('%d format(s) added to installed %s', added, name)
     if args.check:
         guid = assert_format_installed(args.check, logger=log)
         log.info('OK: %s is installed', guid)

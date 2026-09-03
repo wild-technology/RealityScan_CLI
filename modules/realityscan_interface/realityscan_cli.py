@@ -650,6 +650,15 @@ class RealityScanCLI:
 
             # display_output opens a visible console, so leave stdout attached
             # to it; otherwise capture everything in the log file.
+            #
+            # Deliberately NO stdin=DEVNULL here (the else branch has it):
+            # CREATE_NEW_CONSOLE gives the child a REAL console an operator
+            # can type into, so a prompt is answerable rather than a hang.
+            # Adding it would also do harm - redirecting ANY one stream makes
+            # subprocess set STARTF_USESTDHANDLES and hand the child OUR
+            # stdout/stderr, so the new console would show nothing and a
+            # start ""-launched instance would inherit a capturing parent's
+            # pipe (the boot-deadlock trap, FINDINGS 2026-08-07).
             if display_output:
                 # Invoke the .bat by absolute path WITHOUT an explicit
                 # 'cmd /c' prefix: a bare script name fails to resolve when
@@ -666,9 +675,20 @@ class RealityScanCLI:
                 log_path = None
             else:
                 with open(log_path, 'w', encoding='utf-8', errors='replace') as log_file:
+                    # stdin=DEVNULL, as in wildscan/runner.py: CREATE_NO_WINDOW
+                    # gives the .bat a console nobody can type into, and a
+                    # hidden console is still a TTY - a 'set /P' or CHOICE in a
+                    # workflow script would block forever on input that can
+                    # never arrive (the hidden-console hang, FINDINGS
+                    # 2026-08-31). No shipped RS_CLI script reaches an
+                    # unguarded read today, so this is hardening against the
+                    # next one, not a live bug. Safe to add only because
+                    # stdout already goes to a FILE: nothing here can inherit
+                    # a pipe.
                     process = subprocess.Popen(
                         [script_path] + list(args),
                         cwd=SCRIPTS_DIR, env=env,
+                        stdin=subprocess.DEVNULL,
                         stdout=log_file, stderr=subprocess.STDOUT,
                         creationflags=creationflags,
                     )
@@ -816,9 +836,14 @@ class RealityScanCLI:
             # checkout boots and owns", which is what lets the script's own
             # marker-file gate tell own markers from foreign ones.
             with open(log_path, 'w', encoding='utf-8', errors='replace') as log_file:
+                # stdin=DEVNULL for run_batch_script's reason, with no
+                # exception here: attach mode is ALWAYS CREATE_NO_WINDOW, so
+                # an unguarded prompt in a workflow script has no console
+                # anyone could answer it in.
                 process = subprocess.Popen(
                     [script_path, instance] + list(args),
                     cwd=SCRIPTS_DIR, env=env,
+                    stdin=subprocess.DEVNULL,
                     stdout=log_file, stderr=subprocess.STDOUT,
                     creationflags=creationflags,
                 )

@@ -989,18 +989,26 @@ class BatchDirectory(RSModule):
         return total_copied, total_missing
 
     def _explicit_param(self, name: str):
-        """A parameter's value when it was EXPLICITLY supplied (differs
-        from the Parameter's declared default), else None.
+        """A parameter's value when it was EXPLICITLY supplied for this
+        run, else None.
 
         The orchestrator sets every parameter from the command line, the
         'main' settings section, or the declared default - only the last
         of those is "unanswered", and only an unanswered parameter should
-        defer to the 'batch' settings section."""
+        defer to the 'batch' settings section.
+
+        WHICH of the three it was is recorded on the Parameter itself
+        (main.parse_arguments), never inferred from `value !=
+        default_value`: a supplied value is allowed to EQUAL the declared
+        default, and the inference then drops it silently. Measured on
+        NA168 - --b_max_zone 4000 against the declared default of 4000
+        read as absent, so the stored batch.max_zone_size=8000 won and a
+        zone came out at 7,842 images against the 6,000 cap."""
         param = (self.params or {}).get(name)
         if param is None:
             return None
         value = param.get_value()
-        return None if value is None or value == param.get_default_value() \
+        return None if value is None or not param.is_explicit() \
             else value
 
     def _stored_default(self, key: str, fallback, cli_value=None):

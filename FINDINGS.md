@@ -3280,6 +3280,70 @@ from that run.
   (2026-09-02)
   ESTABLISHED
 
+- **A merge that cannot resume will eventually cost you the whole run.**
+  `merge_zones` wrote `merge_report.json` after every cluster but had no way
+  to READ it back, so any interruption meant re-merging every input from
+  scratch. Measured NA165/H2063 2026-09-03: a harness restart killed a 12 h
+  run that had already converged three clusters (10 of 40 inputs, 7 final
+  components) - all of it finished, self-contained work sitting on disk, and
+  all of it would have been redone. The manual recovery was to read the
+  report, diff its consumed inputs against the input list, and hand-build a
+  `.complist` of the remaining 30.
+  Now hardened in the tool: `--resume` (default TRUE) reuses CONVERGED
+  clusters from a prior report in the same output dir. Three rules make it
+  safe rather than merely fast:
+  1. **Fingerprint the question, not just the inputs.** The report records
+     ladder, merge_scope, pair_gate, loss_tolerance, min_size, assemble_only
+     and the sorted input SET. A prior report that differs on any of them is
+     refused with a message naming the difference. `loss_tolerance` is in
+     there because it changes what counts as an acceptable fusion - an
+     acceptance semantic on the deliverable, not a performance knob. Input
+     ORDER is deliberately excluded, since it does not affect partitioning.
+  2. **Only converged clusters.** A cluster that was mid-ladder when the run
+     died describes unfinished work; it is re-merged from its inputs.
+  3. **Verify the files still exist.** A carried record whose `.rsalign` has
+     been moved or cleaned would otherwise pass silently into the assembly
+     complist and fail there, hours later.
+  Clusters are matched by their INPUT SET, never by index: `partition_clusters`
+  numbers clusters in iteration order, so an index match would happily pair
+  one cluster's record with another cluster's work the moment the input list
+  changed. Covered by `testing/test_merge_resume.py` (10 cases).
+  GENERAL FORM: any stage that both costs hours and already writes a
+  structured progress record is one function away from being resumable, and
+  the gap is usually that nothing ever reads the record back. [NA165]
+  (2026-09-03)
+  ESTABLISHED
+
+- **`-clearCache` does NOT clear RealityScan's numbered cache slots, and they
+  grow without bound.** Measured NA168/H2080 2026-09-02, cache root 949.0 GB:
+
+      slot "1"             534.8 GB   31,437 files  stale 3.4 h
+      slot "2"             168.4 GB   10,319 files  stale 38.1 h
+      15,155 transients    246.1 GB                 active
+
+  The flush at the 07:39 batch boundary went 833.9 -> 705.4 GB, and
+  705.4 GB is the two slots (703.2 GB) plus noise. So `-clearCache` removes
+  only the transient entries; the numbered slots are never touched. This is
+  the whole explanation for the "flush is not flushing" symptom: across
+  eleven flushes the post-flush floor rose 153 -> 224 -> 261 -> 320 -> 358
+  -> 446 -> 523 -> 705 GB, and that floor is exactly the accumulating slots,
+  not a failing flush. Every individual flush succeeded and reclaimed
+  95-285 GB of genuinely transient data.
+  TWO OPERATIONAL CONSEQUENCES:
+  1. A cache ceiling below the stranded total is unsatisfiable. Once the
+     slots exceed `CACHE_MAX_GB`, `cache_gb() > CACHE_MAX_GB` is
+     permanently true, so a driver flushes at every boundary forever and
+     never gets under its own ceiling - it looks like a broken flush and is
+     actually a broken ASSUMPTION.
+  2. Budget disk for slot growth as a monotonic cost per campaign, not as a
+     steady state. On a 64-component job the slots reached 703 GB.
+  A correct reclaim must remove the stale numbered slots directly on disk;
+  no CLI verb was found that does it. Do that only with no RealityScan
+  instance running - the slots are regenerable cache, but deleting them
+  under a live instance was not tested here and was deliberately avoided
+  while a 36 h campaign was in flight. [NA168] (2026-09-02)
+  ESTABLISHED
+
 - **Order a resource guard AFTER the reclaim it would trigger, not before.**
   The NA168 driver checked free space and aborted the run at the top of each
   batch, then flushed the RealityScan cache a few lines later:
@@ -3299,6 +3363,67 @@ from that run.
   re-measured figure. Note also that the `batch done ... free X` log line is
   emitted BEFORE the flush, so every boundary figure understates true free
   space - do not read it as the post-batch state. [NA168] (2026-09-02)
+  ESTABLISHED
+
+- **QUALIFIES the "transient, retryable" reading above: below ~20 estimated
+  cameras it is transient; at or above ~20 nothing has ever succeeded.**
+  Full census of NA168/H2080 at 56/64 exported, banding every component by
+  the `est_cameras` proxy from targets.json (the ladder runs SMALLEST FIRST,
+  so the large band is reached last and was invisible for most of the run):
+
+      band     done  failed  fail%
+      0-5        17       1     6%
+      5-10       26       2     7%
+      10-20      13       0     0%
+      20+         0       2   100%
+
+  59 components below 20 -> 3 failures (5%), every one of which is genuinely
+  transient (c44 failed then modelled cleanly on retry). Two components at
+  20+ -> two failures, zero successes. The two used DIFFERENT modes - c21
+  mode B (0x80004005, instant, step [5/8]), c30 mode A (0x82000019, 2896 s,
+  step [1/8]) - so it is not one flaky operation; two independent operations
+  fail in the same size band, which reads as a scale limit rather than a
+  transient. Note also that mode A's elapsed range widened to 215-2896 s
+  once a large component entered it, so "uncorrelated with duration" was an
+  artefact of only small components having been sampled.
+  RESOLVED SAME DAY, and the "hard wall" reading was WRONG. The two
+  outstanding components landed on opposite sides:
+
+      c07  est 42.4  SUCCEEDED after 3.6 h   <- refutes the wall outright
+      c04  est 68.2  failed after 70 min
+
+  Final tally for the 20+ band: 1 success in 4 (25%), against ~95% success
+  across n=59 below 20. So large components DO fail markedly more often,
+  but they are not impossible, and the effect is NOT monotonic in size -
+  c07 at 42.4 succeeded while c21 at 22.4 failed. Treat size as a strong
+  risk factor, never as a verdict: budget large components generously,
+  expect roughly one in four to survive, and retry them.
+  The methodological point is the reusable one. At n=2 this looked like a
+  100% wall; the next datapoint halved it. A band that is reached LAST by a
+  smallest-first ladder will always be under-sampled at the moment it first
+  looks alarming, so read early rates in such a band as provisional by
+  construction - the ordering, not the data, is what makes them extreme.
+  [NA168] (2026-09-02)
+  ESTABLISHED
+
+- **A SECOND, distinct model-failure mode: instant 0x80004005 at the
+  hole-closing step.** `NA168_H2080_c21`, 2026-09-02 06:31, proxy size
+  ~22.4 (large): **op 25, code 2147500037 (0x80004005), in 0 SECONDS**,
+  after the run had already passed [1/8] through [5/8]. Do not confuse it
+  with the recurring `-calculateHighModel` failure - every attribute
+  differs:
+
+      mode A  op 20562  0x82000019  215-1023 s  step [1/8]  c44 c03 c28 c24
+      mode B  op 25     0x80004005  0 s         step [5/8]  c21
+
+  Mode A burns real compute before failing; mode B fails instantly, so the
+  40 min c21 "took" was entirely the successful [1/8]-[5/8] work ahead of
+  it. A driver that times components will misread mode B as a slow failure
+  when it is an instant one at the end of a slow success. Both are recorded
+  as retryable. 0x80004005 is E_FAIL/unspecified and has appeared once
+  before in this campaign at op 6 (c47, export path), so the code alone
+  does not identify the operation - always pair code WITH op id.
+  [NA168] (2026-09-02)
   ESTABLISHED
 
 - **A `-calculateHighModel` failure is NOT a verdict on the component — retry

@@ -113,6 +113,17 @@ if not exist "%out_dir%\%comp%\obj" mkdir "%out_dir%\%comp%\obj"
 if not exist "%out_dir%\%comp%\fbx" mkdir "%out_dir%\%comp%\fbx"
 if not exist "%out_dir%\%comp%\ply" mkdir "%out_dir%\%comp%\ply"
 
+:: Make this component ACTIVE before any model operation. -exportModel
+:: resolves a model name GLOBALLY, but -selectModel resolves it only within
+:: the ACTIVE component: a multi-component list wrote c44's OBJ and FBX
+:: happily and then failed -selectModel "<comp>_HighPoly_Raw" with
+:: 2147942487 for a model verified present, and the same run succeeded on
+:: the first attempt with this line added (NA168/H2080 2026-08-31). The
+:: stock workflow only ever worked because the component GenerateModel left
+:: active happened to be the one exported. Selected here rather than at the
+:: PLY step (where it bites) so all three exports are scoped alike.
+call :run -selectComponent "%comp%" || exit /b 1
+
 echo   OBJ (Nira, by parts)
 call :run -exportModel "%comp%_Simplified_Textured" "%out_dir%\%comp%\obj\%comp%.obj" "%ObjParams%" || exit /b 1
 

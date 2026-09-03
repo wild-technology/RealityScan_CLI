@@ -427,6 +427,27 @@ class RealityScanAlignment(RSModule):
                 'calibration groups; cameras will be grouped by EXIF alone',
                 input_folder)
 
+        # FAIL CLOSED on the registration-export format, the OUT direction
+        # of the guard above. AlignZone.bat's identity capture reads each
+        # component's membership with -exportRegistration, which resolves
+        # RegistrationExportParams.xml's calexFileFormatId against
+        # calibration.xml in the INSTALL directory - and an unresolved id
+        # does not error, it falls back to the instance's current export
+        # settings and writes a different layout with exit code 0. Same
+        # failure shape as the flight-log format, same treatment.
+        #
+        # install_all_managed() is the ONLY code that puts the RUMI export
+        # formats there and had no callers at all until this line, so the
+        # export was reproducible only on a machine where someone had run
+        # `python -m modules.flightlog_format --install` by hand. Install
+        # first, then verify; the CSV content check in AlignZone.bat's
+        # :identityOne is the second half of the gate.
+        flightlog_format.install_all_managed(logger=self.logger)
+        flightlog_format.assert_calibration_format_installed(
+            os.environ.get('RS_REGISTRATION_PARAMS')
+            or os.path.join(METADATA_DIR, 'RegistrationExportParams.xml'),
+            self.logger)
+
         result = self.cli.run_batch_script(
             'AlignZone.bat',
             [input_folder, output_folder, flight_log_path, flight_log_params_path,
@@ -543,16 +564,136 @@ class RealityScanAlignment(RSModule):
 
     # Bounded per-component identity loop: zones fragment into 2-5
     # components; 20 is a generous ceiling against a pathological scene.
+    # Legacy-harvest reader only - the CSV reader enumerates what is on
+    # disk and needs no ceiling.
     MAX_IDENTITY_COMPONENTS = 20
 
     def capture_component_identities(self, input_folder, output_folder,
                                      scene_name, flight_log_path):
-        """Build manifests from the identity_r<K> harvest folders written
-        by AlignZone.bat's in-session identity loop.
+        """Build manifests for the components AlignZone.bat just exported.
 
         Public because drivers that invoke AlignZone.bat directly (the
         testing/ PD cells) must reuse THIS implementation - a component
         without a manifest is refused by the feature-aware merge.
+
+        Two on-disk layouts, tried in that order:
+
+        1. ``identity/<scene>_c<K>.csv`` - the default since the sidecar
+           removal. -exportRegistration runs against the SELECTED
+           component, so membership is READ, not inferred: one CSV per
+           component, written into the output tree only, nothing deleted.
+        2. ``identity_r<K>/*.xmp`` - the retired destructive harvest, still
+           reachable via RS_LEGACY_XMP_IDENTITY=1 (AlignZone.bat) and still
+           the shape of any harvest an older run left on disk.
+
+        LAYOUT, not the env var, selects the reader: a harvest sitting in
+        an output folder must stay readable whether or not the variable
+        that produced it is still set in this process.
+        """
+        manifest_paths = self.__manifests_from_identity_csv(
+            output_folder, scene_name, flight_log_path)
+        if not manifest_paths:
+            manifest_paths = self.__manifests_from_xmp_harvest(
+                input_folder, output_folder, scene_name, flight_log_path)
+        if not manifest_paths:
+            self.logger.error(
+                'Neither identity CSVs (%s) nor a usable identity_r<K> '
+                'harvest under %s - manifests unavailable for zone %s',
+                os.path.join(output_folder, 'identity'), output_folder,
+                scene_name)
+        return manifest_paths
+
+    @staticmethod
+    def __identity_csv_members(path):
+        """Image filenames from one -exportRegistration CSV.
+
+        Shape pinned by the repo's own calibration.xml (RUMI format
+        {E7C3B1A9-...-0A48}): '#' comment lines, then one row per camera
+        whose field 0 is the image filename. The trailing columns are the
+        per-camera prior READBACK, not membership, so they are ignored
+        here. A row with an empty name is DROPPED rather than becoming a
+        phantom member - camera_count is the number the merge does its
+        subset-sum attribution with, so a malformed row must not inflate
+        it.
+        """
+        images = []
+        with open(path, encoding='utf-8-sig', errors='replace') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                name = line.split(',', 1)[0].strip().strip('"')
+                if name:
+                    images.append(name)
+        return images
+
+    def __manifests_from_identity_csv(self, output_folder, scene_name,
+                                      flight_log_path):
+        """Manifests from the non-destructive identity/<name>.csv layout.
+
+        The .bat names the CSV and the exported .rsalign from the SAME
+        %comp_index%, so the two always agree by name and there is no
+        ordinal reconstruction to get wrong. A CSV whose .rsalign is
+        missing is skipped rather than shifting every component after it -
+        the failure mode successive difference could not avoid.
+        """
+        identity_dir = os.path.join(output_folder, 'identity')
+        if not os.path.isdir(identity_dir):
+            return []
+
+        def ordinal(name):
+            # '<scene>_c9' must precede '<scene>_c10'; an unexpected name
+            # keeps a stable alphabetical place after the numbered ones.
+            tail = name.rsplit('_c', 1)[-1]
+            return (0, int(tail), name) if tail.isdigit() else (1, 0, name)
+
+        names = sorted((os.path.splitext(f)[0]
+                        for f in os.listdir(identity_dir)
+                        if f.lower().endswith('.csv')), key=ordinal)
+        manifest_paths = []
+        for component_name in names:
+            rsalign_path = os.path.join(output_folder,
+                                        component_name + '.rsalign')
+            if not os.path.isfile(rsalign_path):
+                self.logger.warning(
+                    'identity/%s.csv has no %s beside it - the identity '
+                    'capture ended mid-component; no manifest for it',
+                    component_name, os.path.basename(rsalign_path))
+                continue
+            csv_path = os.path.join(identity_dir, component_name + '.csv')
+            try:
+                members = self.__identity_csv_members(csv_path)
+            except OSError as exc:
+                self.logger.error('Could not read %s: %s - no manifest for %s',
+                                  csv_path, exc, component_name)
+                continue
+            if not members:
+                self.logger.error(
+                    '%s holds no camera rows - membership for %s is unknown; '
+                    'no manifest written', csv_path, component_name)
+                continue
+
+            bbox = component_manifest.bbox_from_flight_log(
+                flight_log_path or None, members)
+            if flight_log_path and bbox is None:
+                self.logger.warning(
+                    'No flight-log rows matched the %d member(s) of %s - '
+                    'manifest bbox_utm will be null', len(members), component_name)
+
+            manifest = component_manifest.build_manifest(
+                zone=scene_name, component=component_name,
+                rsalign_path=rsalign_path, images=members, bbox_utm=bbox)
+            manifest_paths.append(component_manifest.write_manifest(manifest))
+            self.logger.info(
+                'Manifest %s: %d camera(s), bbox %s',
+                os.path.basename(manifest_paths[-1]), len(members),
+                'null' if bbox is None else
+                '[%.1f, %.1f, %.1f, %.1f]' % tuple(bbox))
+        return manifest_paths
+
+    def __manifests_from_xmp_harvest(self, input_folder, output_folder,
+                                     scene_name, flight_log_path):
+        """Manifests from the retired identity_r<K> harvest layout.
 
         Naming rule (FINDINGS 2026-07-23, four consistent datapoints):
         -exportXMP writes STEM-named sidecars, while
@@ -562,9 +703,8 @@ class RealityScanAlignment(RSModule):
         (identity_r<K>), then the maximal component <scene>_c<K> is
         exported and deleted. members(c<K>) = stems(r<K>) - stems(r<K+1>).
         The harvest also displaced the calibration sidecars beside the
-        images (pose exports overwrite <stem>.xmp and the harvest MOVES
-        them), so calibration-only sidecars are regenerated here for
-        every member (B7 hygiene is automatic).
+        images, which is exactly why the CSV layout above replaced it as
+        the default.
         """
         # stem -> (image basename, full path), one walk of the zone tree
         stem_to_image = {}
@@ -637,11 +777,6 @@ class RealityScanAlignment(RSModule):
                 os.path.basename(manifest_paths[-1]), len(members),
                 'null' if bbox is None else
                 '[%.1f, %.1f, %.1f, %.1f]' % tuple(bbox))
-
-        if not manifest_paths:
-            self.logger.error(
-                'No usable identity harvests under %s - manifests '
-                'unavailable for zone %s', output_folder, scene_name)
         return manifest_paths
 
     @staticmethod
