@@ -5410,3 +5410,38 @@ facts established while building the lane. Suite 559 -> 639.
   ESTABLISHED.
 - **`root.boundingVolume.box` / geoid / ion facts unchanged** - no Cesium
   work in this session.
+## 2026-09-03 [NA165 H2060] The cache location PERSISTS across instances, and `-clearCache` works for texturing even though it did not for modelling
+
+Two cache facts, found when the decimation fleet aborted on the disk floor
+after four components with C: down from 98 GB to 28.5 GB.
+
+**1. `appCacheCustomLocation` survives the instance that set it.** The probe
+instance was booted by hand with no `RS_CACHE_DIR` and no `-set
+appCacheLocation`, so its cache should have been the default
+`%LOCALAPPDATA%\Temp\RealityScan`. It was not. That directory had not been
+touched since 2026-08-31 09:37, while `_agent\rs_cache2` — the custom location
+set by YESTERDAY's `startRealityScan.bat` — was being written seconds earlier
+and had grown 29 GB -> 62 GB during the run.
+
+So the cache setting is sticky the same way alignment settings are (rs-reference
+03: "never align on instance defaults; settings persist across restarts"). An
+instance that does not set a cache location inherits whatever the last one
+chose, possibly a directory belonging to a finished job on a drive you were not
+watching. **Measure free space, not a directory you assume is the cache.**
+
+**2. `-clearCache` reclaimed 62 GB -> 5.5 MB**, C: 44 GB -> 106 GB, in ~18 s
+with the instance idle.
+
+This does NOT overturn the 2026-09-01 finding that `-clearCache` is unreliable
+(148 GB -> 2.7 GB once, 148 -> 90.6 GB the next time, which is why the cold
+directory reset exists). It SCOPES it: that observation came from the
+**modelling** workload, where depth maps are live and the instance had work in
+flight. For the **texture + simplify** workload, with the instance idle between
+components, the flush is complete. `run_decimate.py` flushes between components
+and logs before/after free space rather than trusting it — if a flush ever
+fails to clear the floor, the next component aborts with that stated.
+
+Budget for planning: this workload costs **~8 GB of cache per component**
+(4 components took 98 GB -> 28.5 GB, of which ~10.5 GB was real project growth
+from the new 4K textures). Sixteen components without flushing would need
+~128 GB that does not exist.

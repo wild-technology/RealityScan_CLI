@@ -288,6 +288,10 @@ def main():
                          'accumulates a LIST of coordinate systems across cruises and the '
                          'export writes whichever is selected - H2060 exports were labelled '
                          'epsg:32655 (UTM 55N), a leftover, because nothing pinned it.')
+    ap.add_argument('--no-flush-cache', action='store_true',
+                    help='do not -clearCache between components. Leave this OFF: the '
+                         'cache grew ~8 GB per component on H2060 and took C: from 98 GB '
+                         'to 28.5 GB in four components, tripping the disk floor.')
     ap.add_argument('--keep-stale', action='store_true',
                     help='do not delete the superseded *_Simplified_Textured / '
                          '*_HighPoly_Textured models after a verified export')
@@ -362,6 +366,22 @@ def main():
         if args.save_every and idx % args.save_every == 0:
             rs.cmd('-save')
             log('    project saved')
+
+        # Flush the cache between components. RealityScan PERSISTS
+        # appCacheCustomLocation across instances, so the cache may not be where
+        # this boot put it - measure free space rather than a directory.
+        # -clearCache was unreliable during MODELLING (148 GB -> 90.6 GB once);
+        # for this texture/simplify workload it took 62 GB -> 5.5 MB, so it is
+        # used here but still verified rather than trusted.
+        if not args.no_flush_cache:
+            before = free_gb(args.export_dir)
+            rs.cmd('-clearCache', timeout=3600)
+            after = free_gb(args.export_dir)
+            log(f'    cache flush: {before:.0f} -> {after:.0f} GB free '
+                f'({after - before:+.0f} GB)')
+            if after < MIN_FREE_GB:
+                log(f'    WARNING: still under the {MIN_FREE_GB} GB floor after a '
+                    f'flush - the next component will abort')
         with open(report_path, 'w', encoding='utf-8') as fh:
             json.dump({'budget': args.budget, 'models': results}, fh, indent=2)
 
