@@ -25,6 +25,12 @@ selection stays active and `lastError` stays `0`. Proven 2026-09-03 against a
 loaded component - selecting "zone_all_c15_THIS_DOES_NOT_EXIST" left
 `zone_all_c15_Simplified_Textured` selected and reported no error.
 
+There is a SECOND failure mode with the same remedy: `-selectModel` resolves a
+name only within the ACTIVE component, so a model that exists in a different
+component is simply not found. The resume check here measured
+`<comp>_Dec500k` without selecting `<comp>` first, so every already-finished
+component looked unmeasurable and was re-textured from scratch.
+
 So `-selectModel X` followed by `-deleteSelectedModel` does not delete X when X
 is absent - it deletes whatever was selected before. The first version of this
 tool used that pattern to drop simplification intermediates and destroyed its
@@ -133,8 +139,15 @@ class Rs:
         nm, _ = self.report()
         return nm == model
 
-    def measure(self, model):
-        """Triangle count of `model`, or None if absent/unmeasurable."""
+    def measure(self, model, component=None):
+        """Triangle count of `model`, or None if absent/unmeasurable.
+
+        `component` MUST be passed unless the caller has already made that
+        component active: `-selectModel` resolves a name only within the ACTIVE
+        component, so measuring across components without it always fails.
+        """
+        if component:
+            self.cmd('-selectComponent', component, timeout=1800)
         self.cmd('-selectModel', model, timeout=1800)
         nm, tr = self.report()
         return tr if nm == model else None
@@ -339,7 +352,7 @@ def main():
 
         obj = os.path.join(args.export_dir, f'{comp}.obj')
         if os.path.exists(obj) and os.path.getsize(obj) > 0:
-            got = rs.measure(f'{comp}_Dec500k')
+            got = rs.measure(f'{comp}_Dec500k', component=comp)
             if got is not None and got <= args.budget:
                 log(f'[{idx}/{len(comps)}] {comp}: already done ({got:,} tris)')
                 results.append({'component': comp, 'status': 'skip', 'triangles': got})

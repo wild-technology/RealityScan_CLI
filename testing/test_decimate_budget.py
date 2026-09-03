@@ -167,3 +167,26 @@ def test_no_16k_hides_in_the_new_presets():
     for name in ADAPTIVE:
         with open(os.path.join(META, name), encoding='utf-8') as fh:
             assert '16384' not in fh.read(), name
+
+
+# --------------------------------------------------- component scoping
+def test_measure_selects_the_component_first_when_asked():
+    # `-selectModel` resolves only within the ACTIVE component. The resume
+    # check measures `<comp>_Dec500k` for a component that is not active, so it
+    # MUST select the component first - without this every finished component
+    # measures as absent and gets re-textured from scratch.
+    calls = []
+
+    class Spy(FakeRs):
+        def cmd(self, *args, **kw):
+            calls.append(args[0])
+            super().cmd(*args, **kw)
+
+    rs = _bind(Spy({'m': 7}, 'm'))
+    from run_decimate import Rs
+    rs.measure = lambda model, component=None: Rs.measure(rs, model, component)
+    rs.measure('m', component='comp0')
+    assert calls[0] == '-selectComponent'
+    calls.clear()
+    rs.measure('m')
+    assert '-selectComponent' not in calls
