@@ -4061,3 +4061,128 @@ hemisphere notation "2S" that ROVDataConcat writes means SOUTH. Both notations
 are live in this pipeline. Pinned by test.
 
 Suite 589 -> 597.
+
+---
+
+## 2026-09-03 [NA165 H2060] `-selectModel` on a missing name is a SILENT NO-OP — and it makes every blind `-deleteSelectedModel` a wrong-model deletion
+
+**This is the most dangerous thing found in this codebase so far.** It destroys
+data, reports success, and the existing repo scripts use the exact pattern that
+triggers it.
+
+Proven directly, against a loaded component of the H2060 master:
+
+```
+-selectModel zone_all_c15_Simplified_Textured   -> selected = ..._Simplified_Textured   lastError:0
+-selectModel zone_all_c15_THIS_DOES_NOT_EXIST   -> selected = ..._Simplified_Textured   lastError:0
+```
+
+The second command changed nothing and reported **no error**. Not a non-zero
+`lastError`, not a marker file, nothing. The previous selection stays live.
+
+So this sequence does not do what it reads like:
+
+```bat
+call :run -selectModel "SomeIntermediate"   :: silently no-ops if absent
+call :run -deleteSelectedModel              :: deletes WHATEVER WAS SELECTED
+```
+
+When the named model is absent, the delete lands on the *working* model.
+
+**How it was found.** A first version of the decimation tool dropped
+simplification intermediates with exactly that pair. On component c15 it ran
+three passes correctly (`DecRaw3` = 1,418,418 = 2,770,844 x 0.8^3, exact) and
+then deleted its own high-poly source mid-loop; later passes re-derived from
+the wrong mesh, so `DecClean3`, `DecRaw4` and `DecClean4` all reported the
+full-density 9,706,654 triangles. The component finished with **`_HighPoly_Raw`
+gone entirely**. The `:run` gate did not fire once — there was no error to
+catch.
+
+**`ModelToFinal.bat` has this pattern.** Its intermediate cleanup is
+`-selectModel "SimplifyPass%%IRaw"` followed by `-deleteSelectedModel`, ×7. It
+has not misfired because those names are always present on the happy path — but
+any partial run, rename change or early failure turns it into a deletion of the
+final model. NOT YET FIXED — flagged here because changing a production script
+mid-flight is the owner's call.
+
+**RULE: never issue a destructive operation after an unverified select.**
+`run_decimate.py` implements this: `select()` re-reads the model name back out
+of `-exportReport` and returns False on mismatch, and `delete()` refuses to act
+unless the select verified. An absent name becomes a safe skip.
+
+This also SUPERSEDES the earlier reading (2026-08-07) that a failed
+`-selectModel` sets `0x80070057` through the process trigger. That was a
+different failure — selecting where no model could be resolved at all. Selecting
+a **bogus name inside a component that has models** is silent.
+
+## 2026-09-03 [NA165 H2060] `-exportReport` runs headless, does not block, and is the repo's model-measurement primitive
+
+Closes hardening cells U7/U14, open since 2026-07-23.
+
+Delegated to a headless instance holding the 119 GB H2060 master:
+`-exportReport <out> "<install>\Reports\SelectedModel.html"` returned in
+**3.87 s**, wrote 14,864 bytes, left `lastError:0` and the instance idle at
+`progress:0.0%`. It does **not** block the way `-exportRegistration` does.
+
+`SelectedModel.html` renders `$(modelTriangleCount)`, `$(modelVertexCount)`,
+`$(modelTextureCount)` and `$(modelTexelSize)` for the current selection, so a
+script can now **measure** a mesh instead of inferring size from `.dat` bytes.
+Parse by anchoring on the label row — the value is in the `<td>` on the NEXT
+line. It doubles as the only way to prove a select landed (finding above).
+
+**A custom template is not a drop-in.** A minimal hand-written template holding
+only `$(modelTriangleCount)` produced a **0-byte file** and
+`lastError:-2147467259` (E_FAIL), while the shipped template succeeded against
+the same selection seconds later; passing the third `true` parameter did not
+help. Templates need scaffolding that is not documented. Use the shipped ones.
+[OPEN: what a custom template actually requires]
+
+## 2026-09-03 [NA165 H2060] Four fixed simplify passes is 41%, not a budget
+
+`GenerateModel.bat` ends every component with four relative-80% passes.
+0.8^4 = 0.4096, and H2060's twenty "Simplified" models measured **2,770,844 to
+42,414,945 triangles** — the reduction is a fixed *ratio*, so the result is
+only as small as the input was. Measured Simplified/HighPoly across all twenty
+components: 0.4096 to four decimals every time, which also shows `-cleanModel`
+removes essentially nothing and that the geometric model predicts pass counts
+reliably.
+
+A budget needs `ceil(log(budget/N0)/log(0.8))` passes measured per component —
+9 to 20 for a 500k budget here, 279 passes across the cruise. `run_decimate.py`
+computes it from the measurement primitive above.
+
+Related trap: `_HighPoly_Raw` and `_HighPoly_Textured` are NOT the same mesh.
+c15 measured 9,706,654 raw vs 6,767,368 textured — texturing applies the
+unwrap's large-triangle removal. Seed from the one you mean.
+
+## 2026-09-03 [NA165 H2060] "Adaptive" named the wrong unwrap style for a month, and a 16K page can still reach an export
+
+Owner asked for adaptive texturing and meant `unwrapStyle=AdaptiveTexelSize`.
+The repo's shorthand — "MaxTexturesCount IS the adaptive mode", in
+`GenerateModel.bat` and echoed in the docs' recommendation table — names a
+DIFFERENT style. `AdaptiveTexelSize` clamps an estimated texel between
+`unwrapMinTexelSize`/`unwrapMaxTexelSize`; `MaxTexturesCount` auto-fits texel to
+a page budget. Both comment and docs corrected; new presets
+`Texturing_AdaptiveTexel_4k.xml` / `Unwrapping_AdaptiveTexel_4k.xml` are the
+first repo files to use the style, at the Help defaults 0 (optimal) and 4
+(100x optimal).
+
+**Owner cap: nothing above 4096 may reach an exported deliverable** — "we
+should never be exporting 16k files". Audited all six profiles carrying
+`16384`:
+
+- `Texturing_MaxTextureCount4_16k`, `Unwrapping_Simplified_4x16k` — unreferenced.
+- `Texturing_MaxTextureCount1_16k`, `Texturing_HighPolyTexture`,
+  `Texturing_SimplifiedTexture` — opt-in presets or the deprecated workflow.
+- `Unwrapping_Simplified` (**1 x 16384**) — **live**: `ModelToFinal.bat` picks the
+  exported model's unwrap by texture preset, and ONLY `4x8k` gets a matched
+  unwrap. Every other preset (`8k`, `16k`, `highpoly`, `fixed100`, `fixed50`)
+  falls through to it. Asking for *smaller* 8K textures therefore exports a
+  **16K** page — the cap breached by the branch meant to respect it. The default
+  preset is `4x8k`, so the default path is safe and the defect stays invisible
+  until someone passes an explicit preset. NOT YET FIXED — owner's call.
+
+Also corrected: the docs registry attributed `Texturing_MaxTextureCount4_16k.xml`
+to `GenerateModel.bat` step [6/8]. That step actually sets
+`Texturing_MaxTextureCount4_8k.xml` ("8K cap, owner 2026-07-31"); the row was
+stale and made a compliant script look non-compliant.

@@ -830,7 +830,7 @@ are byte-identical (§4.3).
 | `unwrapMethod` | enum name | `Geometric` | *Unwrap method*: **Geometric** (legacy, fast) or **Mosaicing based** (experimental, fewer UV islands, slower) | Control [OFFICIAL: tools/unwrap]; key name [UNDOCUMENTED] and the mosaicing value string is unknown [OPEN: question 19] |
 | `unwrapFixedTexelSizeType` | enum int | `0`, `1` | *Texel size*, relevant when `unwrapStyle=FixedTexelSize`: `0` Optimal (default), `1` 2× optimal (50 % texture quality), `2` 4× optimal (25 %), `3` 10× optimal (10 %), `4` 100× optimal (1 %), `5` Custom | [OFFICIAL: tutorials/setkeyvaluetable, row `Texel size | unwrapFixedTexelSizeType`] |
 | `unwrapFixedTexelSize` | float | *(not in any repo file)* | *Custom texel size*, active only when `unwrapStyle=FixedTexelSize` **and** `unwrapFixedTexelSizeType=5`. Help default `0.01` — i.e. a 1 cm texel when the project unit is the metre | [OFFICIAL: tutorials/setkeyvaluetable] |
-| `unwrapMinTexelSize` / `unwrapMaxTexelSize` | enum int, or float when type = 5 | *(not in any repo file)* | *Minimal / Maximal required texel size*, active when `unwrapStyle=AdaptiveTexelSize`. Same 0–5 ladder as `unwrapFixedTexelSizeType`; Help defaults `0` and `4`. As custom floats the defaults are `0.01` and `10` | [OFFICIAL: tutorials/setkeyvaluetable] |
+| `unwrapMinTexelSize` / `unwrapMaxTexelSize` | enum int, or float when type = 5 | `0` / `4` (`Texturing_AdaptiveTexel_4k.xml`, `Unwrapping_AdaptiveTexel_4k.xml`) | *Minimal / Maximal required texel size*, active when `unwrapStyle=AdaptiveTexelSize`. Same 0–5 ladder as `unwrapFixedTexelSizeType`; Help defaults `0` and `4`. As custom floats the defaults are `0.01` and `10` | [OFFICIAL: tutorials/setkeyvaluetable] |
 | `unwrapFillTextures` | hex bool | `0x0` (unwrap files), `0x1` (texturing files) | *Fill with charts* — "display the UV charts over the UV checker in the 2D view". A **preview-only** control | [INFERRED: name ↔ the only fill-related control on the panel; `tools/unwrap` documents the control, nothing documents the key] [OPEN: question 18] |
 | `unwrapCheckerBoardCellSize` | int | `64` | *Grid size* — "sets the size of the checkerboard grid pattern" for previewing seams in the 3D view. Preview-only | **Exact spelling absent from the 2.2 binary string pool — almost certainly inert.** The binary has `unwrapCheckerBoardCellCount`. [CONTRADICTED: repo profiles carry `…CellSize` / UTF-16LE sweep finds only `…CellCount`; recorded in `10-reconstruction-texturing-export.md` §9] |
 | `unwrapButtonDisabled` | int | `0` | — | Not a setting: **exported UI state**, carried into the file by the GUI export and inert. [INFERRED] |
@@ -894,6 +894,38 @@ Which to use — and a naming trap:
   range (finer near the subject, coarser elsewhere), and it produces however many textures that
   requires. The repo's shorthand "MaxTexturesCount IS the adaptive mode" (in the
   `GenerateModel.bat` comment) means *auto texel*, not `AdaptiveTexelSize`.
+  **Resolved 2026-09-03**: asked for "adaptive", the owner meant the literal
+  `AdaptiveTexelSize` style, now in production use via
+  `Texturing_AdaptiveTexel_4k.xml` with `unwrapMinTexelSize`/`unwrapMaxTexelSize`
+  at the Help defaults `0` (optimal) and `4` (100× optimal). The shorthand was
+  not a harmless nickname: it named the wrong style in the one place a reader
+  goes to choose one.
+
+  > **Output resolution cap — owner decision, 2026-09-03.** No texture page above
+  > **4096** may reach an exported deliverable: *"we should never be exporting 16k
+  > files"*. Six profiles carry `16384`. Audited against the scripts that
+  > actually reference them:
+  >
+  > | profile | reachable from | live 16K risk |
+  > |---|---|---|
+  > | `Texturing_MaxTextureCount4_16k` | nothing | none — unreferenced |
+  > | `Unwrapping_Simplified_4x16k` | nothing | none — unreferenced |
+  > | `Texturing_MaxTextureCount1_16k` | `ModelToFinal.bat` preset `16k` | opt-in only |
+  > | `Texturing_HighPolyTexture` | `ModelToFinal.bat` preset `highpoly`; `AlignImagesFromFolder.bat` | opt-in / deprecated |
+  > | `Texturing_SimplifiedTexture` | `AlignImagesFromFolder.bat` | deprecated |
+  > | `Unwrapping_Simplified` (1 × 16384) | **`ModelToFinal.bat` default fallback** | **YES — see below** |
+  >
+  > `GenerateModel.bat` is compliant: step [6/8] uses `Texturing_MaxTextureCount4_8k.xml`.
+  >
+  > **The live exposure is `ModelToFinal.bat`.** It picks the *unwrap* for the
+  > exported simplified model by texture preset, and only `4x8k` gets a matched
+  > unwrap; every other preset (`8k`, `16k`, `highpoly`, `fixed100`, `fixed50`)
+  > falls through to `Unwrapping_Simplified.xml`, which is **1 × 16384**. So a
+  > caller asking for *smaller* 8K textures silently exports a **16K** page — the
+  > cap breached by the branch meant to respect it. The default preset is `4x8k`,
+  > so the default path is safe and the defect is invisible until someone passes
+  > an explicit preset. Flagged, not changed: the fix is a matched 4K unwrap per
+  > preset, and re-pointing `ModelToFinal.bat` is the owner's call.
 - **`FixedTexelSize` delivers a pre-declared visual precision** (e.g. 1 cm texels for a true
   ortho-photo map) and "there will be so many textures how many are needed".
   [OFFICIAL: tools/texturing_part2] [VERIFIED-as-decision: HANDOFF 2026-07-29 texture budget]
@@ -1991,7 +2023,9 @@ and is listed below.
 | `Smoothing_02_2_Params.xml` | smoothing | declared in `SetVariables.bat` only | weight 0.2, 2 iterations, style 1, type 0 | Unused |
 | `SmoothingSurface_02_2_Params.xml` | smoothing | **nothing** | **byte-identical to `Smoothing_02_2_Params.xml`** | Unused duplicate |
 | `SmoothingPeaks_05_5_Params.xml` | smoothing | **nothing** | weight 0.5, 5 iterations, style 3 — i.e. Epic's shipped default minus `mvsSmoothing_useIntelligentSmoothing`, with `mvsFltSmoothingType` 1→0 | Unused |
-| `Texturing_MaxTextureCount4_16k.xml` | texturing | `GenerateModel.bat` step [6/8] | **4 × 16K adaptive** — the production texture budget | **Production** |
+| `Texturing_MaxTextureCount4_16k.xml` | texturing | **nothing** | 4 × 16K. This row claimed `GenerateModel.bat` step [6/8] until 2026-09-03; that step actually sets `Texturing_MaxTextureCount4_8k.xml` ("8K cap, owner 2026-07-31"). Also mislabelled **adaptive** — it is `MaxTexturesCount` (auto *texel*), not `AdaptiveTexelSize` | **Unreferenced** |
+| `Texturing_AdaptiveTexel_4k.xml` | texturing | `DecimateComponent.bat` step [1/5] | **`AdaptiveTexelSize`**, texel clamp 0…4 (optimal → 100× optimal), 512…**4096** | **Production** |
+| `Unwrapping_AdaptiveTexel_4k.xml` | unwrapping | `DecimateComponent.bat` step [3/5] | same style/clamp, large-tri threshold 10, fill 0x0 — the reprojection target's unwrap | **Production** |
 | `Texturing_MaxTextureCount1_16k.xml` | texturing | `SetVariables.bat` only | 1 × 16K | Unused |
 | `Texturing_MaxTextureCount1_8k.xml` | texturing | `SetVariables.bat` only | 1 × 8K | Unused |
 | `Texturing_MaxTextureCount4_8k.xml` | texturing | `SetVariables.bat` only | 4 × 8K | Unused |
@@ -2031,11 +2065,11 @@ remaining **20 are declared-but-unconsumed or entirely unreferenced**.
 | Align a zone reproducibly | `AlignmentParams.xml` — replayed as `-set` | never align on instance defaults; settings persist across restarts |
 | Georeference a scene | `FlightLogParams.xml` **regenerated for this cruise** | a hand-carried zone from another project imports silently and misplaces everything |
 | Knock noise off a high model before texturing | `SimplifyNoise_Params.xml` (70 % rel) | the recipe's step [6/8]; keeps enough density for texture projection |
-| Reduce to a deliverable-sized mesh | `SimplifySmooth_80per_Params.xml` ×4 with `-cleanModel` between | four gentle passes beat one aggressive one; each pass is followed by a clean because simplification can reintroduce non-manifold edges |
+| Reduce to a deliverable-sized mesh | `SimplifySmooth_80per_Params.xml` ×N with `-cleanModel` between | gentle passes beat one aggressive one; each is followed by a clean because simplification can reintroduce non-manifold edges. **N is measured, not fixed** — `DecimateComponent.bat` takes a pass count computed as `ceil(log(budget/N₀)/log(0.8))` from `-exportReport`'s `modelTriangleCount`. A fixed ×4 is only 0.8⁴ = 41 %, which left the H2060 components at 2.8–42 M triangles |
 | Hit an exact triangle budget | `Simplify500k_Params.xml` (absolute 500 k) | absolute is Epic's recommended type |
-| Texture a high-poly model | `Texturing_MaxTextureCount4_16k.xml` | `MaxTexturesCount` **is** the adaptive mode: 4 × 16K caps cost, small components use less |
+| Texture a high-poly model | `Texturing_AdaptiveTexel_4k.xml` | `AdaptiveTexelSize` clamps an estimated texel into a range — fine near the subject, coarse elsewhere. **Do not use `Texturing_MaxTextureCount4_16k.xml`**: it is not the adaptive style, and 16K breaches the output cap |
 | Deliver a declared texel precision (e.g. 1 cm for an ortho) | `Texturing_FixedTexelSize*.xml` | count follows from the precision, not the other way round |
-| Unwrap a simplified model before reprojection | `Unwrapping_Simplified_4x16k.xml` | must match the texture budget of the source, or reprojection quality is wasted; `-reprojectTexture` **requires** the result model to be unwrapped |
+| Unwrap a simplified model before reprojection | `Unwrapping_AdaptiveTexel_4k.xml` | must match the texture budget of the source, or reprojection quality is wasted; `-reprojectTexture` **requires** the result model to be unwrapped. The `_4x16k` variant is retained only for reading old projects |
 | Carry a high-poly texture onto a simplified mesh | `ReprojectionParams.xml` | Epic's default has `allowColor=false` and would silently reproject **no colour** |
 | Deliver to Nira | `ModelExportParamsOBJ_NiraParts.xml` | by parts + png + no vertex colours + decimal-6 is Nira's documented expectation; **Nira does not accept PLY point clouds** |
 | Deliver an editable FBX | `ModelExportParamsFBX_Parts.xml` | parts preserved, materials written |

@@ -2080,15 +2080,42 @@ RealityScan.exe -delegateTo RS1 -exportReport "F:\na156_h2024\reports\zone_1_acc
 
 **Behavior notes**
 
-- [OPEN — long-standing] Whether it runs headless **without blocking**, and whether it can
-  emit georeferencing status and residuals, is the pipeline's longest-open instrument
-  question (hardening cells U7/U14). Georeferencing of a merged or assembled scene is
-  verified **only in the GUI** today. Cheapest probe: delegate
-  `ComponentAccuracyReport.html` with a watchdog; the risk being tested is that it blocks the
-  way `-exportRegistration` does without a params file
-  [FINDINGS 2026-07-23 onward, never closed]. Note that `-exportReport` takes **no** params
-  XML — its third parameter is a boolean — so the `-exportRegistration` mitigation (supply a
-  GUI-exported params file) does not exist here.
+- **[RESOLVED 2026-09-03 — it runs headless and does NOT block.]** Probed on the
+  119 GB NA165/H2060 master under `-headless`, delegated to a loaded instance:
+  `-exportReport <out> "<install>\Reports\SelectedModel.html"` returned in
+  **3.87 s**, wrote a 14,864-byte file and left `lastError:0`, with the instance
+  idle at `progress:0.0%`. It does **not** block the way `-exportRegistration`
+  does. This closes the longest-open instrument question (hardening cells
+  U7/U14, open since 2026-07-23).
+
+  This makes `-exportReport` the repo's **model measurement primitive**.
+  `SelectedModel.html` renders `$(modelTriangleCount)`, `$(modelVertexCount)`,
+  `$(modelTextureCount)` and `$(modelTexelSize)` for whatever `-selectModel`
+  last selected, so a script can now *measure* a mesh instead of inferring its
+  size from a `.dat` byte count. `DecimateComponent.bat`'s pass count is derived
+  this way. Parse it from the HTML by anchoring on the label row — the value is
+  in the `<td>` on the **next** line:
+
+  ```
+  <th>Triangles' count</th>
+  <td>103548208</td>
+  ```
+
+- **A custom template is NOT a drop-in.** A hand-written minimal template
+  containing only `$(modelTriangleCount)` produced a **0-byte file** and
+  `lastError:-2147467259` (`0x80004005`, E_FAIL) — while the shipped template
+  succeeded against the same selected model seconds later. Templates evidently
+  need scaffolding the docs do not describe (localization table, assets, or a
+  required header). Use the shipped templates and parse them; do not hand-roll
+  one without probing it first. [OPEN: what exactly a custom template requires]
+
+- The third parameter is a boolean, not a params XML, so the
+  `-exportRegistration` mitigation (supply a GUI-exported params file) does not
+  exist here. Passing `true` did not rescue the custom template.
+
+- [OPEN] Whether it can emit **georeferencing status and residuals** is still
+  unanswered — only the model-level report was exercised. Georeferencing of a
+  merged scene is still verified only in the GUI.
 - Report templates use the same variable and function syntax as `.rscmd` files
   [OFFICIAL: tutorials/commandline_rscmd, appbasics/reports_functions_and_variables].
 
