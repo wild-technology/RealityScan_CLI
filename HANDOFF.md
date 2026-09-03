@@ -16,7 +16,11 @@ ExportDeliverables had never produced output on this machine before today.
 | model | **20 / 20**, 14.3 h, census-verified |
 | export | **20 / 20 with OBJ + FBX + dense PLY**, 91 GB |
 
-Artifacts (verified byte-for-byte on the NAS, robocopy rc=0 second pass):
+Artifacts on the NAS, verified 2026-09-03 by a LIST-ONLY robocopy pass
+(61,642 files / 253.9 GB across the three trees; 0 to copy, 0 mismatch,
+0 failed, 0 extras). Robocopy's default compare is name+size+timestamp,
+so this is size/mtime parity plus matching aggregate byte totals - NOT a
+content hash. Use /BYTES-level hashing if a checksum is ever required:
 `Y:\RUMI Projects and Output\NA165_H2060\{master,exports,preprocessed_images}`
 Master project: `master\assembly\NA165_H2060_master.rsproj` (119.5 GB).
 
