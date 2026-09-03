@@ -35,7 +35,7 @@ Baseline before touching anything:
 py -3.13 -m pytest testing -q
 ```
 
-639 tests pass (1 skipped offline: geoid grid), ~25 s. If they do not pass
+725 tests pass (1 skipped offline: geoid grid), ~22 s. If they do not pass
 on a clean checkout, stop and report — you have inherited a broken tree and
 anything you build on it is suspect.
 

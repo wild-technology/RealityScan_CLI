@@ -1,5 +1,90 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-09-03 — RECONCILED: one `main` again, agent-native lane adopted, read this first
+
+Three lines became one. `main` now = the NA165/H2060 line + the
+`remove-xmp-sidecars` line (merge `b640c81`) + the agent-native tooling
+(`d38d5f3`, cherry-pick of `37d6d41`). Suite **725 passed, 1 skipped,
+~22 s** with `python -m pytest testing -q`. Nothing running. Tag
+`manual-era-final` marks `b640c81`, the last tree before the restructure
+(the WildScan TUI and campaign drivers are recoverable from it).
+
+Owner rule for the merge: main is the base and carries the latest actual
+processes; every additive sidecars feature kept; nothing dropped except
+literal duplicates. The plan is `docs/AGENT_NATIVE_ROADMAP.md`; this
+session executed its Phase 0.
+
+### What landed
+
+- **Align identity: both mechanisms, main's default.** `AlignZone.bat` and
+  `realityscan_interface.py` keep main's in-session `-exportXMP` harvest as
+  the DEFAULT; `RS_LEGACY_XMP_IDENTITY=0` selects the sidecars line's
+  non-destructive `-exportRegistration` CSV capture. The calibration-sidecar
+  repair follows the same switch. `prior_groups.py` + `RS_PRIOR_GROUPS_FILE`
+  replay run on EVERY align, walking the pool root.
+- **Export CRS unified on `RS_PROJECT_CRS`**; `export_deliverables.py` keeps
+  `--flight-log` / `--crs` and feeds it. `RS_OUTPUT_CRS` is gone.
+- **cameras.json / MOUNTS**: full union; `wca_cinema` pitch 0.0 per the
+  2026-08-14 owner correction, 45 on `wca_upper` / `na168_upper`.
+- **Agent-native lane**: `modules/run_charter.py`, `modules/verify.py`,
+  `wildscan/plan.py`, `RS_NO_SETTINGS_INHERITANCE`, `.claude/hooks/` +
+  `settings.json`, five skills, `docs/ARCHITECTURE.md` (now carrying the
+  merged architecture detail that left CLAUDE.md).
+- **Hooks call `python`, not `py -3.13`** — this box has Microsoft Store
+  Python 3.13 and NO `py` launcher, so the guards would never have fired.
+  Proof they fire now: this session's own Bash call was BLOCKED by
+  `guard_rs_launch.py` because its text quoted `ProbeCalibGroups3.bat`.
+  Consequence to know: a non-read-only shell command that merely MENTIONS a
+  workflow script name is refused; put such text in a file, or start the
+  command with a read-only tool (`grep`, `cat`, `git`, `python`, ...).
+- `guard_rs_launch` now covers every script under `RS_CLI/Scripts`
+  (Probe*, AlignImagesFromFolder, and any future one).
+
+### OPEN — owner decisions (numbered as in the roadmap)
+
+1. **D1 — do CLI prior groups take effect?** main's FINDINGS 2026-08-08 says
+   `-setPriorCalibrationGroup` is silently non-functional from the
+   delegated CLI; the sidecars line ran H2080/H2063 with `prior_groups.py`
+   and never measured it. FINDINGS `[RECON] 2026-09-03 - prior-groups
+   claim: main and remove-xmp-sidecars disagree`. The solved-focal-equality
+   oracle on the smoke fixture settles it; flipping the default is one line
+   in each of the two files.
+2. **D3 — `85c556a` (Zeuss 25/45, orientation hardness 2.0) NOT adopted.**
+   Science, un-A/B'd by its own message. Preserved as tag
+   `agent-native-execution-final`; review on its own.
+3. **D6 — the old checkout** `C:\Users\produ\coyotethings\tools\RealityScan_CLI`
+   sits on the now-deleted `remove-xmp-sidecars`; the five
+   `coyotethings\tools\*.py` staging scripts hardcode that path. Roadmap
+   Phase 2 moves them into `modules/staging/`.
+
+### Branches
+
+Deleted on origin after this push: `remove-xmp-sidecars` (merged),
+`agent-native-execution` (cherry-picked; its head tagged). Left alone:
+`claude/cesium-ion-georeferenced-ue5-vvpoau` (4 unmerged `cesium2unreal`
+commits — not stale, unreviewed) and `archive/on2026-model-to-final-pre-rebase`.
+
+### Next
+
+Roadmap Phase 1 (`.claude/` substrate: permissions allow/ask, a
+`SessionStart` status hook, CLAUDE.md to ≤150 lines, `charter` / `status` /
+`handoff` skills, `run-monitor` + `rs-reference` agents, path-scoped rules),
+then Phase 2 (prompts fail fast, TUI removal with the planner extracted to
+`modules/run_plan.py`, stage reports, `modules/launch.py`, staging scripts
+in).
+
+### Exact next commands
+
+```bash
+python -m pytest testing -q
+python -m modules.run_charter --init <results_root>/_agent/RUN_CHARTER.json
+python -m modules.run_charter --validate <charter>
+python -m wildscan.plan --charter <charter> --validate
+python -m modules.verify --workspace <results_root> --json
+```
+
+---
+
 ## 2026-09-02 — NA165 / H2060 delivered end to end, read this first
 
 **First full run of this pipeline from raw nav to exported deliverables.**
