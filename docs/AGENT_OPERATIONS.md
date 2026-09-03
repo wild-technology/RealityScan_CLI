@@ -13,8 +13,14 @@ this document is the full protocol. On conflict, CLAUDE.md wins.
 
 1. Read CLAUDE.md, this file, HANDOFF.md, and docs/PRODUCT_READINESS.md.
 2. Run the INTAKE below with the user and write the answers to a
-   RUN_CHARTER.md in the agent workspace (template:
-   docs/RUN_CHARTER.template.md).
+   RUN_CHARTER in the agent workspace. The charter is DATA the code
+   enforces, not only prose: scaffold it with
+   `python -m modules.run_charter --init <results_root>/_agent/RUN_CHARTER.json`,
+   fill it in with the user, `--validate` it, and export `RS_RUN_CHARTER`
+   for the session (that one variable arms the `.claude/` write guard and
+   refuses stored-settings inheritance). docs/RUN_CHARTER.template.md is
+   the prose companion, kept for the intake questions and the sign-off
+   line.
 3. Get explicit user sign-off on the charter. No writes before sign-off —
    reads and enumeration only.
 

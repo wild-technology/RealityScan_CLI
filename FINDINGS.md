@@ -5363,3 +5363,50 @@ from that run.
   components produced will report a fully successful campaign with a fifth of
   the imagery silently contributing nothing. Check component counts per zone,
   not exit status. [NA168] (2026-08-31) ESTABLISHED
+---
+
+## [HARNESS] Agent-native execution lane (2026-08-31)
+
+Branch `agent-native-execution`. Owner is moving the product from "run
+manually" to "always executed by a Claude-guided workflow"; these are the
+facts established while building the lane. Suite 559 -> 639.
+
+- **`wildscan.session.build_commands` silently DROPS any answer key not in
+  `chain_arg_names(chain)`.** Discovered by feeding a charter whose
+  answers used the portal's question names (`batch_input_image_dir`,
+  `batch_flight_log_path`) instead of the real `cli_long` names
+  (`b_input`, `b_flight_log_path`): the plan built, validated against
+  `main.py`'s parser, and reported success with the answers ABSENT from
+  the argv. The filter is correct for the portal (it forwards a persisted
+  superset by design, and forwarding all of it made 29 of 31 selections
+  exit 2 - audit 2026-08-07) and is silent data loss for a signed
+  charter. `wildscan.plan.unreached_answers` now names every answer that
+  reached no command; `--validate` exits non-zero on it. ESTABLISHED.
+- **`_KIND_BY_NAME` in `wildscan/session.py` is keyed by names that are
+  not pipeline flags** (`geo_input_image_dir`, `batch_input_image_dir`,
+  `rs_flight_log_path`, ...). None of them appear in
+  `chain_arg_names(['batch','align'])`, whose real members are `b_*` and
+  `r_*`. Noticed while tracking the dropped-answer finding above. Not
+  fixed here - it drives question KINDS in the TUI, so the fix needs the
+  portal's question path checked end to end. ESTABLISHED (defect open).
+- **Frame/nav/settings disagreement across zones is invisible to a
+  camera-count census.** A fixture with two aligned zones whose
+  `align_inputs.json` differ only in the flight-log sha censuses as
+  `align: done, 2 components / 6 cameras`. `modules.verify` now reports it
+  as `blocked`; `testing/test_verify_oracle.py` asserts both halves (the
+  census still says done, the oracle refuses). ESTABLISHED.
+- **A stored answer silently answering a prompt is one env var away from
+  being refusable.** `SettingsStore._default_for` gates only the PROMPT
+  path (`prompt`/`ask`/`prompt_bool`); plain `get` is untouched, so
+  `realityscan_env`'s machine constants and the portal's last-run fields
+  still work. Verified both directions in
+  `testing/test_run_charter.py`. ESTABLISHED.
+- **The three guard hooks were liveness-tested before being trusted**
+  (CLAUDE.md sec.1.1): 5 blocked invocations, 6 allowed reads, 4 blocked
+  charter writes, 2 allowed, plus CRLF idempotence and a mixed-endings
+  repair. First run of the launch-guard test appeared to FAIL two block
+  cases - the cause was bash `echo` mangling `\` inside the JSON payload,
+  not the hook. Feed hook payloads through Python, never `echo`.
+  ESTABLISHED.
+- **`root.boundingVolume.box` / geoid / ion facts unchanged** - no Cesium
+  work in this session.
