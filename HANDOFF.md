@@ -1,5 +1,88 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-09-02 — NA165 / H2060 delivered end to end, read this first
+
+**First full run of this pipeline from raw nav to exported deliverables.**
+ExportDeliverables had never produced output on this machine before today.
+
+### Done
+
+| stage | result |
+|---|---|
+| ROVDataConcat stage 1+2 | 17 dives; H2049/H2050 excluded (degenerate `dives.tsv` rows) |
+| georeference | 29,069 / 29,069 images matched, all exact |
+| align | 20 components, 2,813 / 3,870 cameras (72.7%) |
+| merge | one evolution (owner-capped); the abort was a real bug, now fixed |
+| model | **20 / 20**, 14.3 h, census-verified |
+| export | **20 / 20 with OBJ + FBX + dense PLY**, 91 GB |
+
+Artifacts (verified byte-for-byte on the NAS, robocopy rc=0 second pass):
+`Y:\RUMI Projects and Output\NA165_H2060\{master,exports,preprocessed_images}`
+Master project: `master\assembly\NA165_H2060_master.rsproj` (119.5 GB).
+
+### What made this run hard (all fixed, all in FINDINGS.md)
+
+Ten defects. The expensive ones shared two shapes:
+
+1. **Pool layout moved where data lives and consumers kept looking in the old
+   place.** FIVE of them: `bbox_from_flight_log`, `build_union_flight_log`,
+   `scale_oracle.load_nav_positions`, the align stage's pool gate, and the
+   merge's identity harvest. Grep `RS_MERGE_IMAGES_ROOT`, `images_root` and
+   `split(';')[0]` before adding a sixth.
+2. **A guard that answers the wrong question.** `run_models` wrote a full
+   119.5 GB dated project copy immediately after aborting for low disk, and
+   again when 157 GB free "passed" a fixed threshold - taking C: to 0.01 GB
+   once. Now sized against the actual project.
+
+Also: the dense-PLY "missing model" was a missing `-selectComponent`;
+`0x80070057` from process 21856 is RealityScan's **-selectModel-cannot-resolve**
+signature, and it is fatal in export because `:run` reads a STICKY errors file.
+
+### Running
+
+Nothing. All background tasks stopped, all scheduled tasks removed.
+
+### Ranked loose ends
+
+1. **`:run`'s sticky errors file** — one tolerated failure poisons every later
+   command in the session, and errors get misattributed to whatever ran last.
+   The primitive already exists (`try_delete_model` MOVEs to
+   `expected_<reason>_<inst>.txt`); a shared `:try_run <tag> <cmd...>` would
+   generalise it. This is the single highest-value cleanup left.
+2. **Verify the CRS pin on the next dive.** `5c545e3` sets project + output CRS
+   from the flight log's zone before `-importFlightLog`. Confirm a fresh
+   `.rsInfo` declares the dive's own EPSG rather than a leftover. H2060's
+   exports still carry the old arbitrary `55N` label — the GEOMETRY is correct
+   ECEF (verified: 300k vertices resolve to the H2060 site), only the label is
+   wrong, so re-export if a downstream tool trusts that attribute.
+3. **`exportCoordinateSystemType=3` writes ECEF**, not the project CRS. Closes
+   rs-reference OPEN question 16. Type 0 (PLY) still unobserved.
+4. **Cache capacity.** ~72 GB per mid-size component, and `-clearCache` does
+   NOT reliably reclaim it (148 GB -> 2.7 GB once, 148 -> 90.6 GB the next
+   time). A COLD directory reset does. Budget accordingly.
+5. **C: is at 43 GB free.** Local copies under `NA165_H2060_RS` are redundant
+   now the NAS copy is verified; `master` + `exports` alone is ~210 GB.
+   Owner decision — nothing deleted.
+
+### Exact next commands
+
+```bat
+:: push from this machine (GCM CANNOT auth headless; gh device flow works)
+gh auth status
+git push origin main
+
+:: re-verify the NAS copy (rc=0 means already in sync)
+"C:\Users\produ\Desktop\CoyoteThings\NA165_H2060_RS\_agent\sync_to_nas.bat"
+```
+
+`gh` 2.99.0 is installed at `C:\Users\produ\bin\gh.exe` and registered as git's
+credential helper for github.com. Git Credential Manager 2.5 hangs on a GUI
+dialog from a non-interactive shell (rc=124); forcing
+`credential.gitHubAuthModes=device` produced no output either. Never accept a
+PAT pasted into chat — use the gh device flow.
+
+---
+
 ## 2026-08-31 — CESIUM DEPTH SOLVED, read this first
 
 **The owner's standing complaint — "Cesium appears to ignore depth" — is
