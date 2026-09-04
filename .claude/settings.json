@@ -1,4 +1,55 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest *)",
+      "Bash(python -m modules.verify *)",
+      "Bash(python -m modules.run_charter *)",
+      "Bash(python -m wildscan.plan *)",
+      "Bash(python -m py_compile *)",
+      "Bash(py -3.13 -m pytest *)",
+      "Bash(py -3.13 -m modules.verify *)",
+      "Bash(py -3.13 -m modules.run_charter *)",
+      "Bash(py -3.13 -m wildscan.plan *)",
+      "Bash(py -3.13 -m py_compile *)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git tag*)",
+      "Bash(git fetch*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Get-Item *)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(Select-String *)",
+      "PowerShell(Get-Process *)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(schtasks *)",
+      "Bash(taskkill *)",
+      "Bash(rm -rf *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(Remove-Item *)",
+      "Bash(rm -fr *)",
+      "Bash(rm -r -f *)",
+      "Bash(rm -f -r *)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard*)",
+      "Bash(git reset * --hard*)",
+      "Bash(git clean -fd*)",
+      "Bash(git clean -df*)",
+      "Bash(git clean -xfd*)",
+      "Bash(git clean -fdx*)",
+      "Bash(git clean -xdf*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -27,6 +78,17 @@
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/normalize_crlf.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_status.py\""
           }
         ]
       }

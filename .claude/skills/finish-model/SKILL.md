@@ -1,22 +1,28 @@
 ---
 name: finish-model
 description: Finish a mesh that already exists in a running RealityScan instance - texture, simplify, unwrap, reproject, export, save - by ATTACHING to that instance instead of booting one. Use when asked to finish/texture/export a model in an open GUI or Epic-Launcher session, or to work with a scene the pipeline does not own. Also covers normal pipeline model generation.
+disable-model-invocation: true
 ---
 
 # Finishing a model in a running instance
+
+`python` = the interpreter with the deps (CLAUDE.md "Environment";
+`py -3.13` where the launcher exists).
 
 ## Pick the right path first
 
 - **The pipeline owns the instance and must compute the mesh** -> the
   normal path, `GenerateModel` via `run_models.py`:
   ```bash
-  py -3.13 run_models.py --workspace <ws>
+  python run_models.py --workspace <ws>
   ```
 - **The mesh ALREADY exists in a running instance** (a GUI or
   Epic-Launcher session) -> `ModelToFinal` via `finish_model.py`:
   ```bash
-  py -3.13 finish_model.py --instance "*" --outdir <exports> --name <comp>
+  python finish_model.py --instance "*" --outdir <exports> --name <comp> --source-model <model>
   ```
+  Omit `--source-model` only when the target instance has a model
+  actively selected (live gate B9, 2026-08-07).
 
 ## Why ModelToFinal is the one exception to the `:run` boot pattern
 
@@ -51,7 +57,7 @@ Identify by PID + command line first - a query that matches its own
 search string is not evidence. On a charter-driven lane:
 
 ```bash
-py -3.13 -m modules.run_charter --check <charter> --instance <name>
+python -m modules.run_charter --check <charter> --instance <name>
 ```
 
 ## Deliverables are never overwritten
@@ -62,7 +68,7 @@ overwrite (the ModelToFinal silent-overwrite finding, 2026-08-08).
 ## Verify
 
 ```bash
-py -3.13 -m modules.verify --workspace <ws> --require model,export --json
+python -m modules.verify --workspace <ws> --require model,export --json
 ```
 
 Exit status from RealityScan proves nothing - count what landed on disk.

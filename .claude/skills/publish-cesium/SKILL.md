@@ -1,9 +1,13 @@
 ---
 name: publish-cesium
 description: Publish a mesh to Cesium ion at its real depth, or diagnose an asset sitting at the sea surface. Use when asked to publish, upload to ion, share a model, fix an asset's position or altitude, or when Cesium "ignores depth". Also covers Nira publishing and the batch publisher.
+disable-model-invocation: true
 ---
 
 # Publishing to Cesium ion
+
+`python` = the interpreter with the deps (CLAUDE.md "Environment";
+`py -3.13` where the launcher exists).
 
 **ion honours below-ellipsoid heights exactly.** A probe asked for
 h = -512.46 m and read back h = -512.46 m, error -0.000 m. If an asset
@@ -28,7 +32,7 @@ mesh into East-North-Up metres.
 ## Publish
 
 ```bash
-py -3.13 publish_cesium.py --name "<name>" --dir <export>/obj \
+python publish_cesium.py --name "<name>" --dir <export>/obj \
     --flight-log <cruise>/raw_images/flight_log_<zone>_UTM.txt --poll --verify
 ```
 
@@ -36,7 +40,7 @@ py -3.13 publish_cesium.py --name "<name>" --dir <export>/obj \
 independently and checks the placement that actually landed.
 
 Plan without uploading: `--dry-run`. Whole workspace:
-`py -3.13 publish_batch.py --workspace <ws> --prefix "<wreck>"`.
+`python publish_batch.py --workspace <ws> --prefix "<wreck>"`.
 
 ## Traps
 
@@ -61,11 +65,13 @@ Plan without uploading: `--dry-run`. Whole workspace:
 ## Nira
 
 Nira wants **OBJ, not FBX**, and refuses PLY point clouds.
-`publish_nira.py`; needs `NIRACLIENT_DIR`.
+`python publish_nira.py --name <name> --dir <export>/obj --niraclient <niraclient checkout>`
+(required argument); `publish_batch.py` finds the checkout through
+`NIRACLIENT_DIR` instead.
 
 ## Reference
 
-`docs/rs-reference/10-reconstruction-texturing-export.md` §17.2 carries
+`docs/rs-reference/10-reconstruction-texturing-export.md` sec. 17.2 carries
 the live-verified API contract. `docs/rs-reference/06-georeferencing-
 flightlogs-and-scale.md` covers the vertical datum. Raw log: `FINDINGS.md`
 `[CESIUM]` entries.

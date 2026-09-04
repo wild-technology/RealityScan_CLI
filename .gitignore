@@ -37,3 +37,8 @@ __pycache__/
 # publish_cesium.py staging (local-frame mesh copies) and the ion probe
 _cesium_local/
 _probe_cesium/
+
+# Machine-specific Claude Code context, loaded alongside CLAUDE.md (per-box paths, never committed)
+CLAUDE.local.md
+# pytest's own cache directory
+.pytest_cache/

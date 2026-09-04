@@ -226,6 +226,13 @@ git history — see `git log`):
 
 ## Typical workflows
 
+**Driven by Claude Code** — the operating model going forward (plan and
+phases: `docs/AGENT_NATIVE_ROADMAP.md`). Open Claude Code in this repo, then:
+`/charter` (intake Q&A that writes and validates `RUN_CHARTER.json`; the
+owner signs off before any write), `/drive-run` (the charter/plan/run/verify
+protocol for a dataset), `/status` (read-only: the verify oracle plus
+`RUN_STATE.json`), `/handoff` (session end: FINDINGS flush, HANDOFF refresh).
+
 **WildScan** — the interactive console over the whole pipeline (Wild
 Technology branding, cross-platform; RealityScan stages run on Windows,
 inspection/exports review works anywhere). It censuses a results folder,

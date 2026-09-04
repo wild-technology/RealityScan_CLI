@@ -9,80 +9,31 @@ Continuation of `wild-technology/RC_Main` (created from its
 history preserved — `git log` reaches all the way back). RC_Main is frozen;
 new work happens here.
 
----
-
 ## Starting a session
 
-Read in this order, then say in one line what you are about to do:
+The `SessionStart` hook (`.claude/hooks/session_status.py`) prints the current
+`HANDOFF.md` section and `git status --short`. Then, in this order — and say in
+one line what you are about to do:
 
-1. **`HANDOFF.md`** — current state, what is running, ranked loose ends,
-   exact next commands. Read this **before the first mutating action**.
-2. **This file** — hard rules, working practices, invariants. The
-   module-by-module map lives in `docs/ARCHITECTURE.md`; go there when
-   you touch a subsystem, not to orient.
-3. **`docs/rs-reference/README.md`** — the RealityScan manual's routing
-   index. It sends any RealityScan question to one of 14 documents in one
-   hop. Do not answer a CLI question from general knowledge; route it.
+1. **`HANDOFF.md`** — current state, what is running, ranked loose ends, exact
+   next commands. Read it **before the first mutating action**.
+2. **This file** — hard rules, invariants, routing. `docs/ARCHITECTURE.md` is
+   the module map (grep it when you touch a subsystem, not to orient);
+   `docs/AGENT_OPERATIONS.md` holds the working practices for any session, the
+   driving contract and the RealityScan facts to carry in context.
+3. **`docs/rs-reference/README.md`** — the manual's routing index: any
+   RealityScan question reaches one of 14 documents in one hop. Never answer a
+   CLI question from general knowledge; route it. **Do not read `FINDINGS.md`
+   cover to cover** (5,300+ lines) — grep it; `docs/` and `testing/` are cited
+   sources too.
 
-**Do not read `FINDINGS.md` cover to cover** (5,300+ lines). It is a
-grep target: search it for the command, key, or symptom you care about.
-Same for `docs/` and `testing/` — they are cited sources, not orientation
-reading.
-
-Baseline before touching anything:
-
-```bash
-py -3.13 -m pytest testing -q
-```
-
-725 tests pass (1 skipped offline: geoid grid), ~22 s. If they do not pass
-on a clean checkout, stop and report — you have inherited a broken tree and
-anything you build on it is suspect.
-
-## Working practices for any session
-
-These apply regardless of task. They exist because each was learned the
-expensive way.
-
-- **Verify by census, never by exit status.** RealityScan exits SUCCESS
-  while doing nothing — merges that do not fuse, settings that never
-  applied, exports that wrote zero files. Count cameras, count sidecars,
-  diff manifests — `py -3.13 -m modules.verify --workspace <ws> --json`
-  does all three and reports frame/nav/settings unanimity and measured
-  scale besides. `docs/rs-reference/12-failure-modes-and-race-conditions.md`
-  is the catalogue of every silent-success mode found so far.
-- **Own your instance before you run anything.** A cross-session incident
-  (2026-07-28) had one session running on `RS1` while believing it was
-  isolated on `RS2`, and it overwrote another session's `rs_settings.json`.
-  Resolve `RS_INSTANCE` and `RS_GPU_DEVICES` explicitly, check no other
-  instance holds that name, and never write another session's settings.
-- **Write findings at the moment of discovery**, in the same turn, to
-  `FINDINGS.md`. Deferred logging is lost logging. Refuted hypotheses stay,
-  marked SUPERSEDED — deleting one guarantees rediscovering it.
-- **Declare a budget before any long run**: expected duration, expected
-  resource peak, abort criterion. Then "is it stuck?" is a lookup, not a
-  judgment call. Model generation has been measured to run 40–340 min per
-  component and to peak near total system commit; watch RAM unasked.
-- **Snapshot evidence immediately.** `RealityScan.log` is global and
-  truncated on every instance boot — the reason line behind a generic
-  failure exists only until the next boot. Copy it inside the driver, right
-  after the failing call returns.
-- **One variable per iteration.** Escalation ladders change exactly one
-  thing per attempt with per-attempt evidence. A re-align that changed
-  several things at once cannot attribute its result to any of them.
-- **Checkpoint before mutating, and rehearse the restore.** A loop without
-  a tested rollback is a ratchet toward corruption.
-- **Prefer the mini fixture.** No workflow change touches production data
-  until it passes a <5 min smoke fixture. Smoke fixtures have caught the
-  large majority of workflow bugs at a fraction of the cost.
-- **Report incompleteness in chat, not in the file.** No TODOs, stubs, or
-  commented-out code left behind.
-
-Escalate rather than work around: invariant violations, two monitors
-disagreeing about one run, a resource trend projecting past capacity, a
-result that would revise an ESTABLISHED finding, or anything on the
-blindness list (GUI state, georeferencing correctness, seam quality)
-becoming load-bearing for a conclusion.
+Baseline before touching anything: `python -m pytest testing -q` with the
+interpreter that has every requirement (`CLAUDE.local.md` names it per box) —
+737 passed, 1 skipped (offline: geoid grid), ~22 s. An interpreter without
+`textual` skips `testing/test_wildscan.py` whole at import (21 tests) and
+reports 716 passed, 2 skipped — that is the same green tree, not a broken one
+(observed 2026-09-04 with the Microsoft Store `python`). Any other result on a
+clean checkout: stop and report — anything built on a broken tree is suspect.
 
 ## Ending a session
 
@@ -108,167 +59,79 @@ artifact locations / exact next commands.
 - Data lives on large local/NAS volumes with user-specific paths. Never
   hardcode them — prompt through `SettingsStore`.
 
----
-
 ## RealityScan reference
 
-**`docs/rs-reference/`** is the consolidated manual: the shipped offline
-Help (`C:\Program Files\Epic Games\RealityScan_2.2\Help\en-US\`, which is
-the only reliably readable form of the official docs — the public site is
-JS-rendered), the install-tree XML format dictionaries, and this repo's
-empirical record. 218 command names, 740 settings keys, 88 numbered failure
-modes. Every claim carries a provenance tag; `[CONTRADICTED]` entries state
-both what the docs claim and what was observed.
-
-Consult it before writing any new RealityScan workflow. Start at its
-`README.md`; the "facts that silently destroy a run" table is the highest
--value page in the repo.
-
-The few facts worth carrying in context without a lookup:
-
-- Delegated commands (`-delegateTo <instance> <cmd>`) are QUEUED; the
-  delegating process returns at hand-over, not completion.
-- `-waitCompleted <instance>` returns prematurely if issued before the
-  instance picks up the queued command — hence the double-wait in `:run`.
-- `-getStatus <instance>` → errorlevel 0 iff the instance exists, but
-  "gone" precedes process teardown by seconds (file handles outlive it).
-  It also prints a live progress line on stdout (capture by redirecting;
-  RealityScan is a GUI-subsystem binary): `id:<op> progress:<pct>
-  runtime:<s> endEstimation:<s> rev:<n> lastError:<code>`. `rev:` tracks
-  scene MUTATIONS, not operations.
-- **`*` is a valid instance argument** meaning "first available instance",
-  accepted by `-delegateTo`, `-waitCompleted`, `-getStatus`,
-  `-pauseInstance`, `-unpauseInstance` and `-abortInstance`. A GUI or
-  Epic-Launcher RealityScan has no `-setInstanceName` and answers no named
-  lookup, but IS reachable via `*`. Ambiguous once two instances run — use
-  explicit names for multi-GPU, `*` only to attach to a single interactive
-  session.
-- App settings use `app*` key names. The legacy `RealityCapture*` names are
-  dead.
-- Exit codes: 0 = success; with `appQuitOnError=true` the error's decimal
-  code; 3 = crash (minidump at the `-silent` path).
-- Multi-GPU: RealityScan uses all CUDA GPUs by default. Pin via
-  `RS_INSTANCE` + `RS_GPU_DEVICES` (exported as `CUDA_VISIBLE_DEVICES`),
-  one instance name per GPU set.
+**`docs/rs-reference/`** is the RealityScan documentation of record. Consult it
+before writing any new RealityScan workflow; start at its `README.md` — the
+"facts that silently destroy a run" table is the highest-value page in the
+repo. The `rs-lookup` skill routes any question there in one hop. What the
+manual holds, and the few facts worth carrying in context without a lookup,
+are in `docs/AGENT_OPERATIONS.md`, "RealityScan facts to carry in context".
 
 ## Findings log
 
-`FINDINGS.md` at the repo root is the running log of every discovered fact
-— CLI behaviors, merge semantics, rig data, process conventions — each with
-HOW it was discovered. Append whenever a fact is established; keep entries
-short and dated. It is the raw log; the distilled counterpart is
+`FINDINGS.md` at the repo root is the running log of every discovered fact —
+CLI behaviors, merge semantics, rig data, process conventions — each with HOW
+it was discovered. Append whenever a fact is established; keep entries short
+and dated. It is the raw log; the distilled counterpart is
 `docs/rs-reference/`, and deep rationale lives in `docs/`.
 
 ## Naming
 
 Everything in this repo says **RealityScan** (`RS`), never RealityCapture.
-Exceptions that must NOT be renamed:
-
-- RealityScan API identifiers that happen to be current product strings
-  (e.g. `reader="RealityScan.Import.CSVFlightLog"` in `flightlogs.xml`,
-  feature-detector ids in `Metadata/AlignmentParams.xml`);
-- legacy file extensions `.rcalign`/`.rcproj`, still accepted when reading
-  old outputs (new saves use `.rsproj`).
-
----
+Exceptions that must NOT be renamed: RealityScan API identifiers that happen to
+be current product strings (e.g. `reader="RealityScan.Import.CSVFlightLog"` in
+`flightlogs.xml`, feature-detector ids in `Metadata/AlignmentParams.xml`);
+legacy file extensions `.rcalign`/`.rcproj`, still accepted when reading old
+outputs (new saves use `.rsproj`).
 
 ## Architecture
 
-Full module-by-module map: **`docs/ARCHITECTURE.md`** — grep it when you
-touch a subsystem. The shape worth knowing before the first action:
+Module-by-module map: **`docs/ARCHITECTURE.md`** — grep it when you touch a
+subsystem (`main.py`, the post-align drivers and `modules/` domain logic sit on
+`module_base/`: `RSModule`, `Parameter`, `SettingsStore`). Two invariants to
+know before the first action: **`modules/realityscan_interface/`** is the ONLY
+place RealityScan is executed — `realityscan_cli.py` (`RealityScanCLI`) owns
+executable discovery, per-instance locks, marker-file hygiene, progress tailing
+and verified shutdown, and every `RS_CLI/Scripts/*.bat` workflow runs through
+the shared `:run` subroutine; **`wildscan/session.py`** is a PURE PLANNER
+(`build_commands`) whose three consumers are the TUI, `wildscan/runner.py` and
+`wildscan/plan.py` — add a fourth consumer rather than a second planner.
 
-- **`main.py`** — interactive orchestrator (Extract → Georeference →
-  Preprocess → Batch → Align). `RS_MODULES` / `RS_NO_INTERACTIVE` drive
-  it without a TTY.
-- **`wildscan/`** — TUI portal over the same drivers. `wildscan/session.py`
-  is a PURE PLANNER (`build_commands`); the TUI, `wildscan/runner.py` and
-  `wildscan/plan.py` are its three consumers. Add a fourth consumer rather
-  than a second planner.
-- **`modules/realityscan_interface/`** — the ONLY place RealityScan is
-  executed. `realityscan_cli.py` (`RealityScanCLI`) owns executable
-  discovery, per-instance locks, marker-file hygiene, progress tailing and
-  verified shutdown; `RS_CLI/Scripts/*.bat` are the workflows, every one
-  through the shared `:run` subroutine.
-- **Post-align drivers** — `merge_zones.py`, `grow_zone.py`,
-  `run_models.py`, `finish_model.py`, and `publish_cesium.py` /
-  `publish_nira.py` / `publish_batch.py`.
-- **`modules/`** — domain logic: camera registry, flight logs,
-  calibration sidecars, batching, scale oracle, component
-  analysis/manifest, workspace census, feature merge, align fingerprints,
-  Cesium placement.
-- **`module_base/`** — `RSModule`, `Parameter`, `SettingsStore`.
+### Agent-facing entry points (fixed schemas — prefer them over greps)
 
-### Agent-facing entry points
-
-These exist so a Claude-guided run reads a fixed schema instead of
-re-deriving verdicts and flags in prose. Prefer them over ad-hoc greps.
-
-- `py -3.13 -m modules.verify --workspace <ws> --json` — the census/verify
-  **oracle**: "did it actually work", as JSON, read from artifacts on disk.
-  Exit 0 ok / 1 incomplete / 2 blocked / 3 absent.
-- `py -3.13 -m modules.run_charter --validate <charter>` — the run
-  contract as DATA, plus the write-guard and instance-guard the drivers
-  and hooks call.
-- `py -3.13 -m wildscan.plan --charter <charter> --validate` — the run
-  plan, headless, proven against `main.py`'s own parser before anyone runs
-  it.
-- `.claude/skills/` — per-procedure guides: `rs-lookup` (routes every
-  RealityScan question into `docs/rs-reference/`), `drive-run`,
-  `merge-zones`, `publish-cesium`, `finish-model`.
-- `.claude/hooks/` — mechanical enforcement of hard rule 1, the charter's
-  touch rules, and CRLF on `.bat`/`.vbs`. Liveness-tested by
-  `testing/test_agent_hooks.py`; a guard nobody tests is a rule nobody
-  enforces.
-
----
+- `python -m modules.verify --workspace <ws> --json` — the census/verify
+  **oracle** as JSON from disk; exit 0 ok / 1 incomplete / 2 blocked / 3 absent.
+- `python -m modules.run_charter --init|--validate <charter>` — the run contract
+  as DATA, plus the `--check`/`--path` and `--instance` guards the hooks call.
+- `python -m wildscan.plan --charter <charter> --validate` — the run plan,
+  headless, proven against `main.py`'s own parser before anyone runs it.
+- `.claude/skills/` — `rs-lookup` (routes RealityScan questions into
+  `docs/rs-reference/`), `drive-run`, `merge-zones`, `publish-cesium`,
+  `finish-model`, `charter` (intake, sign-off), `status`, `handoff`.
+- `.claude/agents/` — read-only subagents `run-monitor` (polls a run; reports,
+  never acts) and `rs-reference` (`docs/rs-reference/` lookup with provenance).
+  `.claude/rules/` — path-scoped rules (`RS_CLI/**`, the interface module and
+  post-align drivers, `testing/**`), loaded only when those files are touched.
+- `.claude/hooks/` — enforce hard rule 1, the charter's touch rules and CRLF on
+  `.bat`/`.vbs`; print status at `SessionStart`. Liveness-tested by
+  `testing/test_agent_hooks.py`: a guard nobody tests is a rule nobody enforces.
 
 ## When an AI agent is DRIVING (owner said "run this against that dataset")
 
-MANDATORY — full contract in `docs/AGENT_OPERATIONS.md`; on conflict this
-section wins. Every rule traces to a recorded incident.
+MANDATORY. `docs/AGENT_OPERATIONS.md` is the contract (every mandate in full,
+each traced to an incident) and wins on conflict; this section is one-line
+pointers, and the `/drive-run` skill is the executable path.
 
-1. **No writes before the charter.** Ask the user — never infer —
-   where the ORIGINALS are, where the NAV is, where OUTPUTS go, and what
-   is PROTECTED. Owner signs off; then work. The charter is DATA, not
-   prose: `py -3.13 -m modules.run_charter --init <ws>/_agent/
-   RUN_CHARTER.json`, then `--validate` it and export `RS_RUN_CHARTER`.
-   That one variable arms the write guard, pins the agent's instance, and
-   refuses stored-settings inheritance for every child process.
-   (`docs/RUN_CHARTER.template.md` is the prose companion; the
-   `drive-run` skill is the full walkthrough.)
-2. **Source data is read-only, forever.** This pipeline writes sidecars
-   into input folders (hard rule 0 forbids this; main's default identity
-   harvest is exactly such a writer, pending D1) — an agent aligns only
-   from trees it created (hardlinks/copies) or with explicit consent.
-3. **Protected paths** (charter list) are never touched, cleaned, or
-   reorganized. Deliverables are never overwritten — collisions are
-   stop-and-ask.
-4. **Agent working files live in ONE place**: `<results_root>/_agent/`.
-   Never in the repo, never beside source data. It is the only tree the
-   agent may delete freely. Rules 2–4 are enforced mechanically by
-   `.claude/hooks/guard_charter_writes.py` whenever `RS_RUN_CHARTER` is
-   set — a refusal there is an owner decision to revisit, never something
-   to work around.
-5. **Own instance, own processes.** Charter-named RS instance (never the
-   user's), own cache. Never kill/quit/delegate-to anything the agent
-   did not start; identify by PID+cmdline first.
-6. **Long runs are scheduler-owned** (schtasks + CRLF launcher, never a
-   harness shell — job objects killed 14.4 h once), with a written
-   budget declaration and liveness-tested monitors BEFORE launch.
-7. **Frames and fingerprints**: honor FRAME_WARNING markers and
-   align_inputs.json; never mix coordinate frames; components without a
-   current-nav fingerprint are not "done".
-8. **Every science argument explicit** — no rs_settings inheritance
-   unattended (`RS_NO_SETTINGS_INHERITANCE=1` makes the store refuse it).
-   Plan with `py -3.13 -m wildscan.plan --charter <charter> --validate`
-   rather than hand-writing a command line: it proves the argv against
-   `main.py`'s own parser and names any charter answer that reached no
-   command. **Owner gates (`confirmed: false`) are stops, never flags to
-   flip.**
-9. **Destructive ops need per-instance user approval**: anything outside
-   the agent workspace, force-pushes, killing user processes, app-global
-   RealityScan settings (they leak into the user's GUI), raising safety
-   ceilings.
+1. **No writes before the charter** — ask, never infer; charter as DATA (`modules.run_charter`, `RS_RUN_CHARTER`). Mandate 1.
+2. **Source data is read-only, forever** — align only from trees the agent created, or with consent. Mandate 2; hard rule 0.
+3. **Protected paths are never touched; deliverables never overwritten** — collisions are stop-and-ask. Mandate 3.
+4. **Agent working files live in ONE place** (`<results_root>/_agent/`) — enforced by `guard_charter_writes.py`. Mandate 4.
+5. **Own instance, own processes** — never kill/quit/delegate-to anything the agent did not start. Mandate 5.
+6. **Long runs are scheduler-owned** (schtasks + CRLF launcher), budget declared and monitors live first. Mandate 6.
+7. **Frames and fingerprints** — honor FRAME_WARNING and align_inputs.json; never mix frames. Mandate 7.
+8. **Every science argument explicit; owner gates are stops** — plan with `wildscan.plan --validate`. Mandate 8.
+9. **Destructive ops need per-instance user approval.** Mandate 9.
 
 ## Hard rules
 

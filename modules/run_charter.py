@@ -11,9 +11,9 @@ This module makes the charter a JSON file the CODE reads, and turns the
 three touch rules into mechanical checks:
 
     RUN_CHARTER.json                                  (schema below)
-    py -3.13 -m modules.run_charter --init  <path>    scaffold one
-    py -3.13 -m modules.run_charter --validate <path> check it
-    py -3.13 -m modules.run_charter --check <path> --path <target>
+    python -m modules.run_charter --init  <path>    scaffold one
+    python -m modules.run_charter --validate <path> check it
+    python -m modules.run_charter --check <path> --path <target>
 
 A driver opts in by calling ``guard_write(target)`` before any mutating
 operation; the charter is located through the ``RS_RUN_CHARTER``
@@ -371,7 +371,7 @@ TEMPLATE: dict = {
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="py -3.13 -m modules.run_charter",
+        prog="python -m modules.run_charter",
         description="Scaffold, validate and test a run charter.")
     parser.add_argument("--init", metavar="PATH",
                         help="write a charter template to PATH")

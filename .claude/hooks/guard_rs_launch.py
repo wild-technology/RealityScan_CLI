@@ -55,8 +55,15 @@ _READ_ONLY = re.compile(
 
 
 def segments(command: str) -> list[str]:
-    """The command split into independently-executed segments."""
-    return [s for s in re.split(r"\|\||&&|\||;|\n", command) if s.strip()]
+    """The command split into independently-executed segments.
+
+    A backslash-escaped pipe (``grep "a\\|b"``) is a regex alternation
+    inside one argument, not a shell pipe, so it does not start a new
+    segment - otherwise a read-only grep whose pattern mentions a .bat
+    name is refused.
+    """
+    return [s for s in re.split(r"\|\||&&|(?<!\\)\||;|\n", command)
+            if s.strip()]
 
 
 def offence(command: str) -> str | None:

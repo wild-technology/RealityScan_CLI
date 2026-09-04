@@ -6,9 +6,9 @@ TUI and ``wildscan.runner`` are just two consumers of it. This module is
 the third: it emits the SAME plan as JSON so an unattended driver - or an
 agent - reads what to run instead of re-deriving flags in prose.
 
-    py -3.13 -m wildscan.plan --charter RUN_CHARTER.json --json
-    py -3.13 -m wildscan.plan --workspace <root> --stages merge,model
-    py -3.13 -m wildscan.plan --charter RUN_CHARTER.json --validate
+    python -m wildscan.plan --charter RUN_CHARTER.json --json
+    python -m wildscan.plan --workspace <root> --stages merge,model
+    python -m wildscan.plan --charter RUN_CHARTER.json --validate
 
 Re-deriving flags is not a hypothetical cost. main.py builds its argparse
 from the ENABLED modules only and rejects anything else with exit 2, so a
@@ -207,7 +207,7 @@ def format_text(plan: dict) -> str:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="py -3.13 -m wildscan.plan",
+        prog="python -m wildscan.plan",
         description="Emit the portal's run plan without the portal.")
     parser.add_argument("--charter", default=None,
                         help="RUN_CHARTER.json - supplies results root, "

@@ -1,13 +1,18 @@
 ---
 name: drive-run
 description: Drive this pipeline against a dataset end to end - the charter/plan/run/verify protocol for when the owner says "run this against that data", "process this dive", "align these zones", or asks for an unattended or overnight run. Covers the run charter intake, the headless run plan, budget declaration, and the verification oracle. Use BEFORE the first write of any driving session.
+disable-model-invocation: true
 ---
 
 # Driving the pipeline
 
-The contract is `docs/AGENT_OPERATIONS.md`; CLAUDE.md's "When an AI agent
-is DRIVING" section wins on conflict. This skill is the executable path
-through it. Every step exists because of a recorded incident.
+The contract is `docs/AGENT_OPERATIONS.md` ("The nine mandates" is the full
+text) and it wins on conflict; CLAUDE.md's "When an AI agent is DRIVING"
+section is one-line pointers to it (since 2026-09-03; before that the
+CLAUDE.md section won). This skill is the executable path through it.
+Every step exists because of a recorded incident.
+`python` = the interpreter with the deps (CLAUDE.md "Environment";
+`py -3.13` where the launcher exists).
 
 ## 0. Before the first write - the charter
 
@@ -26,19 +31,21 @@ If the owner pre-supplied an answer, restate it for confirmation rather
 than re-asking.
 
 ```bash
-py -3.13 -m modules.run_charter --init <results_root>/_agent/RUN_CHARTER.json
+python -m modules.run_charter --init <results_root>/_agent/RUN_CHARTER.json
 ```
 
 Fill it in with the owner, get `signed_off.by` + `.date`, then:
 
 ```bash
-py -3.13 -m modules.run_charter --validate <charter>
+python -m modules.run_charter --validate <charter>
 ```
 
-Export `RS_RUN_CHARTER=<charter>` for the session. That single variable
-arms the `.claude/` write guard, pins the agent's instance, and sets
-`RS_NO_SETTINGS_INHERITANCE=1` so no stage can answer itself from a
-previous campaign's `rs_settings.json`.
+Set `RS_RUN_CHARTER=<charter>` in the shell that launches Claude Code.
+That arms `.claude/hooks/guard_charter_writes.py` (every Write/Edit and
+obvious shell write outside the results root is refused). Instance
+pinning, `RS_CACHE_DIR` and `RS_NO_SETTINGS_INHERITANCE=1` come from the
+plan (sec.1) - each planned command carries them in its env; a driver
+started by hand does not get them. See `/charter` sec.5.
 
 **Owner gates (`confirmed: false`) are stops, never flags to flip.**
 
@@ -49,7 +56,7 @@ from the ENABLED modules only and rejects anything else with exit 2 -
 before a single stage runs.
 
 ```bash
-py -3.13 -m wildscan.plan --charter <charter> --validate
+python -m wildscan.plan --charter <charter> --validate
 ```
 
 Non-zero means a command would be rejected, or an answer you wrote in the
@@ -72,7 +79,7 @@ prove the detector fires.
 RealityScan exits SUCCESS while doing nothing. After every stage:
 
 ```bash
-py -3.13 -m modules.verify --workspace <results_root> --json
+python -m modules.verify --workspace <results_root> --json
 ```
 
 Exit 0 ok / 1 incomplete / 2 blocked / 3 absent. It reads artifacts on

@@ -66,6 +66,8 @@ def test_direct_realityscan_launches_are_blocked(command):
     "git status --short",
     "cat modules/realityscan_interface/RS_CLI/Scripts/ProbeFlightlog5.bat",
     "grep -n delegateTo modules/realityscan_interface/RS_CLI/Scripts/NightGrow.bat",
+    # A backslash-escaped pipe is regex alternation, not a shell pipe.
+    r'grep -n "delegateTo\|waitCompleted" modules/realityscan_interface/RS_CLI/Scripts/AlignZone.bat',
 ])
 def test_reading_about_realityscan_is_allowed(command):
     """The guard looks for INVOCATION, not for the string appearing."""
@@ -215,3 +217,153 @@ def test_settings_json_wires_every_hook():
                    "normalize_crlf.py"):
         assert script in registered, f"{script} is not wired in settings.json"
         assert os.path.isfile(os.path.join(HOOKS, script))
+
+
+# ------------------------------------------- SessionStart: orientation
+
+STATUS_HOOK = os.path.join(HOOKS, "session_status.py")
+
+
+def run_status(stdin="", env=None, cwd=None):
+    """Run the status hook with raw stdin (it must tolerate an empty
+    payload, so this bypasses run_hook's json.dumps)."""
+    child = dict(os.environ)
+    child.pop("RS_RUN_CHARTER", None)
+    child.pop("CLAUDE_PROJECT_DIR", None)
+    child.update(env or {})
+    return subprocess.run([sys.executable, STATUS_HOOK], input=stdin,
+                          text=True, capture_output=True, env=child,
+                          cwd=cwd or REPO)
+
+
+def test_session_status_runs_with_empty_stdin():
+    """Empty stdin, exit 0, the repo's HANDOFF heading in the output, and
+    nothing outside ASCII - the cp1252 console crashes on anything else."""
+    result = run_status(stdin="")
+    assert result.returncode == 0, result.stderr
+    with open(os.path.join(REPO, "HANDOFF.md"), encoding="utf-8") as fh:
+        heading = next(ln for ln in fh if ln.startswith("## "))
+    # The heading is emitted ASCII-folded; its leading words survive.
+    assert heading.split()[1] in result.stdout
+    assert "HANDOFF.md current section" in result.stdout
+    assert "git status" in result.stdout
+    assert "RS_RUN_CHARTER unset" in result.stdout
+    result.stdout.encode("ascii")            # raises if anything slipped
+    assert len(result.stdout.splitlines()) <= 65
+
+
+def test_session_status_shows_only_the_current_handoff_section(tmp_path):
+    (tmp_path / "HANDOFF.md").write_text(
+        "# HANDOFF\n\n## 2026-09-03 - CURRENT, read this first\n\n"
+        "current line one\ncurrent line two\n\n"
+        "## 2026-09-02 - OLDER\n\nstale line\n", encoding="utf-8")
+    result = run_status(stdin="{}", env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
+    assert result.returncode == 0, result.stderr
+    assert "CURRENT, read this first" in result.stdout
+    assert "current line two" in result.stdout
+    assert "OLDER" not in result.stdout
+    assert "stale line" not in result.stdout
+    # tmp_path is not a git repo: the failure is reported, not raised.
+    assert "git unavailable" in result.stdout
+
+
+def test_session_status_truncates_a_long_section(tmp_path):
+    body = "\n".join(f"line {i}" for i in range(80))
+    (tmp_path / "HANDOFF.md").write_text(
+        f"## NOW\n{body}\n\n## LATER\nx\n", encoding="utf-8")
+    result = run_status(stdin="{}", env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
+    assert result.returncode == 0
+    assert "more lines; read HANDOFF.md" in result.stdout
+    assert "line 79" not in result.stdout
+
+
+def test_session_status_survives_a_missing_handoff(tmp_path):
+    result = run_status(stdin="not json",
+                        env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
+    assert result.returncode == 0
+    assert "HANDOFF.md not readable" in result.stdout
+
+
+def _scaffolded_charter(tmp_path):
+    """A charter from --init with the placeholders that validation needs
+    filled in, the way test_run_charter's fixtures shape one."""
+    from modules.run_charter import main as charter_main
+    path = tmp_path / "results" / "_agent" / "RUN_CHARTER.json"
+    assert charter_main(["--init", str(path)]) == 0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["campaign"], data["dive"] = "T", "D"
+    data["locations"].update({
+        "originals": [str(tmp_path / "src")],
+        "nav": [str(tmp_path / "nav")],
+        "results_root": str(tmp_path / "results"),
+        "agent_workspace": str(tmp_path / "results" / "_agent"),
+        "protected": [{"path": str(tmp_path / "results" / "final"),
+                       "why": "delivered"}],
+    })
+    data["ownership"]["rs_instance"] = "RSAGENT"
+    data["signed_off"] = {"by": "owner", "date": "2026-09-03", "quote": ""}
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path
+
+
+def test_session_status_reports_the_charter_validation(tmp_path):
+    charter = _scaffolded_charter(tmp_path)
+    result = run_status(stdin="{}", env={"RS_RUN_CHARTER": str(charter)})
+    assert result.returncode == 0, result.stderr
+    assert "VALID" in result.stdout
+    assert "validate exit code: 0" in result.stdout
+    assert "RUN_STATE.json: none under" in result.stdout
+
+
+def test_session_status_reports_run_state_fields(tmp_path):
+    charter = _scaffolded_charter(tmp_path)
+    (charter.parent / "RUN_STATE.json").write_text(json.dumps({
+        "stage": "align", "task": "RS_T_D_align", "started": "2026-09-03T10:00",
+        "log": str(tmp_path / "results" / "_agent" / "align.log"),
+        "pid_file": "ignored"}), encoding="utf-8")
+    result = run_status(stdin="{}", env={"RS_RUN_CHARTER": str(charter)})
+    assert result.returncode == 0, result.stderr
+    assert "stage: align" in result.stdout
+    assert "task: RS_T_D_align" in result.stdout
+    assert "started: 2026-09-03T10:00" in result.stdout
+    assert "align.log" in result.stdout
+    assert "pid_file" not in result.stdout
+
+
+def test_session_status_never_blocks_on_a_broken_charter(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    result = run_status(stdin="{}", env={"RS_RUN_CHARTER": str(bad)})
+    assert result.returncode == 0
+    assert "INVALID" in result.stdout
+    assert "validate exit code: 2" in result.stdout
+
+
+def test_settings_json_wires_session_status_and_permissions():
+    """The permission tiers are the cheapest layer for the rules Claude
+    could break by accident (AGENT_OPERATIONS sec.6); a tier that is not
+    in the file is a rule nobody enforces."""
+    with open(os.path.join(REPO, ".claude", "settings.json"),
+              encoding="utf-8") as fh:
+        settings = json.load(fh)
+    assert set(settings) == {"permissions", "hooks"}   # no unknown keys
+    starts = settings["hooks"]["SessionStart"]
+    assert any("session_status.py" in h["command"]
+               for entry in starts for h in entry["hooks"])
+    assert all(entry["matcher"] == "startup|resume" for entry in starts)
+    assert os.path.isfile(STATUS_HOOK)
+
+    perms = settings["permissions"]
+    assert "Bash(python -m pytest *)" in perms["allow"]
+    assert "Bash(python -m modules.verify *)" in perms["allow"]
+    assert "Bash(git status*)" in perms["allow"]
+    for rule in ("Bash(git push*)", "Bash(schtasks *)", "Bash(taskkill *)",
+                 "Bash(rm -rf *)", "PowerShell(Stop-Process *)",
+                 "PowerShell(Remove-Item *)"):
+        assert rule in perms["ask"], rule
+    for rule in ("Bash(git push --force*)", "Bash(git push -f *)",
+                 "Bash(git reset --hard*)", "Bash(git clean -fd*)"):
+        assert rule in perms["deny"], rule
+    # Data paths are per-machine and belong to the charter, never here.
+    assert not any(":/" in r or ":\\" in r
+                   for tier in perms.values() for r in tier)
