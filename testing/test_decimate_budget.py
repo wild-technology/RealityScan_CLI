@@ -190,3 +190,39 @@ def test_measure_selects_the_component_first_when_asked():
     calls.clear()
     rs.measure('m')
     assert '-selectComponent' not in calls
+
+
+# ----------------------------------------------- texture is part of "done"
+def test_untextured_export_is_not_a_success():
+    # c5 exported 417,326 triangles with no texture: the AdaptiveTexelSize
+    # unwrap failed silently (0x83000003, scene revision unchanged), the bake
+    # then had nothing to write into, and the .mtl came out with no map_Kd. A
+    # census that checks only geometry calls that finished.
+    from run_decimate import Rs
+
+    class Info(FakeRs):
+        def __init__(self, textured, textures):
+            super().__init__({'m': 417_326}, 'm')
+            self._t, self._n = textured, textures
+
+        def info(self):
+            return {'name': 'm', 'triangles': 417_326, 'textured': self._t,
+                    'textures': self._n, 'unwrap_style': 'x' if self._t else None}
+
+    good, bad = Info(True, 4), Info(False, 0)
+    assert good.info()['textured'] and good.info()['textures'] >= 1
+    assert not (bad.info()['textured'] and bad.info()['textures'] >= 1)
+
+
+def test_fallback_unwrap_preset_exists_and_respects_the_cap():
+    e = _entries('Unwrapping_MaxCount4_4k.xml')
+    assert e['unwrapStyle'] == 'MaxTexturesCount'
+    assert int(e['unwrapMaxTexResolution']) <= 4096
+
+
+def test_driver_declares_the_fallback():
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'run_decimate.py'), encoding='utf-8').read()
+    assert 'Unwrapping_MaxCount4_4k.xml' in src
+    assert 'both unwrap styles failed' in src
+    assert 'carries no texture' in src

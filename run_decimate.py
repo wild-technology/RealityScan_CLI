@@ -113,8 +113,42 @@ class Rs:
         self._raw(['-waitCompleted', self.name], timeout)
 
     # ---------------------------------------------------------------- report
+    def info(self):
+        """Full state of the current selection: name, triangles, textured, textures.
+
+        `textured` matters as much as the triangle count. c5 exported 417,326
+        triangles with NO texture at all - the unwrap had failed silently and
+        the bake had nothing to write into. A census that checks only geometry
+        calls that a success.
+        """
+        d = {'name': None, 'triangles': None, 'textured': False, 'textures': 0}
+        html = self._report_html()
+        if html is None:
+            return d
+        def field(label):
+            m = re.search(r"<th>" + label + r"</th>\s*<td>([^<]*)</td>", html)
+            return m.group(1).strip() if m else None
+        d['name'] = field('Model name')
+        t = field(r"Triangles' count")
+        d['triangles'] = int(t) if t and t.isdigit() else None
+        d['textured'] = (field('Textured') or '').lower() == 'true'
+        c = field(r"Textures' count")
+        d['textures'] = int(c) if c and c.isdigit() else 0
+        d['unwrap_style'] = field('Unwrapping style')
+        return d
+
     def report(self):
         """(model_name, triangle_count) of the current selection, or (None, None)."""
+        html = self._report_html()
+        if html is None:
+            return None, None
+        # Label and value sit on consecutive lines; anchor on the label.
+        nm = re.search(r"<th>Model name</th>\s*<td>([^<]*)</td>", html)
+        tr = re.search(r"Triangles' count</th>\s*<td>(\d+)</td>", html)
+        return (nm.group(1).strip() if nm else None,
+                int(tr.group(1)) if tr else None)
+
+    def _report_html(self):
         out = os.path.join(self.work, 'measure.html')
         try:
             if os.path.exists(out):
@@ -123,14 +157,9 @@ class Rs:
             pass
         self.cmd('-exportReport', out, self.template, timeout=1800)
         if not os.path.exists(out) or os.path.getsize(out) == 0:
-            return None, None
+            return None
         with open(out, encoding='utf-8', errors='replace') as fh:
-            html = fh.read()
-        # Label and value sit on consecutive lines; anchor on the label.
-        nm = re.search(r"<th>Model name</th>\s*<td>([^<]*)</td>", html)
-        tr = re.search(r"Triangles' count</th>\s*<td>(\d+)</td>", html)
-        return (nm.group(1).strip() if nm else None,
-                int(tr.group(1)) if tr else None)
+            return fh.read()
 
     # ---------------------------------------------------------------- select
     def select(self, model):
@@ -180,6 +209,7 @@ def decimate(rs, comp, seed_suffix, budget, export_dir, log):
 
     tex = os.path.join(META, 'Texturing_AdaptiveTexel_4k.xml')
     unwrap = os.path.join(META, 'Unwrapping_AdaptiveTexel_4k.xml')
+    unwrap_fb = os.path.join(META, 'Unwrapping_MaxCount4_4k.xml')
     simplify = os.path.join(META, 'SimplifySmooth_80per_Params.xml')
     reproj = os.path.join(META, 'ReprojectionParams.xml')
     # METRIC, not the stock OBJ preset. ModelExportParamsObj.xml carries
@@ -190,7 +220,7 @@ def decimate(rs, comp, seed_suffix, budget, export_dir, log):
     # metric variant is scale 1.0 and writes jpg for BOTH the colour and normal
     # layers, which is what was asked for.
     export = os.path.join(META, 'ModelExportParamsObj_Metric.xml')
-    for f in (tex, unwrap, simplify, reproj, export):
+    for f in (tex, unwrap, unwrap_fb, simplify, reproj, export):
         if not os.path.exists(f):
             return dict(rec, status='fail', why=f'missing parameter file {f}')
 
@@ -260,8 +290,25 @@ def decimate(rs, comp, seed_suffix, budget, export_dir, log):
         return dict(rec, status='fail', why='could not rename final model')
 
     # 3/4. Unwrap then bake the high-poly texture onto the decimated mesh.
+    #
+    # AdaptiveTexelSize can fail outright on a particular mesh. On c5 it
+    # returned 0x83000003 in 3 s without advancing the scene revision, three
+    # times, at both large-triangle thresholds - and NOTHING downstream
+    # complained: the bake then failed with 0x8200001F, and the component
+    # exported 417,326 triangles with no texture at all and a .mtl carrying no
+    # map_Kd. MaxTexturesCount unwrapped the same mesh in 8 s. So: try the
+    # requested style, prove it took, and fall back rather than shipping an
+    # untextured deliverable.
     log('    [3/5] unwrapping at adaptive 4K')
     rs.cmd('-unwrap', unwrap)
+    if not rs.info().get('unwrap_style'):
+        log('      adaptive unwrap did not take - falling back to MaxTexturesCount 4x4096')
+        rs.cmd('-unwrap', unwrap_fb)
+        style = rs.info().get('unwrap_style')
+        if not style:
+            return dict(rec, status='fail', why='both unwrap styles failed')
+        rec['unwrap_fallback'] = True
+    rec['unwrap_style'] = rs.info().get('unwrap_style')
     log(f'    [4/5] reprojecting {hp} -> {final}')
     rs.cmd('-reprojectTexture', hp, final, reproj)
     # -reprojectTexture does not document which of source/result it leaves
@@ -273,10 +320,12 @@ def decimate(rs, comp, seed_suffix, budget, export_dir, log):
     log(f'    [5/5] exporting {comp}.obj')
     rs.cmd('-exportSelectedModel', obj, export)
 
-    got = rs.measure(final)
+    rs.select(final)
+    st = rs.info()
+    got = st['triangles'] if st['name'] == final else None
     has_obj = os.path.exists(obj) and os.path.getsize(obj) > 0
-    rec.update(triangles=got, obj=has_obj,
-               obj_bytes=os.path.getsize(obj) if has_obj else 0,
+    rec.update(triangles=got, textured=st['textured'], textures=st['textures'],
+               obj=has_obj, obj_bytes=os.path.getsize(obj) if has_obj else 0,
                minutes=round((time.time() - t0) / 60, 1))
     if not has_obj:
         return dict(rec, status='fail', why='no OBJ written')
@@ -284,6 +333,9 @@ def decimate(rs, comp, seed_suffix, budget, export_dir, log):
         return dict(rec, status='fail', why='could not measure exported model')
     if got > budget:
         return dict(rec, status='fail', why=f'{got:,} tris still over budget')
+    # Geometry alone is not a deliverable.
+    if not st['textured'] or st['textures'] < 1:
+        return dict(rec, status='fail', why='exported model carries no texture')
     return dict(rec, status='ok')
 
 
@@ -352,10 +404,16 @@ def main():
 
         obj = os.path.join(args.export_dir, f'{comp}.obj')
         if os.path.exists(obj) and os.path.getsize(obj) > 0:
-            got = rs.measure(f'{comp}_Dec500k', component=comp)
-            if got is not None and got <= args.budget:
-                log(f'[{idx}/{len(comps)}] {comp}: already done ({got:,} tris)')
-                results.append({'component': comp, 'status': 'skip', 'triangles': got})
+            rs.cmd('-selectComponent', comp)
+            rs.cmd('-selectModel', f'{comp}_Dec500k')
+            st = rs.info()
+            if (st['name'] == f'{comp}_Dec500k' and st['triangles'] is not None
+                    and st['triangles'] <= args.budget and st['textured']
+                    and st['textures'] >= 1):
+                log(f"[{idx}/{len(comps)}] {comp}: already done "
+                    f"({st['triangles']:,} tris, {st['textures']} textures)")
+                results.append({'component': comp, 'status': 'skip',
+                                'triangles': st['triangles'], 'textures': st['textures']})
                 continue
 
         log(f'[{idx}/{len(comps)}] {comp} ({gb:.0f} GB free)')

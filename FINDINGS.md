@@ -5445,3 +5445,67 @@ Budget for planning: this workload costs **~8 GB of cache per component**
 (4 components took 98 GB -> 28.5 GB, of which ~10.5 GB was real project growth
 from the new 4K textures). Sixteen components without flushing would need
 ~128 GB that does not exist.
+
+## 2026-09-03 [NA165 H2060] `AdaptiveTexelSize` can fail on a particular mesh, silently, and an untextured model still exports
+
+c5 of the H2060 decimation finished "OK 417,326 tris, 42 MB OBJ" and passed a
+geometry census. It had **no texture at all** — `.mtl` with no `map_Kd`, zero
+diffuse JPGs, and the model reporting `Textured False` with no unwrapping style
+recorded.
+
+The chain of silence:
+
+| step | c5 | a healthy component (c15) |
+|---|---|---|
+| `-unwrap` adaptive | **3 s**, `0x83000003`, `rev` unchanged | 10 s, `lastError:0` |
+| `-reprojectTexture` | **5 s**, `0x8200001F` | 59 s |
+| `-exportSelectedModel` | succeeded, wrote geometry | succeeded |
+
+The export does not care that the model is untextured, so the run reported
+success. Reproduced three times; the scene revision never advanced, so the
+unwrap genuinely did nothing.
+
+It is the STYLE, not the parameters: `unwrapLargeTriangleRemovalThr` 10 and
+1000 both failed, while `MaxTexturesCount` at 4 x 4096 unwrapped the same mesh
+in **8 s** and the subsequent bake took 25 s and produced 4 x 4096 textures.
+Why adaptive rejects this particular mesh is unknown [OPEN] — c5 is the only
+one of twenty affected, after 18 simplify passes from 23,159,923 triangles.
+
+FIX: `run_decimate.py` proves the unwrap took (`Unwrapping style` present in
+the model report), falls back to `Unwrapping_MaxCount4_4k.xml` when it did not,
+and **a component is only "ok" if the exported model reports `Textured` true
+with at least one texture**. The resume check applies the same standard, so a
+previously untextured export is redone rather than skipped as done.
+
+Generalisation worth carrying: "verify by census" has to census the thing you
+actually promised. Triangle count was the requirement everyone was watching, so
+that is what got checked — and a deliverable shipped with no texture.
+
+## 2026-09-03 [NA165 H2060] `-calculateTexture` reuses an existing unwrap; it does not re-unwrap to the params you pass
+
+The decimation run textured each `_HighPoly_Textured` with
+`Texturing_AdaptiveTexel_4k.xml` (AdaptiveTexelSize, max 4096) and spent 1.5-5
+minutes per component doing it. Afterwards the high-poly still reports:
+
+```
+Unwrapping style   Maximal texture count
+Textures' count    4
+Texture resolution 8192 x 8192
+```
+
+i.e. the ORIGINAL 4 x 8K layout. What the pass actually did was add a SECOND
+colour layer (`Color8_1`) beside `Color8_0`, on the old UV layout. Nothing
+consumes `Color8_1`: `ReprojectionParams.xml` bakes from
+`reprojectionTool_sourceColorLayer=Color8_0`.
+
+So on an already-unwrapped model the unwrap keys in a texturing profile are
+inert — `-calculateTexture` textures INTO the existing UVs. To actually change
+the layout, call `-unwrap <params>` first, then `-calculateTexture`.
+
+Consequence for the H2060 deliverables, stated plainly: the **exported**
+textures are genuinely AdaptiveTexelSize at 4096 (verified: 20/20 components,
+max dimension 4096, 4-45 pages each), because the decimated model IS explicitly
+unwrapped before the bake. The high-poly bake SOURCE stayed at 4 x 8K, which is
+better for bake quality than the 4K it was asked to become — but it is not what
+the instruction said, and the ~80 minutes spent across twenty components
+produced a layer nothing reads.
