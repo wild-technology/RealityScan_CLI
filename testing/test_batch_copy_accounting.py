@@ -59,6 +59,15 @@ class FakeStore:
     def get(self, section, key, fallback=None):
         return self.data.get(section, {}).get(key, fallback)
 
+    def default_for(self, section, key, fallback=None):
+        """Mirror SettingsStore.default_for: the prompt default, honouring
+        the inheritance refusal (a stored value is withheld under
+        RS_NO_SETTINGS_INHERITANCE; the caller's fallback stands)."""
+        from module_base.settings_store import inheritance_refused
+        if inheritance_refused():
+            return fallback
+        return self.get(section, key, fallback)
+
     def set(self, section, key, value):
         self.data.setdefault(section, {})[key] = value
 

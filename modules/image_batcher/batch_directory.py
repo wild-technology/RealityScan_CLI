@@ -1136,7 +1136,11 @@ class BatchDirectory(RSModule):
         """
         if cli_value is not None:
             return cli_value
-        return self.settings.get('batch', key, fallback)
+        # default_for, not get: get bypasses RS_NO_SETTINGS_INHERITANCE, so
+        # a charter-driven run could still zone at a previous campaign's
+        # stored min/max (audit 2026-09-05). Under refusal the fallback -
+        # the Parameter's own value - stands.
+        return self.settings.default_for('batch', key, fallback)
 
     def _prompt_int(self, key: str, message: str, fallback: int,
                     cli_value=None) -> int:

@@ -64,13 +64,15 @@ def validate_jpeg(filepath):
         return False
 
 
-def process_directory(directory, dry_run=False):
+def process_directory(directory, dry_run=False, assume_yes=False):
     """
     Process all matching files in directory: rename and validate.
 
     Args:
         directory: Path to directory containing images
         dry_run: If True, show what would be done without making changes
+        assume_yes: skip the confirmation prompt (the ONLY unattended
+            path that renames; an EOF stdin cancels instead)
     """
     dir_path = Path(directory)
 
@@ -101,8 +103,19 @@ def process_directory(directory, dry_run=False):
         print("\n[DRY RUN - No changes made]")
         return
 
-    # Get user confirmation
-    response = input("\nProceed with renaming? (yes/no): ").strip().lower()
+    # Get user confirmation. A rename is destructive-by-shape (the original
+    # names are gone), so an unattended run without --yes CANCELS rather
+    # than proceeding; a bare input() here raised EOFError under a hidden
+    # console (Windows trap registry) and had no --yes at all.
+    if assume_yes:
+        response = 'yes'
+    else:
+        try:
+            response = input("\nProceed with renaming? (yes/no): ").strip().lower()
+        except EOFError:
+            print("Non-interactive run and no --yes: operation cancelled, "
+                  "nothing renamed.")
+            return
     if response not in ['yes', 'y']:
         print("Operation cancelled")
         return
@@ -157,6 +170,12 @@ def main():
         action='store_true',
         help='Show what would be done without making changes'
     )
+    parser.add_argument(
+        '--yes', '-y',
+        action='store_true',
+        help='Proceed without the confirmation prompt (unattended runs '
+             'without this flag cancel instead of renaming)'
+    )
 
     args = parser.parse_args()
 
@@ -174,7 +193,7 @@ def main():
         directory = settings.prompt("timestamp_rename", "directory",
                                     "Directory containing image files", ".")
 
-    process_directory(directory, dry_run=args.dry_run)
+    process_directory(directory, dry_run=args.dry_run, assume_yes=args.yes)
 
 
 if __name__ == '__main__':

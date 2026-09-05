@@ -45,9 +45,15 @@ except ImportError:
 
 # Default paths (offered as prompt defaults on first run; afterwards the
 # last-entered values from rs_settings.json are offered instead)
-DEFAULT_IMAGE_BASE_DIR = r"Z:\NA173_All_Images_Corrected\NA173\sorted"
-DEFAULT_ROV_DATA_DIR = r"Z:\alldatatables"
-DEFAULT_OUTPUT_DIR = r"Z:\alldatatables"
+# No per-user paths as code defaults (CLAUDE.md hard rule 5). Until
+# 2026-09-05 these held one machine's Z:\ trees, and because
+# SettingsStore.ask treats a code fallback as legitimate even under
+# RS_NO_SETTINGS_INHERITANCE, a charter-driven run with no --image-base-dir
+# would have silently georeferenced THAT machine's dataset. None = the
+# operator must say (CLI flag, stored answer on a TTY, or the charter).
+DEFAULT_IMAGE_BASE_DIR = None
+DEFAULT_ROV_DATA_DIR = None
+DEFAULT_OUTPUT_DIR = None
 
 # Timestamp formats
 # superseded-by modules/cameras.json families[].timestamp_formats - pending migration step (c+)
@@ -959,6 +965,14 @@ def main(argv: list[str] | None = None):
         "geoall", "rov_data_dir", args.rov_data_dir, DEFAULT_ROV_DATA_DIR)
     output_dir = settings.ask(
         "geoall", "output_dir", args.output_dir, DEFAULT_OUTPUT_DIR)
+    missing = [flag for flag, value in (('--image-base-dir', image_base_dir),
+                                        ('--rov-data-dir', rov_data_dir),
+                                        ('--output-dir', output_dir))
+               if not value]
+    if missing:
+        print(f"ERROR: no value for {', '.join(missing)} - pass the flag(s) "
+              "(answers are remembered for the next interactive run).")
+        return 2
     declination = float(settings.ask(
         "geoall", "declination_deg", args.declination,
         MAGNETIC_DECLINATION_DEG))
