@@ -68,6 +68,8 @@ RUN_STATE_NAME = "RUN_STATE.json"
 #: process tree dies with the session" - the job-object kill class.
 HARNESS_ENV = "CLAUDECODE"
 #: Stages whose commands boot RealityScan (run_plan marks them).
+#: Status-poll cadence for scheduler-owned runs (owner: every 30 minutes).
+POLL_INTERVAL_MIN = 30
 EXIT_CHARTER_INVALID = 2
 EXIT_NOT_READY = 1
 EXIT_HARNESS_REFUSED = 3
@@ -297,7 +299,8 @@ def write_launcher(charter: RunCharter, charter_path: str,
         "status": "prepared", "task": task_name, "stages": stages or "all",
         "launcher_cmd": str(cmd_path), "launcher_vbs": str(vbs_path),
         "rc_file": str(rc_path), "log": str(log_path),
-        "budget": charter.budget, "prepared": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "budget": charter.budget, "poll_interval_min": POLL_INTERVAL_MIN,
+        "prepared": time.strftime("%Y-%m-%d %H:%M:%S"),
         "resume": f'python rs.py run --charter "{charter_path}"'
                   + (f' --stages {stage_arg}' if stage_arg else "") + " --foreground",
     })
@@ -341,8 +344,14 @@ def cmd_launch(args) -> int:
           f'/SC ONCE /ST {start} /F')
     print(f'  schtasks /Run /TN "{task}"')
     print(f'  schtasks /Query /TN "{task}" /FO LIST /V')
-    print("\nThen poll with:  python rs.py status --charter "
-          f"{args.charter}   (or the run-monitor agent)")
+    print("\nThen start the 30-minute monitor (a small read-only worker; it "
+          "reports, never acts) - paste as one line:")
+    print(f'  /loop 30m Poll the run with the run-monitor agent (instance '
+          f'{charter.rs_instance or "<instance>"}, workspace '
+          f'{charter.results_root}, charter {args.charter}); report only its '
+          f'verdict block; if the verdict is failed or stalled, or a budget '
+          f'line appears, stop the loop and tell the owner.')
+    print(f"Manual poll:  python rs.py status --charter {args.charter}")
     return 0
 
 

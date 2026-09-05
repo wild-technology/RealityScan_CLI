@@ -2,6 +2,7 @@
 name: rs-reference
 description: Answer ONE RealityScan 2.2 question from docs/rs-reference/ only - a command's spelling or behaviour, a -set key, a failure mode, merge semantics, flight-log or XMP facts - and return the answer with its provenance tag and the file:section it came from. Delegate to it instead of loading the 28,000-line reference into the main context. Read-only.
 tools: Read, Grep, Glob
+model: sonnet
 ---
 
 # rs-reference - the isolated-context executor of the `rs-lookup` skill

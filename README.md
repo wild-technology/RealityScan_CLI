@@ -33,7 +33,13 @@ python rs.py verify --workspace <ws> --json
 Skills `/drive-run`, `/merge-zones`, `/finish-model`, `/publish-cesium`,
 `/status`, `/handoff` walk each protocol; `rs-lookup` routes any RealityScan
 question into `docs/rs-reference/`. Rules: `CLAUDE.md`; contract:
-`docs/AGENT_OPERATIONS.md`; open decisions: `docs/DECISIONS.md`.
+`docs/AGENT_OPERATIONS.md`; open decisions: `docs/DECISIONS.md`; per-box
+setup and owner prompt habits: `docs/OPERATOR_SETUP.md`.
+
+Owner habits that keep the lane cheap: start a driving session with
+`/charter` and give the six answers in order in the first message; say
+"status" for a read-only verdict; after `rs launch`, paste the printed
+`/loop 30m ...` line so a small worker polls every 30 minutes.
 
 ## Quickstart — by hand
 

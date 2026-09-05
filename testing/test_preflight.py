@@ -231,3 +231,98 @@ def test_an_answer_that_reaches_no_command_blocks(tmp_path):
     report = preflight_charter(charter)
     assert any("silently dropped" in b and "b_input" in b for b in report["blocking"])
     assert report["verdict"] == "not_ready"
+
+
+# ------------------------------------- modules, scripts, metadata, hooks
+
+def test_repo_metadata_and_scripts_pass_for_every_realityscan_stage(tmp_path):
+    """The shipped presets and workflows are the ones the check validates -
+    a regression guard on the repo itself."""
+    originals, nav = _dataset(tmp_path)
+    for stage in ("align", "merge", "model", "export"):
+        answers = {"r_input": str(originals)} if stage == "align" else {}
+        report = preflight_charter(_charter(tmp_path, originals, nav,
+                                            stages=(stage,), answers=answers,
+                                            frame="utm:54N"))
+        assert not [b for b in report["blocking"]
+                    if "metadata" in b or "workflow script" in b
+                    or "format file" in b], (stage, report["blocking"])
+        assert any("metadata preset" in c for c in report["checked"]), stage
+        assert any("workflow script" in c for c in report["checked"]), stage
+
+
+def test_missing_or_invalid_metadata_preset_blocks(tmp_path, monkeypatch):
+    import modules.preflight as pf
+    meta = tmp_path / "Metadata"
+    meta.mkdir()
+    monkeypatch.setattr(pf, "METADATA_DIR", str(meta))
+    originals, nav = _dataset(tmp_path)
+    charter = _charter(tmp_path, originals, nav, stages=("export",))
+    report = preflight_charter(charter)
+    assert sum("metadata preset missing" in b for b in report["blocking"]) == 3
+    (meta / "ModelExportParamsOBJ_NiraParts.xml").write_text("<Configuration><entry key='x'", encoding="utf-8")
+    report = preflight_charter(charter)
+    assert any("metadata preset invalid" in b for b in report["blocking"])
+
+
+def test_alignment_preset_with_app_key_or_wrong_frame_blocks(tmp_path, monkeypatch):
+    import modules.preflight as pf
+    import shutil
+    meta = tmp_path / "Metadata"
+    shutil.copytree(pf.METADATA_DIR, meta)
+    monkeypatch.setattr(pf, "METADATA_DIR", str(meta))
+    (meta / "AlignmentParams.xml").write_text(
+        '<Configuration><entry key="sfmMaxFeaturesPerImage" value="1"/>'
+        '<entry key="appQuitOnError" value="true"/></Configuration>', encoding="utf-8")
+    # swap the two frame templates: each now declares the other's frame
+    utm = (meta / "FlightLogParams.xml").read_text(encoding="utf-8")
+    local = (meta / "FlightLogParamsLocal.xml").read_text(encoding="utf-8")
+    (meta / "FlightLogParams.xml").write_text(local, encoding="utf-8")
+    (meta / "FlightLogParamsLocal.xml").write_text(utm, encoding="utf-8")
+    originals, nav = _dataset(tmp_path)
+    report = preflight_charter(_charter(tmp_path, originals, nav, stages=("align",),
+                                        answers={"r_input": str(originals)}))
+    blocking = "\n".join(report["blocking"])
+    assert "app-global key" in blocking and "appQuitOnError" in blocking
+    assert "declares frame 'local_euclidean', expected 'utm'" in blocking
+    assert "declares frame 'utm', expected 'local_euclidean'" in blocking
+
+
+def test_unknown_format_guid_blocks(tmp_path, monkeypatch):
+    import modules.preflight as pf
+    import shutil
+    meta = tmp_path / "Metadata"
+    shutil.copytree(pf.METADATA_DIR, meta)
+    monkeypatch.setattr(pf, "METADATA_DIR", str(meta))
+    path = meta / "RegistrationExportParams.xml"
+    text = path.read_text(encoding="utf-8").replace("E7C3B1A9", "00000000")
+    path.write_text(text, encoding="utf-8")
+    originals, nav = _dataset(tmp_path)
+    report = preflight_charter(_charter(tmp_path, originals, nav, stages=("align",),
+                                        answers={"r_input": str(originals)}))
+    assert any("calibration.xml does not define" in b for b in report["blocking"])
+
+
+def test_missing_python_module_blocks(tmp_path, monkeypatch):
+    import modules.preflight as pf
+    monkeypatch.setitem(pf.STAGE_IMPORTS, "georeference",
+                        ("modules.georeference.georeference_images",
+                         "no_such_module_rs_preflight"))
+    originals, nav = _dataset(tmp_path)
+    report = preflight_charter(_charter(tmp_path, originals, nav,
+                                        stages=("georeference",), frame=""))
+    assert any("no_such_module_rs_preflight" in b and "does not import" in b
+               for b in report["blocking"])
+
+
+def test_lf_workflow_script_blocks(tmp_path, monkeypatch):
+    import modules.preflight as pf
+    import shutil
+    scripts = tmp_path / "Scripts"
+    shutil.copytree(pf.SCRIPTS_DIR, scripts)
+    monkeypatch.setattr(pf, "SCRIPTS_DIR", str(scripts))
+    bat = scripts / "GenerateModel.bat"
+    bat.write_bytes(bat.read_bytes().replace(b"\r\n", b"\n"))
+    originals, nav = _dataset(tmp_path)
+    report = preflight_charter(_charter(tmp_path, originals, nav, stages=("model",)))
+    assert any("not CRLF" in b and "GenerateModel.bat" in b for b in report["blocking"])

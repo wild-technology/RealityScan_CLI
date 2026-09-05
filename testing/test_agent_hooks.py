@@ -352,7 +352,7 @@ def test_settings_json_wires_session_status_and_permissions():
     starts = settings["hooks"]["SessionStart"]
     assert any("session_status.py" in h["command"]
                for entry in starts for h in entry["hooks"])
-    assert all(entry["matcher"] == "startup|resume" for entry in starts)
+    assert all(entry["matcher"] == "startup|resume|compact" for entry in starts)
     assert os.path.isfile(STATUS_HOOK)
 
     perms = settings["permissions"]
@@ -369,3 +369,146 @@ def test_settings_json_wires_session_status_and_permissions():
     # Data paths are per-machine and belong to the charter, never here.
     assert not any(":/" in r or ":\\" in r
                    for tier in perms.values() for r in tier)
+
+
+# ------------------------------------------------ UserPromptSubmit: routing
+
+ROUTE_HOOK = os.path.join(HOOKS, "route_driving_prompts.py")
+SCHTASKS_HOOK = os.path.join(HOOKS, "guard_schtasks.py")
+PRECOMPACT_HOOK = os.path.join(HOOKS, "pre_compact.py")
+
+
+def _run_script(script, payload, env=None):
+    child = dict(os.environ)
+    child.update(env or {})
+    return subprocess.run([sys.executable, script], input=json.dumps(payload),
+                          text=True, capture_output=True, env=child)
+
+
+@pytest.mark.parametrize("text", [
+    "process this dive against the H2060 data tonight",
+    "run the pipeline overnight on the NA165 imagery",
+    "align these zones and then merge the components",
+    "kick off an unattended run for the ON2026 dataset",
+])
+def test_driving_requests_get_the_routing_instruction(text):
+    done = _run_script(ROUTE_HOOK, {"prompt": text})
+    assert done.returncode == 0
+    assert "ROUTING" in done.stdout and "/charter" in done.stdout
+
+
+@pytest.mark.parametrize("text", [
+    "is the run done?",
+    "/status",
+    "what does -waitCompleted return early on?",
+    "explain the merge ladder",
+    "",
+])
+def test_non_driving_prompts_add_nothing(text):
+    done = _run_script(ROUTE_HOOK, {"prompt": text})
+    assert done.returncode == 0 and done.stdout.strip() == ""
+
+
+def test_routing_reads_the_user_input_field_too():
+    done = _run_script(ROUTE_HOOK, {"user_input": "process this dive please"})
+    assert "ROUTING" in done.stdout
+
+
+# --------------------------------------------- PreToolUse: schtasks guard
+
+def _launcher(tmp_path, declare=True):
+    agent = tmp_path / "results" / "_agent"
+    (agent / "launch").mkdir(parents=True)
+    vbs = agent / "launch" / "RS_T.vbs"
+    vbs.write_bytes(b"' launcher\r\n")
+    if declare:
+        (agent / "RUN_STATE.json").write_text(json.dumps(
+            {"status": "prepared", "launcher_vbs": str(vbs),
+             "launcher_cmd": str(vbs.with_suffix(".cmd"))}), encoding="utf-8")
+    return vbs
+
+
+def test_schtasks_create_with_the_declared_launcher_is_allowed(tmp_path):
+    vbs = _launcher(tmp_path)
+    cmd = (f'schtasks /Create /TN "RS_T" /TR "wscript.exe //B \\"{vbs}\\"" '
+           f'/SC ONCE /ST 03:00 /F')
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash",
+                                    "tool_input": {"command": cmd}})
+    assert done.returncode == 0, done.stderr
+
+
+def test_schtasks_create_without_a_launcher_is_blocked():
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash", "tool_input": {
+        "command": 'schtasks /Create /TN "X" /TR "python merge_zones.py --output D:/m" /SC ONCE /ST 03:00'}})
+    assert done.returncode == 2 and "rs.py launch" in done.stderr
+
+
+def test_schtasks_create_with_an_undeclared_launcher_is_blocked(tmp_path):
+    vbs = _launcher(tmp_path, declare=False)
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash", "tool_input": {
+        "command": f'schtasks /Create /TN "X" /TR "wscript.exe //B \\"{vbs}\\"" /SC ONCE /ST 03:00'}})
+    assert done.returncode == 2 and "RUN_STATE.json" in done.stderr
+
+
+def test_schtasks_create_with_a_stale_launcher_is_blocked(tmp_path):
+    vbs = _launcher(tmp_path)
+    other = vbs.parent / "OLD.vbs"
+    other.write_bytes(b"' old\r\n")
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash", "tool_input": {
+        "command": f'schtasks /Create /TN "X" /TR "wscript.exe //B \\"{other}\\"" /SC ONCE /ST 03:00'}})
+    assert done.returncode == 2 and "declares" in done.stderr
+
+
+@pytest.mark.parametrize("command", [
+    'schtasks /Run /TN "RS_T"',
+    'schtasks /Query /TN "RS_T" /FO LIST /V',
+    "git status",
+    "python rs.py status --workspace D:/ws",
+])
+def test_other_commands_pass_the_schtasks_guard(command):
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash",
+                                    "tool_input": {"command": command}})
+    assert done.returncode == 0
+
+
+# ------------------------------------ PreCompact marker + SessionStart note
+
+def test_pre_compact_writes_a_marker_and_never_blocks(tmp_path):
+    marker = tmp_path / ".last_compact"
+    done = _run_script(PRECOMPACT_HOOK, {"trigger": "auto"},
+                       env={"RS_COMPACT_MARKER": str(marker)})
+    assert done.returncode == 0
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    assert record["trigger"] == "auto" and record["at"]
+
+
+def test_session_status_reports_a_recent_compaction(tmp_path):
+    marker = tmp_path / ".last_compact"
+    marker.write_text(json.dumps({"at": "2026-09-05 12:00:00",
+                                  "trigger": "auto"}), encoding="utf-8")
+    done = run_status(stdin=json.dumps({"source": "compact"}),
+                      env={"RS_COMPACT_MARKER": str(marker)})
+    assert done.returncode == 0
+    assert "CONTEXT WAS COMPACTED" in done.stdout
+    assert "FINDINGS.md" in done.stdout
+
+
+def test_session_status_is_silent_without_a_marker(tmp_path):
+    done = run_status(env={"RS_COMPACT_MARKER": str(tmp_path / "absent")})
+    assert done.returncode == 0 and "COMPACTED" not in done.stdout
+
+
+def test_settings_json_wires_the_routing_schtasks_and_compaction_hooks():
+    with open(os.path.join(REPO, ".claude", "settings.json"),
+              encoding="utf-8") as fh:
+        settings = json.load(fh)
+    hooks = settings["hooks"]
+    text = json.dumps(hooks)
+    assert "route_driving_prompts.py" in json.dumps(hooks["UserPromptSubmit"])
+    assert "pre_compact.py" in json.dumps(hooks["PreCompact"])
+    assert "guard_schtasks.py" in json.dumps(hooks["PreToolUse"])
+    assert any("compact" in e["matcher"] for e in hooks["SessionStart"])
+    for script in ("route_driving_prompts.py", "guard_schtasks.py",
+                   "pre_compact.py"):
+        assert os.path.isfile(os.path.join(HOOKS, script)), script
+    assert text.count("$CLAUDE_PROJECT_DIR") >= 7

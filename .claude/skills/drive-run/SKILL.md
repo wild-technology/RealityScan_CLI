@@ -37,14 +37,22 @@ python rs.py launch --charter <C> --stages align            # also merge, model,
 at the first failure. It REFUSES RealityScan stages from this shell (mandate
 6: a harness job object killed a 14.4 h run). `launch` writes the CRLF
 launcher pair and PRINTS three `schtasks` commands: run them exactly (the
-permission ask-gate fires - that is intended), then poll:
+permission ask-gate fires - that is intended; `guard_schtasks.py` refuses
+any launcher `rs launch` did not write).
+
+## 2a. Start the 30-minute monitor - ALWAYS, for every scheduled run
+
+`launch` also prints a `/loop 30m ...` line. Run it as printed. Each tick
+delegates one poll to the `run-monitor` agent (a small read-only worker on
+a small model) and reports only its verdict block; the main context pays
+for a summary, not for logs. Stop the loop and tell the owner on `failed`,
+`stalled`, or a budget line. Manual poll at any time:
 
 ```bash
 python rs.py status --charter <C>
 ```
 
-or delegate a poll to the `run-monitor` agent. The budget lives in the
-charter; `status` compares against it.
+The budget lives in the charter; `status` compares against it.
 
 ## 3. Verify by census, never by exit status
 

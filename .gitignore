@@ -42,3 +42,4 @@ _probe_cesium/
 CLAUDE.local.md
 # pytest's own cache directory
 .pytest_cache/
+/.claude/.last_compact

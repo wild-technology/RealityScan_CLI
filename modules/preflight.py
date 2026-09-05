@@ -36,6 +36,17 @@ What is checked, in order (every check is read-only):
              (modules/cameras.json); unknown prefixes are QUESTIONS;
              known families without a measured mount are warnings
   frame      a zone-tagged flight log agrees with science.frame
+  modules    every Python module the planned stages import is importable
+             in this interpreter (a missing wheel is named)
+  scripts    every workflow .bat/.vbs a RealityScan stage runs exists and
+             is CRLF
+  metadata   every RS_CLI/Metadata preset the stages pass to RealityScan is
+             present and well-formed; FlightLogParams names a format GUID
+             the repo's flightlogs.xml defines and declares the frame its
+             filename promises; RegistrationExportParams names a format
+             calibration.xml defines; AlignmentParams carries no app*
+             key; export presets write the .rsInfo
+  hooks      `python` on PATH imports the repo (the .claude hooks call it)
   machine    RealityScan executable and installed flight-log format
              (Windows only; reported as unchecked elsewhere); free disk
              against the declared delta
@@ -52,12 +63,68 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+import importlib
+import subprocess
+import xml.etree.ElementTree as ET
+
 from .run_charter import CharterError, RunCharter, load_charter
 from .run_plan import (ALL_STAGES, CHAIN_STAGES, RawDataScan, Session,
                        build_plan, build_questions, scan_cameras,
                        session_from_charter)
+from .realityscan_interface.realityscan_cli import (ERRORS_DIR, METADATA_DIR,
+                                                    SCRIPTS_DIR)
 
 SCHEMA = 1
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+#: Python modules each stage needs importable. Importing a stage's own
+#: driver module exercises every third-party import it makes (cv2, numpy,
+#: geopandas, ...), so a missing wheel is named by the ImportError itself.
+#: publish_cesium imports lazily, so its deps are listed explicitly.
+STAGE_IMPORTS: dict[str, tuple[str, ...]] = {
+    "extract": ("modules.extract_images.extract_images",),
+    "georeference": ("modules.georeference.georeference_images",),
+    "preprocess": ("modules.preprocess_images.preprocess_images",),
+    "batch": ("modules.image_batcher.batch_directory",),
+    "align": ("modules.realityscan_interface.realityscan_interface",
+              "modules.prior_groups", "modules.flightlog_format"),
+    "merge": ("merge_zones", "modules.scale_oracle"),
+    "model": ("run_models",),
+    "export": ("modules.export_deliverables",),
+    "publish": ("publish_batch", "publish_cesium", "modules.cesium_placement",
+                "requests", "boto3", "pyproj"),
+}
+
+#: Workflow scripts each RealityScan stage runs (RS_CLI/Scripts). Every one
+#: must exist and be CRLF: cmd resolves `call :label` by byte offset and an
+#: LF script fails `goto` nondeterministically (rs-reference 12 F-62).
+_BOOT = ("startRealityScan.bat", "SetVariables.bat")
+STAGE_SCRIPTS: dict[str, tuple[str, ...]] = {
+    "align": _BOOT + ("AlignZone.bat",),
+    "merge": _BOOT + ("MergeZoneComponents.bat",),
+    "model": _BOOT + ("GenerateModel.bat", "SaveProjectCopy.bat"),
+    "export": _BOOT + ("ExportDeliverables.bat",),
+}
+ERROR_HOOK_FILES = ("ErrorWriter.bat", "ErrorWriterLaunch.vbs")
+
+#: Metadata XML presets each RealityScan stage passes to RealityScan (the
+#: names the workflow scripts resolve). A missing or malformed preset is
+#: a run that fails after hours, or worse, one that silently applies the
+#: instance's own settings (rs-reference 09).
+STAGE_XML: dict[str, tuple[str, ...]] = {
+    "align": ("AlignmentParams.xml", "FlightLogParams.xml",
+              "FlightLogParamsLocal.xml", "RegistrationExportParams.xml"),
+    "merge": ("AlignmentParams.xml", "FlightLogParams.xml",
+              "FlightLogParamsLocal.xml"),
+    "model": ("Texturing_MaxTextureCount4_8k.xml", "SimplifyNoise_Params.xml",
+              "SimplifySmooth_80per_Params.xml", "Unwrapping_Simplified_4x8k.xml",
+              "ReprojectionParams.xml"),
+    "export": ("ModelExportParamsOBJ_NiraParts.xml", "ModelExportParamsFBX_Parts.xml",
+               "ModelExportParamsPLY_DensePoints.xml"),
+}
+#: Repo-root FORMAT files RealityScan resolves GUIDs against once installed.
+FORMAT_FILES = ("flightlogs.xml", "calibration.xml")
 
 EXIT_CODES = {"ready": 0, "not_ready": 1, "invalid": 2}
 
@@ -405,6 +472,207 @@ class Preflight:
                     else:
                         self.ok(f"{free:.0f} GB free on {anchor}")
 
+    # ------------------------------------------------- modules and files
+    def check_modules(self) -> None:
+        """Every module the planned stages import is importable HERE."""
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))
+        seen: set[str] = set()
+        for stage in self.stages:
+            for name in STAGE_IMPORTS.get(stage, ()):
+                if name in seen:
+                    continue
+                seen.add(name)
+                try:
+                    importlib.import_module(name)
+                except Exception as exc:  # noqa: BLE001 - any import failure
+                    self.block(f"stage {stage}: module {name!r} does not import "
+                               f"({type(exc).__name__}: {exc}). Install the "
+                               "requirements for this interpreter "
+                               "(`pip install -r requirements.txt`) or fix the "
+                               "checkout before running.")
+        if seen and not any("does not import" in b for b in self.blocking):
+            self.ok(f"{len(seen)} module(s) import for {', '.join(self.stages)}")
+
+    def check_scripts(self) -> None:
+        """Every workflow script a RealityScan stage runs exists and is CRLF."""
+        needed: list[str] = []
+        for stage in self.stages:
+            needed += [s for s in STAGE_SCRIPTS.get(stage, ()) if s not in needed]
+        if not needed:
+            return
+        paths = [Path(SCRIPTS_DIR) / s for s in needed]
+        paths += [Path(ERRORS_DIR) / f for f in ERROR_HOOK_FILES]
+        bad = False
+        for path in paths:
+            if not path.is_file():
+                self.block(f"workflow script missing: {path}")
+                bad = True
+                continue
+            data = path.read_bytes()
+            if data.count(b"\r\n") != data.count(b"\n"):
+                self.block(f"workflow script is not CRLF: {path} - cmd resolves "
+                           "labels by byte offset; an LF script breaks `goto` "
+                           "(rs-reference 12 F-62). `git checkout -- <file>` "
+                           "restores the pinned line endings.")
+                bad = True
+        if not bad:
+            self.ok(f"{len(paths)} workflow script(s) present and CRLF")
+
+    @staticmethod
+    def _xml_entries(path: Path) -> dict[str, str]:
+        """{key: value} of a RealityScan params XML; raises on a bad file."""
+        root = ET.parse(path).getroot()
+        if root.tag != "Configuration":
+            raise ValueError(f"root element is <{root.tag}>, expected <Configuration>")
+        entries = {}
+        for entry in root.findall("entry"):
+            key = entry.get("key")
+            if key is None or entry.get("value") is None:
+                raise ValueError("an <entry> lacks key= or value=")
+            entries[key] = entry.get("value")
+        if not entries:
+            raise ValueError("no <entry> elements")
+        return entries
+
+    def check_metadata_xml(self) -> None:
+        """Every preset the planned stages pass to RealityScan is present,
+        well-formed, and says what the pipeline relies on it saying."""
+        try:
+            from . import flightlog_format  # noqa: PLC0415
+            from .flight_logs import params_template_frame  # noqa: PLC0415
+        except Exception as exc:  # noqa: BLE001
+            self.warn(f"metadata checks partly skipped ({type(exc).__name__})")
+            flightlog_format = None
+            params_template_frame = None
+        needed: list[str] = []
+        for stage in self.stages:
+            needed += [x for x in STAGE_XML.get(stage, ()) if x not in needed]
+        science_xml = str((self.charter.science or {}).get("align_settings_xml") or "")
+        extra: list[Path] = []
+        if "align" in self.stages and science_xml and not _placeholder(science_xml):
+            extra.append(Path(science_xml))
+        if not needed and not extra:
+            return
+        bad = 0
+        for path in [Path(METADATA_DIR) / n for n in needed] + extra:
+            if not path.is_file():
+                self.block(f"metadata preset missing: {path}")
+                bad += 1
+                continue
+            try:
+                entries = self._xml_entries(path)
+            except (ET.ParseError, ValueError, OSError) as exc:
+                self.block(f"metadata preset invalid: {path}: {exc}")
+                bad += 1
+                continue
+            name = path.name
+            if name.startswith("AlignmentParams") or path in extra:
+                app_keys = sorted(k for k in entries if k.startswith("app"))
+                if app_keys:
+                    self.block(f"{name} names app-global key(s) {app_keys}; "
+                               "AlignZone refuses them (they persist into the "
+                               "owner's GUI) - remove them from the preset")
+                    bad += 1
+                if not any(k.startswith(("sfm", "lis", "s2")) for k in entries):
+                    self.block(f"{name} names no alignment (sfm*/lis*) key")
+                    bad += 1
+            if name.startswith("FlightLogParams"):
+                guid = entries.get("gpsLogFileFormat", "")
+                if not guid:
+                    self.block(f"{name} names no gpsLogFileFormat GUID - the "
+                               "import would fall back and drop columns silently")
+                    bad += 1
+                elif flightlog_format is not None:
+                    try:
+                        defined = flightlog_format.defined_guids(
+                            str(REPO_ROOT / "flightlogs.xml"))
+                        if guid.strip().upper() not in defined:
+                            self.block(f"{name} names format {guid} but the repo's "
+                                       "flightlogs.xml does not define it")
+                            bad += 1
+                    except Exception as exc:  # noqa: BLE001
+                        self.block(f"flightlogs.xml unreadable: {exc}")
+                        bad += 1
+                if params_template_frame is not None:
+                    frame = params_template_frame(str(path))
+                    expected = "local_euclidean" if "Local" in name else "utm"
+                    if frame != expected:
+                        self.block(f"{name} declares frame {frame!r}, expected "
+                                   f"{expected!r} (the two templates were split "
+                                   "after a silent wrong-frame import, 2026-08-07)")
+                        bad += 1
+            if name.startswith("RegistrationExportParams"):
+                guid = entries.get("calexFileFormatId", "")
+                if not guid:
+                    self.block(f"{name} names no calexFileFormatId - the identity "
+                               "export would write an unreadable CSV, exit 0")
+                    bad += 1
+                elif flightlog_format is not None:
+                    try:
+                        defined = flightlog_format.defined_guids(
+                            str(REPO_ROOT / "calibration.xml"))
+                        if guid.strip().upper() not in defined:
+                            self.block(f"{name} names export format {guid} but the "
+                                       "repo's calibration.xml does not define it")
+                            bad += 1
+                    except Exception as exc:  # noqa: BLE001
+                        self.block(f"calibration.xml unreadable: {exc}")
+                        bad += 1
+            if name.startswith("ModelExportParams"):
+                if entries.get("MvsMeshExportInfoFile", "").lower() not in ("true", "1", "0x1"):
+                    self.warn(f"{name}: MvsMeshExportInfoFile is not true - no "
+                              ".rsInfo would be written and Cesium placement "
+                              "cannot resolve the export's frame")
+        if "align" in self.stages:
+            for fmt in FORMAT_FILES:
+                fpath = REPO_ROOT / fmt
+                if not fpath.is_file():
+                    self.block(f"format file missing at the repo root: {fpath}")
+                    bad += 1
+                    continue
+                # RealityScan's format files use the `&tab;` entity, which a
+                # strict parser rejects (FINDINGS 2026-08-16: the first guard
+                # draft swallowed that error and reported an installed format
+                # as missing). flightlog_format._parse is the tolerant reader
+                # the installer itself uses.
+                try:
+                    if flightlog_format is not None:
+                        flightlog_format._parse(str(fpath))
+                    else:
+                        ET.fromstring(fpath.read_text(encoding="utf-8")
+                                      .replace("&tab;", "&#9;"))
+                except (ET.ParseError, ValueError, OSError) as exc:
+                    self.block(f"format file invalid: {fpath}: {exc}")
+                    bad += 1
+        if not bad:
+            self.ok(f"{len(needed) + len(extra)} metadata preset(s) present and valid")
+
+    def check_hook_interpreter(self) -> None:
+        """`python` on PATH can import the repo: the .claude hooks call it by
+        that name, and a hook that cannot run is a guard nobody enforces."""
+        python = shutil.which("python")
+        if not python:
+            msg = ("`python` is not on PATH; the .claude hooks (guards, session "
+                   "status) call it by that name and would not run")
+            self.block(msg) if os.name == "nt" else self.warn(msg)
+            return
+        try:
+            done = subprocess.run(
+                [python, "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+                               "import modules.run_charter", str(REPO_ROOT)],
+                capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.warn(f"could not run `python` to check the hooks: {exc}")
+            return
+        if done.returncode != 0:
+            tail = (done.stderr or done.stdout).strip().splitlines()[-1:]
+            msg = (f"`python` ({python}) cannot import the repo's modules "
+                   f"({' '.join(tail)}); the .claude hooks would fail")
+            self.block(msg) if os.name == "nt" else self.warn(msg)
+        else:
+            self.ok(f"hooks interpreter `python` = {python} imports the repo")
+
     def check_plan(self, session: Optional[Session]) -> Optional[dict]:
         if session is None:
             return None
@@ -435,6 +703,10 @@ class Preflight:
         session, _complete = self.check_pipeline()
         self.check_cameras()
         self.check_frame()
+        self.check_modules()
+        self.check_scripts()
+        self.check_metadata_xml()
+        self.check_hook_interpreter()
         self.check_machine()
         plan = self.check_plan(session)
         verdict = "ready" if not (self.missing or self.blocking) else "not_ready"

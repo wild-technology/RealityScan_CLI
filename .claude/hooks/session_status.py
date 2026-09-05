@@ -58,6 +58,12 @@ CHILD_TIMEOUT = 10
 #: The repo this hook belongs to, independent of the project dir the
 #: harness reports - modules.run_charter is imported from HERE.
 HOOK_REPO = Path(__file__).resolve().parent.parent.parent
+#: Written by pre_compact.py when the context is about to be compacted.
+#: RS_COMPACT_MARKER overrides the location (tests).
+COMPACT_MARKER = Path(os.environ.get("RS_COMPACT_MARKER")
+                      or HOOK_REPO / ".claude" / ".last_compact")
+#: A compaction older than this is another session's; say nothing.
+COMPACT_MARKER_MAX_AGE_S = 2 * 60 * 60
 
 #: Non-ASCII characters HANDOFF.md is known to use, mapped to their ASCII
 #: sense rather than to "?" (the cp1252 console crashes on the originals).
@@ -235,10 +241,32 @@ def show_run_state(charter_path: str) -> None:
         emit("(none of status/stage/task/started/log present)")
 
 
+def show_compaction(payload: dict) -> None:
+    """After a compaction, say what may have been lost and how to check."""
+    import time  # noqa: PLC0415
+    source = str(payload.get("source") or payload.get("matcher") or "")
+    marker = COMPACT_MARKER
+    if not marker.is_file():
+        return
+    try:
+        age = time.time() - marker.stat().st_mtime
+        record = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if age > COMPACT_MARKER_MAX_AGE_S and source != "compact":
+        return
+    emit("--- CONTEXT WAS COMPACTED ---")
+    emit(f"at {record.get('at', '?')} ({record.get('trigger', '?')}). Anything "
+         "learned before that and not yet written to FINDINGS.md or HANDOFF.md "
+         "is at risk; check `git diff --stat FINDINGS.md HANDOFF.md` and flush "
+         "before continuing. The block below is the current state.")
+
+
 def main() -> int:
     payload = read_payload()
     root = project_root(payload)
     emit(f"=== session_status: {root} ===")
+    show_compaction(payload)
     show_handoff(root)
     show_git(root)
     charter_path = os.environ.get("RS_RUN_CHARTER", "").strip()
