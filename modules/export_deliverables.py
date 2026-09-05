@@ -12,7 +12,7 @@ It exists so the export stage goes through
 ``RealityScanCLI.run_batch_script`` like every other RealityScan
 invocation (hard rule 1): per-instance lock, marker-file hygiene, progress
 tailing and stall warnings, resource trace, and verified instance
-shutdown. The wildscan portal previously ran the .bat via a raw
+shutdown. The (now archived) WildScan portal previously ran the .bat via a raw
 ``["cmd", "/c", ...]`` Popen, which provided none of that, broke on
 space-containing checkout paths (cmd strips the outer quotes -
 run_batch_script's own comment), and - because the portal runner captures
@@ -20,9 +20,9 @@ stdout in a PIPE - let the ``start ""``-launched RealityScan GUI child
 inherit that pipe (WINDOWS TRAP recorded 2026-08-07). run_batch_script
 hands the .bat a log FILE instead, so the boot path stays detached.
 
-Layering note: this module is imported by wildscan (and importable by any
+Layering note: this module is importable by any planner or UI (the archived
 driver) but imports only module_base + modules code itself - never
-wildscan. The stage passes the workspace-derived paths as arguments.
+WildScan TUI included). The stage passes the workspace-derived paths as arguments.
 
 Usage:
     py -3.13 modules/export_deliverables.py

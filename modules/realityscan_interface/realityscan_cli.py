@@ -675,7 +675,7 @@ class RealityScanCLI:
                 log_path = None
             else:
                 with open(log_path, 'w', encoding='utf-8', errors='replace') as log_file:
-                    # stdin=DEVNULL, as in wildscan/runner.py: CREATE_NO_WINDOW
+                    # stdin=DEVNULL, as in rs.py run / the archived TUI runner: CREATE_NO_WINDOW
                     # gives the .bat a console nobody can type into, and a
                     # hidden console is still a TTY - a 'set /P' or CHOICE in a
                     # workflow script would block forever on input that can

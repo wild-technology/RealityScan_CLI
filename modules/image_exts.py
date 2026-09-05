@@ -1,7 +1,7 @@
 """ONE inventory of image file extensions for the whole pipeline.
 
 Five different literal sets used to be spelled out across
-workspace_census, wildscan/session, georeference, batch_directory,
+workspace_census, run_plan (ex wildscan/session), georeference, batch_directory,
 camera_registry, realityscan_interface, merge_zones and grow_zone - so a
 .tif or .heif dataset was "present" to some stages and invisible to
 others: the census reported two images extracted while the georeferencer

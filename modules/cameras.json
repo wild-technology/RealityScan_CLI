@@ -12,7 +12,7 @@
     "test once ran first and would have beaten an anchored WCA prefix.",
     "Migration state (2026-08-07, steps a-b of the cameras.json plan):",
     "camera_registry loads this file; georeference_images.py MOUNTS,",
-    "geoall.py constants, wildscan/session.py OFFICIAL_CAMERAS and",
+    "geoall.py constants, modules/run_plan.py OFFICIAL_CAMERAS and",
     "modules/file_metadata_parser.py still carry their own copies, each",
     "marked 'superseded-by modules/cameras.json' at the site. Pinned by",
     "testing/test_rig_mounts.py."

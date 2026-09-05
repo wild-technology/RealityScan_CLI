@@ -10,7 +10,7 @@ Each destination activates only when its credentials are present, and
     Nira         NIRACLIENT_DIR env var -> a configured niraclient checkout
                  (Enterprise plan; run `nira.py configure` once)
 
-Results land in <workspace>/publish_report.json so WildScan can show them.
+Results land in <workspace>/publish_report.json (read by modules.verify).
 
 Usage:
     py -3.13 publish_batch.py --workspace F:/na156_h2024_v2 \

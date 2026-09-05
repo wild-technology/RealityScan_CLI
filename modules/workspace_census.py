@@ -1,9 +1,8 @@
 """Workspace model: pure artifact-census logic, no UI, no subprocesses.
 
-Moved here from wildscan/workspace.py (2026-08-07, consolidation step 8):
-run_models.py needs the census without dragging in the TUI package, and
-the layering rule is that wildscan may import modules, never the reverse.
-wildscan.workspace remains as a re-export shim for compatibility.
+The census is consumed by run_models.py, modules.verify, modules.run_plan
+and the archived WildScan TUI (archive/wildscan_tui, through a shim).
+Layering rule: modules never import from archive/ or from a UI.
 
 Everything the app shows is derived from artifacts the canonical pipeline
 already writes - the same signals the unattended drivers use to resume:
@@ -35,7 +34,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".heif"}
+from .image_exts import ALL_IMAGE_EXTS
+
+# ONE inventory of survey-image extensions (modules.image_exts); the name
+# is kept because the archived TUI shim re-exports it.
+IMAGE_EXTS = ALL_IMAGE_EXTS
 
 STAGE_ORDER = [
     "extract", "georeference", "preprocess", "batch",

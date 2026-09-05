@@ -95,7 +95,7 @@ def make_cli(logger_name: str = 'models') -> RealityScanCLI:
     """Machine constants from the settings store's 'realityscan' section -
     prompt-with-default on a TTY, silent stored/fallback when unattended
     (SettingsStore.ask). Values already in the environment win, exactly
-    as the old setdefault calls allowed: wildscan and other callers pass
+    as the old setdefault calls allowed: rs.py, the planner and other callers pass
     explicit RS_* values, and those are never prompted for or demoted."""
     settings = SettingsStore()
     if not os.environ.get('RS_INSTANCE'):

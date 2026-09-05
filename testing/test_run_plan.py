@@ -1,4 +1,4 @@
-"""wildscan.plan - the run plan, headless.
+"""modules.run_plan - the run plan, headless.
 
 The plan is only worth anything if the commands in it actually run, so
 these tests check the two ways a generated plan has historically been
@@ -14,9 +14,9 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.run_charter import parse_charter
-from wildscan.plan import (build_plan, format_text, main, session_from_charter,
+from modules.run_plan import (ALL_STAGES, Session, build_plan, format_text, main,
+                              session_from_charter,
                            unreached_answers, validate_command)
-from wildscan.session import ALL_STAGES, Session
 
 
 def _charter_dict(tmp_path, stages, answers):

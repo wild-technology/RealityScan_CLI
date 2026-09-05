@@ -15,7 +15,10 @@ from pathlib import Path
 
 from textual.message import Message
 
-REPO = Path(__file__).resolve().parent.parent
+# The REPO ROOT (wildscan -> wildscan_tui -> archive -> repo), the cwd every
+# planned command runs in. Was parent.parent when this package lived at
+# the root; moved 2026-09-05.
+REPO = Path(__file__).resolve().parents[3]
 
 # "20533 0.67 33.41 17.11 #progress"  ->  op, fraction, elapsed, eta
 _PROGRESS = re.compile(
