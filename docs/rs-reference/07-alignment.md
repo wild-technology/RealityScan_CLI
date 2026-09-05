@@ -1144,7 +1144,7 @@ every A/B driver now calls before each align. [VERIFIED: FINDINGS 2026-07-25]
 | H2024 v2 (5 zones) | 9,835 | 8,781 | — | 14 | — |
 | smoke `mini_a` / `mini_b` | 120 / 120 | 118 / 62 | 98 % / 52 % | 1 / 2 | ~2 min each |
 
-[VERIFIED: FINDINGS, MERGE_TEST_PLAN, docs/FRESH_RUN_2026-07-24.md, HANDOFF, 2026-07-21 …
+[VERIFIED: FINDINGS, MERGE_TEST_PLAN, docs/history/FRESH_RUN_2026-07-24.md, HANDOFF, 2026-07-21 …
 2026-07-28]
 
 ### 7.2 Registration is independent of how images were added

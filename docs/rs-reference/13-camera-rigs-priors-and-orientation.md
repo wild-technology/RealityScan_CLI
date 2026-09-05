@@ -1179,7 +1179,7 @@ XMP camera positions and flight-log priors. Orientations are deliberately **not*
 *"Six rotation-convention candidates were tested against the flight-log yaw/pitch/roll; none
 matched (best mean error ~77°)."* Writing orientations in an unverified convention would
 poison future priors, which carry weight 10.
-[VERIFIED: docs/code-review-2026-07 Part 3, "Deliberate non-changes"]
+[VERIFIED: docs/history/code-review-2026-07 Part 3, "Deliberate non-changes"]
 That result is the strongest single reason to treat the export-side rotation convention as
 **unestablished for this pipeline**, not merely undocumented.
 
@@ -1366,7 +1366,7 @@ direction.** [SUPERSEDED-in-scope]
 **Correct calibration priors help structurally.** Calibration XMP sidecars at align time cut
 zone_1 fragmentation from **9 components to 3** at equal-or-better registration (4,405/4,540
 = 97.0 % fresh vs 4,392 = 96.7 % production), same imagery, same box.
-[VERIFIED: FINDINGS 2026-07-24; docs/FRESH_RUN_2026-07-24.md]
+[VERIFIED: FINDINGS 2026-07-24; docs/history/FRESH_RUN_2026-07-24.md]
 
 **Over-tight *position* priors fragment solves and corrupt scale** — the decisive 2×2 on a
 665-image known-good component:
@@ -1467,7 +1467,7 @@ Facts about the frames established here:
 - **`xcr:Position` in exported XMPs is in a GRID-ANCHORED LOCAL frame, not UTM.** Verified
   on zone_9: the values are small and local, the anchor is the grid origin, and the
   lat/long XMP attributes are **garbage** (e.g. `179.98N`). Fit local→UTM with
-  `poses2flightlog.py`. [VERIFIED: NA167 B10-adjacent, 2026-07-23; docs/code-review-2026-07]
+  `poses2flightlog.py`. [VERIFIED: NA167 B10-adjacent, 2026-07-23; docs/history/code-review-2026-07]
   [OPEN: cell U13 — re-verify on an **original** georeferenced zone scene; if positions are
   UTM there, manifests could carry true per-camera positions and better bboxes. Open since
   2026-07-23.]
@@ -1524,13 +1524,13 @@ Two design facts, both deliberate:
 - **Scale is locked at 1.** The alignment already pins scale via the camera priors, and
   fitting scale against noise-dominated nav data collapses it — **0.50 observed on
   zone_9**. `--allow-scale` exists for diagnostics only.
-  [VERIFIED: docs/code-review-2026-07 Part 3]
+  [VERIFIED: docs/history/code-review-2026-07 Part 3]
 - **Orientations are not rewritten** — see §6.6.
 
 Measured output on the zone_9 subset: residual vs prior **4.3 m median, 10 m p95** —
 comfortably inside the 10 m accuracy the log claims for itself, i.e. the residual magnitude
 is a usable estimate of USBL/DVL navigation error.
-[VERIFIED: docs/code-review-2026-07]
+[VERIFIED: docs/history/code-review-2026-07]
 
 ### 8.4 Georeferencing verification is still a blind spot
 

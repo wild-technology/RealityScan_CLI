@@ -454,7 +454,7 @@ GCP, a distance constraint or a locked XMP.
 confirmed (through Aug 2025) that RealityScan has **no stereo-rig support**, so a
 fixed-baseline ROV rig cannot get BLK3D-style automatic scale
 [VERIFIED-second-hand: COLMAP fact base F-20260723-27, quoted in
-`docs/COLMAP_CROSSOVER.md` §4 and HANDOFF; recorded 2026-07-24, not reproduced here].
+`archive/colmap/docs/COLMAP_CROSSOVER.md` §4 and HANDOFF; recorded 2026-07-24, not reproduced here].
 But the shipped build plainly *has* rig constructs: the XMP schema carries `xcr:Rig`,
 `xcr:RigInstance` and `xcr:RigPoseIndex` [OFFICIAL: tools/xmpalign], the Selected Input
 panel has a **Rigging** section (Rig ID / Prior / Model) and a **Relative coordinates**
@@ -1331,7 +1331,7 @@ The order-of-magnitude k1 gap is the fisheye declaring itself.
 **Fragmentation effect.** Calibration sidecars present at align time cut zone_1 from
 **9 components to 3** at equal-or-better registration (4,405/4,540 = 97.0 % vs 4,392 =
 96.7 %) on the same imagery and the same box.
-[VERIFIED: FINDINGS 2026-07-24; docs/FRESH_RUN_2026-07-24.md]
+[VERIFIED: FINDINGS 2026-07-24; docs/history/FRESH_RUN_2026-07-24.md]
 
 **But prior *content* can hurt.** An A/B on zone_13 with priors absent (the `.jpg.xmp`
 naming bug) vs promoted went **96.3 % → 89.6 %** on Zeuss. The old writer grouped
@@ -1814,7 +1814,7 @@ subsets, one variant per row, scored on registered cameras:**
 | **`baseline`** (no preprocessing) | **0 / 400** | **failed to form any component** |
 
 [VERIFIED: 2026-07-21 zone_9 A/B, `testing/run_zone9_tests.py` phase 2; table reproduced
-from `docs/code-review-2026-07.md` §"Preprocessing, measured then baked in"; defaults
+from `docs/history/code-review-2026-07.md` §"Preprocessing, measured then baked in"; defaults
 recorded in `modules/preprocess_images/preprocess_images.py`]
 
 Three things the full grid says that the headline does not:

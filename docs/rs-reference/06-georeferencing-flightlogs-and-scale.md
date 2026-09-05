@@ -451,7 +451,7 @@ The single most important operational fact about `-importFlightLog`.
   reports the process as FAILED** with `err:18002` — "The file contains N images which are
   not in the current scene". The process result code delivered to the completion hook is
   decimal `2181038335` = hex `0x820000FF`, a warning class.
-  [VERIFIED: FINDINGS 2026-07-21; docs/code-review-2026-07 §"False failure on import"]
+  [VERIFIED: FINDINGS 2026-07-21; docs/history/code-review-2026-07 §"False failure on import"]
 - **The errors marker carries only the numeric code**, never the `err:NNNN` text — that
   exists only in `RealityScan.log`, which is truncated on every instance boot. Tolerant
   handlers must match `2181038335`. [VERIFIED: FINDINGS 2026-07-23]
@@ -815,7 +815,7 @@ pitch_acc = MOUNTS[family]['p_acc']   # 30.0 zeuss, 15.0 wca_port/wca_cinema,
 imports silently and misplaces everything.** The template in this repo once said
 `+proj=utm +zone=4` (EPSG:32604) — stale from an earlier project — while the cruise being
 processed, NA173_H2103a, is UTM **57S** (EPSG:32757): wrong zone **and** wrong hemisphere,
-with no error raised. [VERIFIED: NA167 #6; docs/code-review-2026-07 §"Wrong coordinate
+with no error raised. [VERIFIED: NA167 #6; docs/history/code-review-2026-07 §"Wrong coordinate
 system"; FINDINGS 2026-07-21/22]
 
 The fix is to derive the CRS from the flight log's own filename tag, never to hand-edit the

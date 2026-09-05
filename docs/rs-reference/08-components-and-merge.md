@@ -75,7 +75,7 @@ containment-based deletion is legal [VERIFIED-as-owner-intent: FINDINGS 2026-07-
 
 **Consequence for automation:** rename deterministically *before* every export
 (`<zone>_c<K>`, `<tag>_a<attempt>_c<K>`), and correlate a manifest to a scene component by
-**image set**, never by name [VERIFIED-as-design: docs/MERGE_REWORK_RECOMMENDATIONS Q6].
+**image set**, never by name [VERIFIED-as-design: docs/history/MERGE_REWORK_RECOMMENDATIONS Q6].
 
 ### 1.3 Alignment fragmentation is nondeterministic
 
@@ -980,7 +980,7 @@ RealityScan** — resolves three spatially disjoint UTM clusters:
 maximal component is **3,720/4,600 = 80.9 %**, below both `--target` values ever used (0.85, 0.83):
 a maximal-fraction gate was **unreachable by construction** and would have burned the full
 three-attempt ladder (~1.7 h measured) and exited 1 on a *correct* result
-[VERIFIED: FINDINGS 2026-07-24; docs/MERGE_REWORK_RECOMMENDATIONS].
+[VERIFIED: FINDINGS 2026-07-24; docs/history/MERGE_REWORK_RECOMMENDATIONS].
 
 Consequently `--target` in `merge_zones.py` is **informational only, never a gate**, and
 convergence (a full ladder cycle with no fusion) is the terminal condition.

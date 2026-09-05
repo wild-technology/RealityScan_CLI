@@ -60,8 +60,8 @@ Three operational rules follow, and they are stated in `CLAUDE.md`, `HANDOFF.md`
 | Rule | Statement | Source |
 |---|---|---|
 | R1 | **Verify every merge and every growth pass by pose-XMP camera census, never by exit status.** | [VERIFIED: NA167 #23] |
-| R2 | **Never infer completion from an event you cannot attribute to your own command** — not process names (`tasklist`), not results-log growth. | [VERIFIED: docs/code-review-2026-07 §3] |
-| R3 | **A metric that reads zero is instrumentation-suspect until the instrument is verified against a known-good and a known-bad case.** | [VERIFIED: docs/code-review-2026-07 §5] |
+| R2 | **Never infer completion from an event you cannot attribute to your own command** — not process names (`tasklist`), not results-log growth. | [VERIFIED: docs/history/code-review-2026-07 §3] |
+| R3 | **A metric that reads zero is instrumentation-suspect until the instrument is verified against a known-good and a known-bad case.** | [VERIFIED: docs/history/code-review-2026-07 §5] |
 
 A corollary that cost this repo two full production runs: **an oracle that cannot see its
 subject must not publish a number under a name that claims it did.** [VERIFIED: FINDINGS
@@ -131,7 +131,7 @@ hex is what appears in `RealityScan.log`.
 | `0` | — | Success | Epic states `processResult == 0` means the process finished correctly | [OFFICIAL: tutorials/commandline_5] |
 | `1` | — | **Also routine success.** Ordinary successful operations (e.g. `-addFolder`) report `1` through the trigger | Epic's own sample `ErrorWriter.bat` whitelists both `0` and `1`; confirmed in production | [OFFICIAL: tutorials/commandline_5] + [VERIFIED: FINDINGS 2026-07-21] |
 | `2181038335` | `0x820000FF` | **Warning class.** Seen for `err:18002` — `-importFlightLog` where the log references images not in the scene. The trajectory still imports for every image that *is* present | Cross-checked against every component manifest: the 102 "not found" images were exactly the unregistered remainder, zero overlap with any component | [VERIFIED: FINDINGS 2026-07-21, 2026-07-25] — Epic's own sample output in the Help prints this exact decimal, but for process `20599` = `IMPORT_GCP`, not the flight-log import [OFFICIAL: tutorials/commandline_5 + tutorials/processids], so the code is a *class*, not a flight-log signature |
-| `2147942487` | `0x80070057` | `E_INVALIDARG`. Empty / no-op selection paths: `err:5605` "no component selected" after `-renameSelectedComponent` on an emptied scene; `err:5601` "model name not found" from `-selectModel`; `-selectModel <tag>_HighPoly` in every model cleanup loop | Marker artifacts `expected_peelend_RS1.txt` (process `21859`, "in 0 seconds") and `expected_select_RS1_*.txt` (process `21856`) | [VERIFIED: FINDINGS 2026-07-24, 2026-07-29; docs/code-review-2026-07] |
+| `2147942487` | `0x80070057` | `E_INVALIDARG`. Empty / no-op selection paths: `err:5605` "no component selected" after `-renameSelectedComponent` on an emptied scene; `err:5601` "model name not found" from `-selectModel`; `-selectModel <tag>_HighPoly` in every model cleanup loop | Marker artifacts `expected_peelend_RS1.txt` (process `21859`, "in 0 seconds") and `expected_select_RS1_*.txt` (process `21856`) | [VERIFIED: FINDINGS 2026-07-24, 2026-07-29; docs/history/code-review-2026-07] |
 | `2147549183` | `0x8000FFFF` | **Generic "unexpected program state".** Ambiguous by design: a broken `-set` argument and the zone_14 alignment solver bug emit the identical code | Two unrelated failures, same code; the discriminating text was only in `RealityScan.log` | [VERIFIED: NA167 #16 / B6] |
 | `2147942512` | `0x80070070` | `ERROR_DISK_FULL` — **RealityScan's cache disk**, not necessarily the project disk | The hull-model retry died with this after 143.5 min; the instance log later said `Processing failed: Out of disk space..` | [VERIFIED: FINDINGS 2026-07-26] |
 | `2181038176` | `0x82000060` | **Unknown / invalid command.** Emitted by `-selectAllComponents`, which does not exist in 2.2 | Command taken from an older repo script; Help lists only `selectComponent` / `selectMaximalComponent` / `selectComponentWithLeastReprojectionError` | [VERIFIED: NA167 #13 / B2] — decimal is the arithmetic conversion of the logged hex, not itself observed in a marker |
@@ -145,7 +145,7 @@ Codes that appear only in `RealityScan.log` (channel C), with no distinct marker
 | `err:7155` | `Parsing setting key=value '<key>' failed` — a `-set` argument arrived split across the cmd boundary. The flag was **never applied** | [VERIFIED: NA167 #15 / B5] |
 | `err:18002` | "The file contains N images which are not in the current scene" (flight-log import); surfaces as `0x820000FF` | [VERIFIED: FINDINGS 2026-07-21] |
 | `err:5601` | Model name not found (`-selectModel` on a renamed-away model); surfaces as `0x80070057` | [VERIFIED: FINDINGS 2026-07-29] |
-| `err:5605` | No component selected; surfaces as `0x80070057` | [VERIFIED: docs/code-review-2026-07] |
+| `err:5605` | No component selected; surfaces as `0x80070057` | [VERIFIED: docs/history/code-review-2026-07] |
 | `MSS_STR001` | Internal reconstruction error, printed as `Processing failed: Unexpected program state. [Internal error MSS_STR001]`; surfaces as `0x8000FFFF` | [VERIFIED: NA167 B8; `testing/results/z14_forensic_rslog.txt` line 1491-1493] |
 
 **When a code is ambiguous — and `0x8000FFFF` always is — the only remedy is to snapshot
@@ -250,7 +250,7 @@ Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
   completion-detection bug (F-25) was already fixed.
 - **Mitigation.** Use `-selectMaximalComponent` (no parameters) before the rename; do not
   use `-mergeComponents` as a "select the merged thing" idiom.
-  [VERIFIED: HANDOFF 2026-07-21; docs/code-review-2026-07 §4]
+  [VERIFIED: HANDOFF 2026-07-21; docs/history/code-review-2026-07 §4]
 - **Detection test.** Issue `-selectMaximalComponent` then `-renameSelectedComponent X`;
   if the rename succeeds where it failed before, the selection was the problem.
 
@@ -288,7 +288,7 @@ Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
 - **Blast radius when it bit.** All 28 tuned keys in `AlignmentParams.xml` were being
   discarded — camera-prior enablement and weights, `Ultra` detector sensitivity, the
   `Division` distortion model, feature caps. Zone alignments ran on stock settings.
-  [VERIFIED: docs/code-review-2026-07 §6]
+  [VERIFIED: docs/history/code-review-2026-07 §6]
 - **Detected by.** Code reading during a settings evaluation, cross-checked against
   `appbasics/allcommands` and Epic's online docs.
   [CONTRADICTED: pre-2.x repo scripts and lore passed a params file / observed: the
@@ -431,7 +431,7 @@ Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
   manifest component names never match the in-scene names because the zone scene was saved
   *pre*-rename, so a name-based `-selectComponent` silently no-ops — is a design conclusion
   carried in `HANDOFF` (SHOULD-FIX: "cleanup_stale `selectComponent` silently no-ops") and
-  `docs/MERGE_REWORK_RECOMMENDATIONS.md` §Q6. It has **not** been reproduced as an
+  `docs/history/MERGE_REWORK_RECOMMENDATIONS.md` §Q6. It has **not** been reproduced as an
   observation, and the 2026-07-26 finding explicitly scopes itself away from zone scenes.
   It is plausible because selection commands no-op rather than fail on nothing to act on
   (F-10). [INFERRED — what would settle it: `-selectComponent` a known manifest name in a
@@ -883,7 +883,7 @@ happened".
   documentation and it was wrong, because it depended on an undocumented property of a
   closed-source binary. **Code review cannot validate a contract with a third-party
   executable; only execution can.**
-  [VERIFIED: docs/code-review-2026-07 §3; FINDINGS 2026-07-21]
+  [VERIFIED: docs/history/code-review-2026-07 §3; FINDINGS 2026-07-21]
 
 ### F-26 — The orchestrator reported exit 0 while modules refused or raised
 - **Symptom.** Process exit 0 with real failures inside.
@@ -967,7 +967,7 @@ happened".
   `-renameSelectedComponent` fails `No component selected [err:5605]` — intermittently,
   which is what made it expensive to find.
 - **How it was detected.** Non-deterministic smoke-test failures on the first real-machine
-  run; the same script sometimes succeeded. [VERIFIED: docs/code-review-2026-07 §3;
+  run; the same script sometimes succeeded. [VERIFIED: docs/history/code-review-2026-07 §3;
   HANDOFF 2026-07-21]
 - **Mitigation — the `:run` contract, reproduced literally in every workflow:**
   ```bat
@@ -1781,7 +1781,7 @@ the substrate. Every trap below was hit in practice.
   `cmd /c "path with spaces.bat"` has its quotes stripped by cmd. The `:run` line-count
   also had to be fully qualified as `%SystemRoot%\System32\find.exe`, because a bare `find`
   resolves to **GNU find** when launched from Git Bash and scans the whole disk.
-  [VERIFIED: HANDOFF 2026-07-21; docs/code-review-2026-07 §2]
+  [VERIFIED: HANDOFF 2026-07-21; docs/history/code-review-2026-07 §2]
 
 ### F-65 — cp1252 console crashes on non-ASCII
 - **Symptom.** A `UnicodeEncodeError` kills a stage at a `print`/log call, not at the work.

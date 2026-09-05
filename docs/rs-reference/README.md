@@ -155,7 +155,7 @@ accordingly.
 | Dated fact log | `FINDINGS.md` (repo root) |
 | Revised docs + numbered bugs B1–B11 | `testing/NA167_SESSION_NOTES.md` |
 | Test matrices | `testing/MERGE_TEST_PLAN.md`, `testing/ALIGN_MERGE_HARDENING_PLAN.md`, `testing/PRIORS_DISTORTION_TEST_PLAN.md`, `testing/FINDINGS.md`, `testing/MERGE_STRATEGY_REPORT.md` |
-| Decision records | `docs/settings-evaluation-2026-07.md`, `docs/merge-growth-strategy-2026-07.md`, `docs/MERGE_REWORK_RECOMMENDATIONS.md`, `docs/WORKFLOW_WALKTHROUGH.md`, `docs/code-review-2026-07.md` |
+| Decision records | `docs/settings-evaluation-2026-07.md`, `docs/merge-growth-strategy-2026-07.md`, `docs/history/MERGE_REWORK_RECOMMENDATIONS.md`, `docs/WORKFLOW_WALKTHROUGH.md`, `docs/history/code-review-2026-07.md` |
 | Working code | `modules/realityscan_interface/realityscan_cli.py`, `modules/realityscan_interface/RS_CLI/Scripts/*.bat`, `RS_CLI/Metadata/*.xml`, `modules/camera_registry.py`, `modules/flight_logs.py`, `merge_zones.py`, `geoall.py`, `poses2flightlog.py` |
 | Current state and ranked open questions | `HANDOFF.md`, `CLAUDE.md` |
 

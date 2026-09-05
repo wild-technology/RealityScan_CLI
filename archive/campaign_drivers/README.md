@@ -24,7 +24,22 @@ run unmodified.
 Line references are as of the 2026-08-07 archive commit; section titles
 are the stable pointers if lines drift.
 
-Not archived with these (deliberate): `testing/run_on2026_wreck.py`
-(owner decision pending), `testing/run_zone9_tests.py` (live harness),
+## Arrived 2026-09-05 (agent-native consolidation)
+
+| Script | What it was for | Provenance |
+|---|---|---|
+| `run_on2026_run3.py` | ON2026 run3 campaign driver (pool layout, per-eye COLMAP intrinsics via `-addImageWithCalibration`, M:\ON2026_run3). | FINDINGS `[ON2026]` 2026-08-28 entries; `RUN_CHARTER.md` on the data volume. |
+| `run_on2026_union.py` | ON2026 union wave: merge the masts into the hull, one wreck scene, model. | FINDINGS `[ON2026] 2026-08-09`. |
+| `run_on2026_wreck.py` | The retired ON2026 monolith driver (PRODUCT_READINESS must-fix 1 names it as the plan to replace). | HANDOFF 2026-08-07. |
+| `run_workbench_night.py` | Overnight seed-growth campaign against the owner's live GUI instance via `archive/probes/NightGrow.bat`. | FINDINGS `[ON2026] 2026-08-11/12`. |
+| `run_calib_ladder.py` | The A/B/C calibration ladder (control / groups / manufacturer XMP) via `archive/probes/CalibCellAlign.bat`. Verdict: manufacturer prior CONTENT collapses registration. | FINDINGS `[ON2026] 2026-08-09 calibration ladder VERDICT`. |
+| `yellow_filter.py` | Yellow-tether contamination scorer (HSV band); calibrated 2026-08-11 on a 600-image sample (`testing/results/yellow_sample600*.csv`). Analysis only. | FINDINGS `[ON2026] 2026-08-11`. |
+
+Not archived (deliberate): `testing/run_on2026_run2.py` - it is imported by
+`testing/test_feature_merge.py` (its `stage_features` gate is under test),
+so it stays a test dependency until that logic is promoted into
+`modules/feature_merge.py`; `testing/run_zone9_tests.py` (live harness);
+`testing/probe_cesium_depth.py` (owner: KEPT, re-runnable ion probe);
 `testing/preprocess_variants.py` and `testing/scale_oracle.py` (live
-tooling), and all `testing/test_*.py`.
+tooling); `testing/results/` (cited by path from frozen reports); and all
+`testing/test_*.py`.

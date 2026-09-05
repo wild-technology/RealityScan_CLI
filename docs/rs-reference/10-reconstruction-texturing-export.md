@@ -1420,7 +1420,7 @@ component before assuming the set is complete.
 The names file must be **BOM-free**: `Set-Content -Encoding utf8` in Windows
 PowerShell 5.1 writes a BOM, and a BOM on line 1 of a list file silently
 invalidates the first entry (the same class of bug that invalidated a
-`.complist`) [VERIFIED: FINDINGS 2026-07-27]. `wildscan.session.export_names_file`
+`.complist`) [VERIFIED: FINDINGS 2026-07-27]. `modules.run_plan.export_names_file`
 writes it with Python and CRLF line endings.
 
 ---
@@ -2271,7 +2271,7 @@ behave identically either way, and any other value (or unset) keeps the default
 ### 21.3 Production: export deliverables and publish
 
 `exports\components.names` is authored from `merge_report.json` by
-`wildscan.session.export_names_file` (Python, UTF-8 without BOM, CRLF). Hand
+`modules.run_plan.export_names_file` (Python, UTF-8 without BOM, CRLF). Hand
 authoring it in PowerShell 5.1 with `Set-Content -Encoding utf8` writes a BOM
 and silently invalidates the first component.
 

@@ -8,7 +8,7 @@ on that machine. **Do not append here** — this copy exists so the
 RealityScan documentation effort can cite the COLMAP side of the Q-05
 preprocessing reconciliation and the cross-engine Zeuss anomaly (Q-07)
 without cross-machine file access. COLMAP and RealityScan remain
-completely separate workflows (see COLMAP_CROSSOVER.md).
+completely separate workflows (see archive/colmap/docs/COLMAP_CROSSOVER.md).
 
 ---
 

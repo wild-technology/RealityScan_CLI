@@ -3,7 +3,7 @@
 
 Replaces the maximal-fraction ladder with the workflow the bow/hull
 governing intent requires (HANDOFF workflow-evaluation queue;
-docs/MERGE_REWORK_RECOMMENDATIONS.md):
+docs/history/MERGE_REWORK_RECOMMENDATIONS.md):
 
 1. Manifests -> twin resolution -> border graph -> CONNECTED CLUSTERS.
    Components whose UTM bboxes never touch are different physical

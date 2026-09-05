@@ -41,8 +41,10 @@ _WORKFLOW_BAT = re.compile(
     r"alignimagesfromfolder|probecalibgroups\d*|probeflightlog\d*|"
     r"probeexportsettings)\.bat\b"
     # Anything else under RS_CLI/Scripts is a workflow too, whatever it is
-    # called - a new script must not slip past the guard by being new.
-    r"|rs_cli[\\/]+scripts[\\/]+[^\s\"']+\.bat\b")
+    # called - a new script must not slip past the guard by being new; the
+    # archived probes and legacy workflows are boot-capable as well.
+    r"|rs_cli[\\/]+scripts[\\/]+[^\s\"']+\.bat\b"
+    r"|archive[\\/]+(?:probes|legacy_scripts)[\\/]+[^\s\"']+\.bat\b")
 
 #: Commands that only READ - naming a .bat here is inspection, not
 #: execution. Anchored at the start of the command (or of a pipeline

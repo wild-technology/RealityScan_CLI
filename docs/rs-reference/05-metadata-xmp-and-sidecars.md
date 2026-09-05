@@ -1010,7 +1010,7 @@ Two measured results say the sidecars are not inert:
 1. **Fragmentation.** A fresh end-to-end run with calibration sidecars gave zone_1
    **3 components at 4,405/4,540 (97.0 %)** against the pre-sidecar production run's
    **9 components at 4,392 (96.7 %)** on the same imagery and the same box.
-   [VERIFIED: FINDINGS 2026-07-24; docs/FRESH_RUN_2026-07-24.md]
+   [VERIFIED: FINDINGS 2026-07-24; docs/history/FRESH_RUN_2026-07-24.md]
 2. **Sidecar loss is treated as a defect.** When the identity harvest stripped 796 of
    4,540 sidecars (§9.6), the pipeline gained a repair function rather than shrugging.
 

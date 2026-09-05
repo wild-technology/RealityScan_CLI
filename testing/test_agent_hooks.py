@@ -50,6 +50,8 @@ def bash(command):
     "AlignImagesFromFolder.bat D:/zone",
     # A script that does not exist yet must not slip past by being new.
     r"modules\realityscan_interface\RS_CLI\Scripts\BrandNewWorkflow.bat",
+    r"archive\probes\ProbeCalibGroups4.bat D:/fixture D:/out",
+    "cmd /c archive/legacy_scripts/AlignImageList.bat",
 ])
 def test_direct_realityscan_launches_are_blocked(command):
     result = run_hook(LAUNCH_GUARD, bash(command))
