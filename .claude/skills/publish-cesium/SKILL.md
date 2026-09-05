@@ -40,7 +40,9 @@ python publish_cesium.py --name "<name>" --dir <export>/obj \
 independently and checks the placement that actually landed.
 
 Plan without uploading: `--dry-run`. Whole workspace:
-`python publish_batch.py --workspace <ws> --prefix "<wreck>"`.
+`python publish_batch.py --workspace <ws> --prefix "<wreck>"`, or on the
+charter lane `python rs.py run --charter <C> --stages publish` (no
+RealityScan involved, so `run` is allowed from an agent shell).
 
 ## Traps
 

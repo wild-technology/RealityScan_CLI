@@ -16,8 +16,10 @@ is not success" - a lone progress file is a stall, not progress.
 ## Inputs
 
 The caller gives the instance name and the results root `<ws>`. If
-`<ws>/_agent/RUN_STATE.json` exists (roadmap Phase 2 `modules/launch.py`; it
-may not yet) read `task_name`, `log`, `budget`; else fall back, ask nothing.
+`<ws>/_agent/RUN_STATE.json` exists (written by `rs.py run` / `rs.py launch`)
+read `status`, `stage`, `task`, `log`, `rc_file`, `budget`; else fall back,
+ask nothing. `python rs.py status --workspace <ws> --instance <inst>` prints
+the same block read-only and is the cheapest first poll.
 
 ## Poll exactly these, in this order
 

@@ -16,6 +16,10 @@ disable-model-invocation: true
   ```bash
   python run_models.py --workspace <ws>
   ```
+  On the charter lane: `python rs.py launch --charter <C> --stages model`
+  (scheduler-owned; `rs run` refuses RealityScan stages from an agent shell).
+  ```bash
+  ```
 - **The mesh ALREADY exists in a running instance** (a GUI or
   Epic-Launcher session) -> `ModelToFinal` via `finish_model.py`:
   ```bash
@@ -57,7 +61,7 @@ Identify by PID + command line first - a query that matches its own
 search string is not evidence. On a charter-driven lane:
 
 ```bash
-python -m modules.run_charter --check <charter> --instance <name>
+python rs.py charter check <charter> --instance <name>
 ```
 
 ## Deliverables are never overwritten
@@ -68,7 +72,7 @@ overwrite (the ModelToFinal silent-overwrite finding, 2026-08-08).
 ## Verify
 
 ```bash
-python -m modules.verify --workspace <ws> --require model,export --json
+python rs.py verify --workspace <ws> --require model,export --json
 ```
 
 Exit status from RealityScan proves nothing - count what landed on disk.

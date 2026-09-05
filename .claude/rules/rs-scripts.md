@@ -37,3 +37,7 @@ paths:
   a GUI instance writes no `errors_<inst>.txt`. Copy it nowhere. [ARCHITECTURE]
 - **Test structurally, never by booting**: extend the stub-exe, no-subprocess
   assertions in `testing/test_cmd_boundary_guards.py`. [its header, 2026-08-07]
+- **The order of operations in these scripts is the product** (CLAUDE.md
+  hard rule 10). Reorder, remove or "simplify" a step only for a verified
+  defect recorded in FINDINGS or on the owner's explicit instruction. Retired
+  scripts go to `archive/probes/` with a README row, never deleted.

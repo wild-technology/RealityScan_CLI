@@ -18,6 +18,9 @@ behaviour - it documents what actually fuses and what does not.
 
 ## Run it through the driver
 
+On the charter lane: `python rs.py launch --charter <C> --stages merge`
+(the plan pins every argument below). By hand, or to inspect the argv:
+
 ```bash
 python merge_zones.py --components_root <ws>/aligned_components \
     --images_root <ws>/batched_images_by_zone \
@@ -53,7 +56,7 @@ The numbers above are decisions, not defaults:
 - **Verify frame and settings unanimity first.** Merging across
   coordinate frames is never recoverable:
   ```bash
-  python -m modules.verify --workspace <ws> --require align
+  python rs.py verify --workspace <ws> --require align
   ```
   A `blocked` verdict here means the inputs are not comparable. Stop.
 - **Import components ONLY from their original export location.** A
@@ -69,7 +72,7 @@ the assembly workflow's result was checked, so a failed assembly left a
 document declaring a terminal state for a project that was never saved.
 
 ```bash
-python -m modules.verify --workspace <ws> --require merge --json
+python rs.py verify --workspace <ws> --require merge --json
 ```
 
 Then read `merge_report.json` for per-attempt evidence. Each escalation

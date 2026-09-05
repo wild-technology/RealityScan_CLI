@@ -5509,3 +5509,61 @@ unwrapped before the bake. The high-poly bake SOURCE stayed at 4 x 8K, which is
 better for bake quality than the 4K it was asked to become — but it is not what
 the instruction said, and the ~80 minutes spent across twenty components
 produced a layer nothing reads.
+
+## [HARNESS] 2026-09-05 - agent-native consolidation: what the audit measured
+
+Fresh clone of `main` (`eb3ac8a`) on a macOS box with a Python 3.14 venv
+built from `requirements.txt`. Suite there: 713 passed, 22 failed, 4 skipped
+in 24 s; every failure is platform-bound (11 alignment tests need the
+RealityScan install tree; 11 basename-matching tests push `M:\` paths through
+POSIX `os.path`). The Windows expectation is unchanged (fully green).
+
+- **The unit suite wrote `rs_settings.json` into the repo root** (section
+  `main`: `b_overlap_percent`, `g_*` accuracies), via `main.parse_arguments`
+  under a `SettingsStore()` with the default path. Found by `ls` after one
+  run. CLOSED: `testing/conftest.py` points every store at `tmp_path` (module
+  attribute + the new `RS_SETTINGS_PATH` env for child processes), scrubs
+  `RS_*` from the test environment, and fails the session if the root file
+  reappears. ESTABLISHED.
+- **Three paths bypassed `RS_NO_SETTINGS_INHERITANCE`**, so a chartered run
+  could still inherit another campaign's answers: `main.parse_arguments`
+  (`settings.get('main', ...)` then a silent EOF fallback to the stored
+  value), `BatchDirectory._stored_default` (`settings.get('batch', ...)`),
+  and `geoall.py`'s code defaults, which were one machine's `Z:\` trees and
+  count as legitimate fallbacks under refusal. Found by reading every
+  `SettingsStore` call site. CLOSED: `default_for()` is the one resolution
+  path, `unattended()` (RS_NO_INTERACTIVE or RS_RUN_CHARTER) never calls
+  `input()` and announces every value it takes, `geoall` defaults are None
+  and the missing flags are named. `testing/test_unattended_prompts.py`.
+- **`main.py` did not honour its own epilog** ("RS_NO_INTERACTIVE = never
+  prompt; missing required values fail fast"): it still called `input()`
+  and took the stored answer on EOF. CLOSED (exit 2 naming the flag).
+- **`decimator.py` had no argument parser and an `input()` loop that spins
+  forever on an EOF stdin**; `timestamp_rename.py` had no EOF guard. CLOSED
+  (`--yes` is the only unattended path that proceeds).
+- **`modules.preflight` caught a real gap on its first run**: for the stage
+  set georeference+batch+align the batcher's `--b_input` is required (the
+  in-process hand-off exists only from Extract or Preprocess) and
+  `run_plan --validate` cannot see it (argparse treats every flag as
+  optional; the module refuses at run time). Preflight derives required
+  answers from the modules' own Parameter declarations, so this class of gap
+  is now a question before launch. ESTABLISHED.
+- **`test_rig_mounts.py` leaves `logging.disable(CRITICAL)` armed** for the
+  rest of the session; any later test relying on `caplog` alone sees
+  nothing. Worked around in the new tests (`logging.disable(NOTSET)` in a
+  fixture); the leak itself is unchanged. OPEN (trivial fix, not this pass).
+- `archive/colmap/vocabtrainer_shipwrecks.py` does not compile (`try` without
+  `except`, line ~710) and never did on `main`. Archived code; left as is.
+- `wildscan/session.py` still carried its own `IMAGE_EXTS` without `.heif`
+  after `modules/image_exts.py` was created to end exactly that duplication.
+  CLOSED in `modules/run_plan.py` (ONE inventory).
+- The planner moved: `wildscan/session.py` + `wildscan/plan.py` ->
+  `modules/run_plan.py`; the TUI is archived FUNCTIONAL under
+  `archive/wildscan_tui/` (owner: keep the UI, break it off). New
+  `rs.py` (charter | preflight | plan | run | launch | status | verify);
+  `rs run` refuses RealityScan stages from a `CLAUDECODE` shell (mandate 6
+  made mechanical) and `rs launch` writes the CRLF launcher pair and PRINTS
+  the `schtasks` commands rather than running them (the ask-gate must fire).
+- Instruction-layer sizes after the pass: `CLAUDE.md` 11.9 KB -> 6.7 KB
+  (200 -> 128 lines), `HANDOFF.md` 91.6 KB -> the two current sections
+  (older sections verbatim in `docs/history/HANDOFF_2026-07_to_2026-09.md`).

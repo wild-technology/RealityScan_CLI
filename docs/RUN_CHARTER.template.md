@@ -5,10 +5,12 @@ before the first write. Lives in the agent workspace. See
 docs/AGENT_OPERATIONS.md for the contract this instantiates.
 
 Machine-readable form (the one the code and the `.claude/` hooks enforce):
-`python -m modules.run_charter --init <results_root>/_agent/RUN_CHARTER.json`,
-then `--validate`, then `set RS_RUN_CHARTER=<path>`. The sections below map
-onto that file's `locations`, `ownership`, `budget`, `science` and
-`signed_off` keys; keep both in step.
+`python rs.py charter init <results_root>/_agent/RUN_CHARTER.json`, fill it,
+`python rs.py preflight --charter <path>` until READY (every `missing` line is
+a question for the owner), `python rs.py charter validate <path>`, then the
+owner sets `RS_RUN_CHARTER=<path>`. The sections below map onto that file's
+`locations`, `ownership`, `budget`, `science`, `pipeline` and `signed_off`
+keys; keep both in step.
 
 ## Declared locations (owner-confirmed, not inferred)
 - ORIGINALS (read-only from this moment): <path>

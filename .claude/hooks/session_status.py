@@ -6,7 +6,7 @@ CLAUDE.md's session-start protocol was "read HANDOFF.md, then CLAUDE.md,
 then the reference index" - three tool calls and several thousand tokens
 before the first useful action, every session, every resume. And CLAUDE.md
 is paid on EVERY turn, so anything orientation-shaped that lives there is
-the single largest recurring cost in the repo (docs/AGENT_NATIVE_ROADMAP.md
+the single largest recurring cost in the repo (docs/history/AGENT_NATIVE_ROADMAP.md
 sec.0). This hook runs once at startup/resume, prints the current state,
 and Claude Code adds its stdout to context: the CURRENT section of
 HANDOFF.md (the one that says what is running and what to do next), the
@@ -227,12 +227,12 @@ def show_run_state(charter_path: str) -> None:
         emit("RUN_STATE.json is not a JSON object")
         return
     shown = False
-    for key in ("stage", "task", "started", "log"):
+    for key in ("status", "stage", "task", "started", "log"):
         if key in state:
             emit(f"{key}: {state[key]}")
             shown = True
     if not shown:
-        emit("(none of stage/task/started/log present)")
+        emit("(none of status/stage/task/started/log present)")
 
 
 def main() -> int:

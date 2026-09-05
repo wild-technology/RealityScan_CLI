@@ -46,6 +46,17 @@ hash. Every fix ships with a test or an empirical verification transcript.
   WildScan portal could not import and 26 of its tests were dormant; 461
   tests now pass, zero skips).
 
+- 2026-09-05 agent-native consolidation: items 11 and 12 closed for the
+  agent lane and for every `RS_NO_INTERACTIVE` run - prompts never
+  self-answer silently (`module_base.settings_store.unattended`, announced
+  values, fail-by-flag), and `modules/preflight.py` + charter sign-off is
+  the pre-flight checklist (`rs run`/`rs launch` refuse until READY). Items
+  13 and 14 moot: the TUI is archived (`archive/wildscan_tui`), its
+  StatusScreen replaced by `rs status`, its prefill by the charter. Item 8
+  partially: `RUN_STATE.json` records every stage's exit code and the
+  launcher writes an `.rc` file; process-group termination remains.
+  FINDINGS `[HARNESS] 2026-09-05`.
+
 ## MUST-FIX
 
 ### Blocks run2 (ON2026 per-feature delivery)
