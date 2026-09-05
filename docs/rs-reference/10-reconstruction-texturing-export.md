@@ -894,17 +894,23 @@ of the optimal texel size**, texel size [OFFICIAL: tools/texturing_part2].
 
 ### 9.2 Production presets and the texture budget
 
-**Texture budget in force: max 4 textures at 16384×16384 in BOTH texture
-passes** [VERIFIED-as-config: HANDOFF 2026-07-29; `GenerateModel.bat`].
+**Texture budget in force: max 4 textures at 8192×8192 in BOTH texture
+passes** (`GenerateModel.bat` `[6/8]` `Texturing_MaxTextureCount4_8k.xml`, `[8/8]`
+`Unwrapping_Simplified_4x8k.xml` — 8K cap, owner 2026-07-31) [VERIFIED-by-inspection:
+`GenerateModel.bat` 2026-09-05; FINDINGS 2026-09-03]. Owner cap for EXPORTED deliverables:
+nothing above 4096 (`run_decimate.py`, `Texturing_AdaptiveTexel_4k.xml`). The rows below
+attributing the 16k presets to `GenerateModel.bat` were stale (2026-08-04) and are corrected.
 
 | File | Style | Count | Max res | Gutter | LargeTriRemovalThr | Extra | Used by |
 |---|---|---|---|---|---|---|---|
-| `Texturing_MaxTextureCount4_16k.xml` | `MaxTexturesCount` | 4 | 16384 | 2 | 1000 | `unwrapFillTextures=0x1` | **`-calculateTexture` in `GenerateModel.bat` `[6/8]`** |
-| `Unwrapping_Simplified_4x16k.xml` | `MaxTexturesCount` | 4 | 16384 | 2 | 10 | `unwrapMinTexResolution=512`, `unwrapMethod=Geometric`, `unwrapFillTextures=0x0` | **`-unwrap` in `GenerateModel.bat` `[8/8]`** |
+| `Texturing_MaxTextureCount4_16k.xml` | `MaxTexturesCount` | 4 | 16384 | 2 | 1000 | `unwrapFillTextures=0x1` | unreferenced since the 8K cap (was `[6/8]`) |
+| `Unwrapping_Simplified_4x16k.xml` | `MaxTexturesCount` | 4 | 16384 | 2 | 10 | `unwrapMinTexResolution=512`, `unwrapMethod=Geometric`, `unwrapFillTextures=0x0` | unreferenced since the 8K cap (was `[8/8]`) |
+| `Unwrapping_Simplified_4x8k.xml` | `MaxTexturesCount` | 4 | 8192 | 2 | 10 | as above | **`-unwrap` in `GenerateModel.bat` `[8/8]`** |
 | `Texturing_HighPolyTexture.xml` | `MaxTexturesCount` | 2 | 16384 | 2 | 1000 | — | superseded (was `[6/8]`) |
 | `Texturing_SimplifiedTexture.xml` | `MaxTexturesCount` | 2 | 16384 | 2 | 1000 | — | unused |
-| `Unwrapping_Simplified.xml` | `MaxTexturesCount` | 1 | 16384 | 2 | 10 | `Geometric`, min 512 | superseded (was `[8/8]`) |
-| `Texturing_MaxTextureCount1_8k.xml` / `1_16k` / `4_8k` | `MaxTexturesCount` | 1 / 1 / 4 | 8192 / 16384 / 8192 | 2 | 1000 | — | alternatives |
+| `Unwrapping_Simplified.xml` | `MaxTexturesCount` | 1 | 16384 | 2 | 10 | `Geometric`, min 512 | **LIVE by fallthrough**: `ModelToFinal.bat` pairs an unwrap with the texture preset only for `4x8k`; every other preset falls through to this 1 × 16K page (A4; not changed — owner's call) |
+| `Texturing_MaxTextureCount4_8k.xml` | `MaxTexturesCount` | 4 | 8192 | 2 | 1000 | — | **`-calculateTexture` in `GenerateModel.bat` `[6/8]`**; `ModelToFinal.bat` preset `4x8k` (default) |
+| `Texturing_MaxTextureCount1_8k.xml` / `1_16k` | `MaxTexturesCount` | 1 / 1 | 8192 / 16384 | 2 | 1000 | — | `ModelToFinal.bat` presets `8k` / `16k` (both fall through to the 1 × 16K unwrap) |
 | `Texturing_FixedTexelSize100perQuality.xml` | `FixedTexelSize` | — | 8192 | 10 | 400 | `unwrapFixedTexelSizeType=0` (optimal) | alternatives |
 | `Texturing_FixedTexelSize50perQuality.xml` | `FixedTexelSize` | — | 8192 | 10 | 400 | `unwrapFixedTexelSizeType=1` (2× optimal) | alternatives |
 
@@ -1309,7 +1315,7 @@ Structural rules observed across all **eleven** repo export presets
 | Key | Values seen | Meaning |
 |---|---|---|
 | `ModelExportFormatVersion` | `0` (`…OBJ_NiraParts`, `…Obj`, `…GLB`), `13` (all FBX presets, `…PLY_DensePoints`, `ModelExportParams.xml`) | [OPEN] two readings: the "Format version" selector — which the Help says is *enabled for various formats but relevant only for `.fbx`*, and whose FBX values are the seven `FBX2011xx`…`FBX202000` labels — or the schema version of the params file. `13` on a PLY preset is consistent with either (an irrelevant-but-serialized control); `0` on two OBJ presets and `13` on a third generic one argues against a pure schema version. Cheapest probe: export an FBX from the GUI at `FBX201100` and again at `FBX202000` and diff the two params files. |
-| `MvsExportcoordinatesystemtype` | `0`, `3` | Export CRS mode. The dialog offers **Grid plane / Project Output / Shifted project output / Same as XMP**, so [INFERRED] `0` = Grid plane and `3` = Same as XMP. Cheapest probe: set each of the four in the GUI, export params, read the value. |
+| `MvsExportcoordinatesystemtype` | `0`, `3` | Export CRS mode. The dialog offers **Grid plane / Project Output / Shifted project output / Same as XMP**. **`3` = Same as XMP, VERIFIED: the written geometry is GEOCENTRIC (EPSG:4978) with identity `transformToModel`, and the sidecar's `globalCoordinateSystem` label is arbitrary** [VERIFIED: FINDINGS 2026-09-01/02]. `0` = Grid plane remains [INFERRED]. |
 | `MvsExportIsGeoreferenced` | `0x1`, `1.0` | Export in world coordinates. |
 | `MvsExportIsModelCoordinates` | `0` | Export in model-local coordinates. |
 | `MvsExportScaleX/Y/Z` | `1.0`, `10.0`, `100.0` | Export scale. `100` = metres → centimetres (the "Maya + Arnold, Unreal" preset); GLB preset uses `10`. |
@@ -2328,9 +2334,9 @@ Each with the cheapest probe that answers it.
 | 1 | Does `-exportReport` complete headless under delegation, and does it emit georeferencing status and reprojection residuals? (hardening cells **U7**, **U14** — U7 open since 2026-07-23) | The custom one-line CSV template in §21.4, delegated with a watchdog on the smoke fixture. Minutes. |
 | 2 | Is the `-selectLargeTrianglesRel 30` threshold right for this imagery? Never visually validated. | Run `[3/8]` at 15 / 30 / 60 on the 133-camera component and inspect the three results in the GUI. ~2 h total. |
 | 3 | Why does `-selectModel <tag>_HighPoly` return `2147942487` in every cleanup loop? The FINDINGS 2026-07-29 reading is that `[6/8]`'s second `-renameSelectedModel` consumed the name into `_HighPoly_Textured`, i.e. the loop is looking for a name that by then does not exist — which would make the code correct behaviour, not a defect. | Delegate `-selectModel <tag>_HighPoly` twice inside `[6/8]`: once immediately after the first rename, once after `-calculateTexture` + the second rename, comparing the errors marker each time. Seconds; also the input to the queued error-whitelist redesign. |
-| 4 | Does the shipped `ExportDeliverables.bat` PLY step abort, as §13.7 predicts? | Run it on the 133-camera component. ~2 min to the failure point. Fix by switching to `_HighPoly_Textured` or duplicating after `[1/8]`. |
+| 4 | Does the shipped `ExportDeliverables.bat` PLY step abort, as §13.7 predicts? **RESOLVED 2026-09-02: it aborted for a different reason — `-selectModel` without a preceding `-selectComponent` (`0x80070057`); the `_HighPoly_Raw` source DOES survive `GenerateModel`. Fixed; a one-component fixture wrote the 781 MB dense PLY.** | — |
 | 5 | `ModelExportFormatVersion` — FBX format-version selector or params-file schema version? | Export an FBX from the GUI at `FBX201100` and again at `FBX202000`; diff the two params files. |
-| 6 | `MvsExportcoordinatesystemtype` ordinal → label mapping (`0`, `3` observed against four documented options). | Set each of Grid plane / Project Output / Shifted project output / Same as XMP in the GUI export dialog, export params, read the value. |
+| 6 | `MvsExportcoordinatesystemtype` ordinal → label mapping. **`3` RESOLVED (Same as XMP = ECEF, 2026-09-01)**; `0` still unobserved in a written `.rsInfo`. | Set Grid plane / Project Output / Shifted project output in the GUI export dialog, export params, read the value. |
 | 7 | `MvsMeshExportNumberFormat` — decimal-precision count or the Decimal/Scientific/General enum? | Toggle the GUI Number format control and the `.ptx` Output Decimal Precision separately; diff. |
 | 8 | `simplPreserveParts` ordinal → label mapping. Known: `2` is **not** "Create a singleton" (a model simplified under it exported as 4 parts). | Set the three Part merging options in the GUI Simplify tool, export params each time, diff. |
 | 9 | `mvsFltBorderDecimationStyle` and `mvsFltSmoothingType` ordinal mappings. | Same method as #8, in the Simplify and Smooth tools. |
@@ -2354,3 +2360,31 @@ Each with the cheapest probe that answers it.
 | 27 | `unwrapMinTexelSize` / `unwrapMaxTexelSize` are each documented **twice** with different types (0–5 enum for `AdaptiveTexelSize`, float for custom `FixedTexelSize`) — are they one setting whose parse depends on `unwrapStyle`, or two binary settings the Help's table merged? Writing metres where ordinals are expected would silently produce a wrong texel budget. | Set `unwrapStyle=AdaptiveTexelSize` in the GUI Unwrap tool, export the params, read what is written for both keys; repeat with `FixedTexelSize` + type `5`. Minutes. |
 | 28 | `mvsFltUnwrapTexSide` is one key, but the GUI Simplify tool exposes **custom minimal *and* maximal** texture resolution. Which key carries the second? (`mvsFltUnwrapMinTexSideCustom` / `mvsFltUnwrapMaxTexSideCustom` are binary strings.) | Set a custom resolution range in the Simplify tool, export params, diff against `Simplify50Per_Params.xml`. Minutes. |
 | 29 | Would `MvsGeometryMarginStyle=true` (drop marginal triangles at mesh time) beat the post-hoc `[2/8]` filter on runtime or quality? Never compared; the key appears in no repo file and in no settings evaluation. | One `-set "MvsGeometryMarginStyle=true"` + `-calculateHighModel` on the 133-camera component against its 40.1 min baseline, then compare against a `[2/8]`-filtered run. ~80 min. |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. What the `.rsInfo` says about frame, and what it lies about
+
+With `MvsExportcoordinatesystemtype=3` (the OBJ/FBX presets) the exported vertices are **ECEF** and `transformToModel` is identity; `globalCoordinateSystem` / `globalCoordinateSystemName` are whatever the project's CRS list happened to select — a label that accumulates across cruises and was wrong by half a planet on NA165/H2060 (55N for a 2S dive). Never place a mesh from that attribute alone; `modules/cesium_placement.py` derives the reading and validates it against the CRS area of use and the dive's nav envelope, refusing when they disagree. Since 2026-09-02 the workflows pin project and output CRS (`06` §3.2). [VERIFIED: FINDINGS 2026-09-01/02]
+
+### A2. Export needs the component selected before `-selectModel`
+
+`-exportModel` resolves a model by name; `-selectModel` resolves only within the active component. `ExportDeliverables.bat` never selected the component, so the dense-PLY step failed with `0x80070057` and one optional format killed a 20-component export (the errors file being sticky, `11` A1). `-selectComponent` now heads each component's export; `RS_EXPORT_SKIP_PLY` survives as an escape hatch. The master project lists `_HighPoly_Raw`, `_HighPoly_Textured` and `_Simplified_Textured` for every component — the raw model survives `GenerateModel`. [VERIFIED: FINDINGS 2026-09-02]
+
+### A3. Four fixed 80 % simplify passes is a ratio, not a budget
+
+`GenerateModel.bat` ends every component with four relative-80 % passes. 0.8⁴ = 0.4096, and all twenty H2060 "Simplified" models measured exactly that fraction of their high-poly (2.77 M to 42.4 M triangles left), which also shows `-cleanModel` removes essentially nothing. A triangle BUDGET needs `ceil(log(budget/N0)/log(0.8))` passes measured per component (9–20 for 500 k here); `run_decimate.py` computes it from the measurement primitive (`02` A2). `_HighPoly_Raw` and `_HighPoly_Textured` are NOT the same mesh (9.7 M vs 6.8 M on one component — texturing applies the unwrap's large-triangle removal); seed from the one you mean. [VERIFIED: FINDINGS 2026-09-03]
+
+### A4. Adaptive texturing: the style, the 4K cap, and a live 16K leak
+
+Owner's "adaptive" means `unwrapStyle=AdaptiveTexelSize` (texel clamped between min/max texel size); `MaxTexturesCount` auto-fits texel to a page budget and is a different style — the repo's shorthand had them swapped for a month. `Texturing_AdaptiveTexel_4k.xml` / `Unwrapping_AdaptiveTexel_4k.xml` are the first presets to use the style. **Owner cap: nothing above 4096 may reach an exported deliverable.** `Unwrapping_Simplified.xml` (1 × 16384) is still LIVE: `ModelToFinal.bat` matches an unwrap to the texture preset only for `4x8k`; every other preset (`8k`, `16k`, `highpoly`, `fixed100`, `fixed50`) falls through to it, so asking for *smaller* 8K textures exports a **16K** page. The default `4x8k` path is safe (not changed — owner's call). `GenerateModel.bat` `[6/8]` uses `Texturing_MaxTextureCount4_8k.xml` (8K cap, owner 2026-07-31); the §9.2 registry rows attributing the 16k presets to it were stale and are corrected. [VERIFIED: FINDINGS 2026-09-03]
+
+### A5. `AdaptiveTexelSize` can fail on a particular mesh, silently, and an untextured model still exports
+
+One of twenty decimated components: `-unwrap` (adaptive) returned in 3 s with `0x83000003` and an unchanged `rev`, `-reprojectTexture` failed `0x8200001F` in 5 s, and `-exportSelectedModel` then wrote a geometry-only OBJ (`.mtl` without `map_Kd`, zero texture pages) reporting success. Reproduced three times; `unwrapLargeTriangleRemovalThr` 10 and 1000 both failed, while `MaxTexturesCount` 4 × 4096 unwrapped the same mesh in 8 s. Why adaptive rejects that mesh is [OPEN]. A texture census must check `Textured` and the texture count, not triangle count alone. [VERIFIED: FINDINGS 2026-09-03]
+
+### A6. `-calculateTexture` textures INTO the existing UV layout
+
+On an already-unwrapped model, the unwrap keys in a texturing profile are inert: `-calculateTexture` with an AdaptiveTexelSize 4K profile left the model's `Unwrapping style: Maximal texture count, 4 × 8192` and added a second colour layer (`Color8_1`) that nothing consumes (`ReprojectionParams.xml` bakes from `Color8_0`). To change the layout, `-unwrap <params>` first, then `-calculateTexture`. [VERIFIED: FINDINGS 2026-09-03]

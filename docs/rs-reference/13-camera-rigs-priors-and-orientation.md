@@ -1905,7 +1905,9 @@ legacy dataset by tens of degrees. `MOUNTS` in
 | `legacy_cammid` | 1.0 | 0.0 | 1.0 | 20.0 | 10.0 |
 | `legacy_camlower` | 1.0 | 0.0 | 1.0 | 10.0 | 5.0 |
 | `wca_port` | 1.0 | 0.0 | 1.0 | 0.0 | 15.0 |
-| `wca_cinema` | 1.0 | 0.0 | 0.0 | 45.0 | 15.0 |
+| `wca_cinema` | 1.0 | 0.0 | 0.0 | 0.0 | 15.0 |
+| `wca_upper` (`U###C`) | 1.0 | 0.0 | 0.0 | 45.0 | 15.0 |
+| `na168_upper` | 1.0 | 0.0 | 0.0 | 45.0 | 15.0 |
 | `wca_starboard` | **`None`** — never measured | | | | |
 
 [VERIFIED-by-inspection + pinned by `testing/test_rig_mounts.py`, values in force 2026-07-26]
@@ -1916,6 +1918,8 @@ the house convention: **10° down from the vehicle forward axis, claimed at 30°
 accuracy** — which lands at **80° on the nadir scale** for a level vehicle, and
 composes with vehicle pitch like any measured mount. A measured `MOUNTS` entry
 always **wins**; the fallback is reached only where there is none.
+[SUPERSEDED 2026-08-14 for the WCA row: the 45° down-look belongs to the upper (starboard) camera,
+`wca_upper`; `wca_cinema` is 0°. Legacy `camlower` at 10° is unchanged. Addenda A2.]
 
 | | |
 |---|---|
@@ -1968,7 +1972,9 @@ Q7.]
 ### 10.4 The lever-arm retraction chain — four steps, all retained
 
 1. **Original (2026-07-23, owner-stated):** Port 0° pitch, 1 m forward + 1 m down;
-   Cinema 45° down, 1 m forward. [VERIFIED-as-owner-statement]
+   Cinema 45° down, 1 m forward. [VERIFIED-as-owner-statement, 2026-07]
+   [SUPERSEDED 2026-08-14: the 45° down-look is the UPPER camera's (`wca_upper`); Cinema is 0°.
+   The NA156 line was solved with Cinema at 45 — Addenda A2, FINDINGS 2026-08-14]
 2. **Measured from the solve (2,169 near-simultaneous C/P pairs, zone_1 fresh run):** angle
    **47.2°** (IQR 47.0–47.4) confirmed; but |P−C| separation **0.22 m**, vertical component
    **0.00 m** ⇒ "the Port lever arm is wrong by ~1 m". [SUPERSEDED the same session]
@@ -2317,3 +2323,15 @@ Every [OPEN] in this document, with the cheapest probe that answers it.
 | **Q24** | **HIGHEST PRIORITY.** `ifUsePosAcc` / `ifUseOriAcc` do not exist in the binary (§9.3), so what actually decided whether the flight log's accuracy columns were consumed — and at what accuracy did every historical align really run? If `ifuuInh=0` means "use the global settings", and the globals were never applied either (§7.2), then every production align used 10/10/20 m + 10/10/10°, not the per-image columns. | Import the 120-image smoke fixture twice with a 13-column log carrying distinctive accuracies (say 0.01 m), once at `ifuuInh=0` and once at `ifuuInh=1`, then read `$(priorErrorX)`/`$(priorErrorY)`/`$(priorErrorZ)` per camera from an `-exportReport` template (§7.2). Whichever run reports 0.01 identifies the "from file" value. ~5 minutes, headless, no GUI. |
 | **Q25** | Does a params-XML entry naming a **non-existent** key fail loudly or silently? Three of this repo's twelve `FlightLogParams.xml` entries name nothing; none of them ever produced an error. | Add `<entry key="thisKeyDoesNotExist" value="1"/>` to a params XML, run the import, and check `RS_CLI/Errors/errors.txt` and `RealityScan.log`. If it is silent — and the historical record says it is — then **no params XML in this repo has ever been validated**, and every one should be re-checked key-by-key against the binary's string table. Seconds. |
 | **Q20** | Do GCPs / control points work through this CLI at all? `controlpoints.xml` / `groundcontrol.xml` have never been driven, and with no stereo-rig support they are the sanctioned route to rig scale. | Import three synthetic GCPs on the smoke fixture with `-importGroundControlPoints` + a GUI-saved params XML, align, and read the residuals. Untouched territory. |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Manufacturer approximate intrinsics as priors COLLAPSE registration (ON2026 ladder)
+
+Clean A/B/C ladder on a zone_1 copy, one variable per rung, explicit `-addImageWithCalibration` delivery, own cache: **A** control 3,528/3,626 = 97.3 % (1 component, residual median 4.54 cm); **B** groups-only XMPs (calibration/distortion groups 5/6, no values) 97.7 %, median 1.80 cm; **C** full manufacturer priors (focal35 24.2345, PPU/PPV, division, zero-pinned distortion, approximate) **45.4 %** — collapse, reproducing the original failed cell almost exactly, solved focal steered to the prior with wild outliers. The prior VALUES, not sidecar hygiene or cache concurrency, caused the 2026-08-08 collapse (2× replicated, two delivery mechanisms; mirrors NA167 #4 at far greater severity). Production stays calibration-prior-free; value-carrying flight-log calibration columns were downgraded for the same reason. Caveat on B: both A and B exported as ONE calibration group, so flight-log import auto-grouping (`ifKGrp`) appears to stomp prior groups and B's mechanism is unclear. [VERIFIED: FINDINGS 2026-08-09]
+
+### A2. The 45° down-look belongs to the UPPER camera, not Cinema (rig correction 2026-08-14)
+
+Owner: "upper is 45 degrees down, cinema and mid are pointed directly forward … how they were loaded on this cruise and NA165." The registry had `wca_cinema` at pitch 45 and the upper (`wca_starboard`) with no mount at all. Corrected: `wca_cinema` pitch 0; new family `wca_upper` (`^u\d+c`, the `U###C` stills) → starboard camera at pitch 45; `wca_port` (mid) 0 as before; lever arms untouched (validated figures). **Blast radius:** the NA156 H2023/H2024 WCA line was solved with cinema at 45 (the 43.11° Cinema median in §5 is that solve); the owner vouched for NA168 and NA165 only — reprocess NA156 under a cruise-scoped family rather than moving the row back. §10's mount table is corrected in place. [VERIFIED: FINDINGS 2026-08-14]

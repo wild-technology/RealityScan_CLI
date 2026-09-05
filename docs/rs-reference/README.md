@@ -17,7 +17,7 @@ It fuses two sources that do not otherwise exist in one place:
 **Where the two disagree, both are recorded.** The documented claim, the observed behavior, and
 how the observation was made are all stated, and the entry is tagged `[CONTRADICTED]`. Those
 entries are the highest-value content in this set; none of them has been smoothed over. The tag
-appears **168** times across the thirteen documents (occurrences, including cross-references to a
+appears **173** times across the thirteen documents (occurrences, including cross-references to a
 contradiction documented in full elsewhere).
 
 Every document is self-contained enough to answer a question without loading its siblings, and
@@ -47,11 +47,11 @@ than produced by a run.
 `[INFERRED]` values is `[INFERRED]`. A conclusion that chains one `[VERIFIED]` measurement to one
 `[INFERRED]` step is `[INFERRED]`. Do not upgrade a tag because the claim sounds right.
 
-Tag census across the thirteen documents (occurrences, not unique facts):
+Tag census across the thirteen documents (occurrences, not unique facts; recounted 2026-09-05 after the FINDINGS reconciliation):
 
 | `[OFFICIAL]` | `[VERIFIED]` | `[CONTRADICTED]` | `[UNDOCUMENTED]` | `[INFERRED]` | `[OPEN]` | `[SUPERSEDED]` |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1214 | 1616 | 172 | 253 | 250 | 339 | 43 |
+| 1214 | 1663 | 173 | 253 | 250 | 343 | 45 |
 
 ---
 
@@ -145,6 +145,11 @@ accordingly.
 - Section references inside a document are `§N.M`; references to another document give its exact
   filename. Failure entries are cited as `F-nn` (document 12). Open questions are cited as
   `O-nn` or `§N-Qn` in the document that owns them.
+- **Addenda.** Facts established after the 2026-08-04 write-up are appended per document under
+  `## Addenda — reconciled from FINDINGS.md, <date>` as `A1`, `A2`, …, each citing its FINDINGS
+  date; a claim the new fact supersedes is corrected in place with a `[VERIFIED: FINDINGS <date>]`
+  or `[SUPERSEDED]` note, never silently rewritten. Numbered failure modes added later start at
+  `F-101`.
 
 ## Sources
 
@@ -168,7 +173,7 @@ accordingly.
 | Product | RealityScan 2.2 (Epic Games) |
 | Build measured | `RealityScan.exe` FileVersion `2.2.0.119430.RS`, ProductVersion `2.2.0.119430`, installed at `C:\Program Files\Epic Games\RealityScan_2.2\` |
 | Help build | The offline Help shipped with that install — `Help\en-US\`, 408 files, newest file dated 2026-07-21. 153 topics were converted to plain text and read for this reference |
-| Empirical record | This repository (`RealityScan_CLI`, continuation of `wild-technology/RC_Main`) at commit **`8d3ac43`** (2026-07-29) |
+| Empirical record | This repository (`RealityScan_CLI`, continuation of `wild-technology/RC_Main`) at commit **`8d3ac43`** (2026-07-29), **reconciled with `FINDINGS.md` through 2026-09-03 on 2026-09-05** (per-file "Addenda" sections; in-place corrections where a claim was superseded) |
 | Platform | Windows 11, native (no WSL), multi-GPU CUDA, cmd/`.bat`/PowerShell substrate |
 | Written | 2026-08-04 |
 

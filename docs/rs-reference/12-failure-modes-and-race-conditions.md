@@ -136,6 +136,9 @@ hex is what appears in `RealityScan.log`.
 | `2147942512` | `0x80070070` | `ERROR_DISK_FULL` — **RealityScan's cache disk**, not necessarily the project disk | The hull-model retry died with this after 143.5 min; the instance log later said `Processing failed: Out of disk space..` | [VERIFIED: FINDINGS 2026-07-26] |
 | `2181038176` | `0x82000060` | **Unknown / invalid command.** Emitted by `-selectAllComponents`, which does not exist in 2.2 | Command taken from an older repo script; Help lists only `selectComponent` / `selectMaximalComponent` / `selectComponentWithLeastReprojectionError` | [VERIFIED: NA167 #13 / B2] — decimal is the arithmetic conversion of the logged hex, not itself observed in a marker |
 | `2181038103` | `0x82000017` | Warning-class load complaint raised by a stale `<name>.rsproj.new` beside the project. The load still completes | An interrupted GUI save left the temp file; the next headless `-load` warned and the error channel then aborted the workflow | [VERIFIED: FINDINGS 2026-07-29] — decimal is the arithmetic conversion of the logged hex |
+| `2197815299` | `0x83000003` | `-unwrap` failed under `unwrapStyle=AdaptiveTexelSize` on one particular mesh; returns in ~3 s with `rev` unchanged, and the model exports untextured afterwards | F-103; `MaxTexturesCount` 4 × 4096 unwrapped the same mesh | [VERIFIED: FINDINGS 2026-09-03] |
+| `2181038111` | `0x8200001F` | `-reprojectTexture` failed because the preceding unwrap had not produced UVs | F-103 | [VERIFIED: FINDINGS 2026-09-03] |
+| `2147500037` | `0x80004005` | `E_FAIL`: `-exportReport` with a minimal custom template (0-byte output); `-calculateTexture` with no model selected after `-load` | live gate B9 2026-08-07; FINDINGS 2026-09-03 | [VERIFIED] |
 | `3` | — | Crash; minidump `RealityScanCrash-YYYYMMDD-HHMMSS.dmp` in the `-silent` directory | The *code* is Epic's; what this repo observed is the minidump plus a dead instance (F-42). **The value `3` has never been read off a process here**, because the crashing process is the delegated headless instance, not the `.bat` that the orchestrator launches — that `.bat` sees `ERROR: Failed to delegate command` and exits `1` | [OFFICIAL: tutorials/commandline_5] for the code; [VERIFIED: FINDINGS 2026-07-26] for the dump + dead-instance signature only |
 
 Codes that appear only in `RealityScan.log` (channel C), with no distinct marker value:
@@ -2177,3 +2180,29 @@ Every `[OPEN]` in this document, with the cheapest probe that would settle it.
 | O-25 | Do `-pauseInstance` / `-unpauseInstance` / `-abortInstance` leave a loadable scene, and do they emit a marker line? | F-37 | Abort a small align, read `errors_<inst>.txt` / `results_<inst>.log`, then reload the project. Minutes. Documented but never exercised here. |
 | O-26 | Is `startRealityScan.bat`'s reuse-branch `-deleteAutosave` an invalid command? | F-79 | The Help defines `deleteAutosave` only as an optional parameter of `load`. Take the reuse branch once with a live instance and grep `errors_<inst>.txt` for `2181038176` (`0x82000060`). Seconds. |
 | O-27 | Does an instance reused by `startRealityScan.bat` really run without the error hook? | F-30 | The reuse branch `goto :eof`s before the `-set` quartet. Boot an instance by hand with no hook, take the reuse branch, run a known-bad operation and check whether `errors_<inst>.txt` is written at all. Minutes; would confirm a silent-total-blindness path. |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+Numbered from F-101 so the 2026-08-04 numbering stays stable.
+
+### F-101 — The errors file is sticky: one tolerated failure fails every later `:run`, and blames the wrong command
+**Symptom:** a workflow aborts on a step that did not fail, or an optional step's failure kills the whole run. **Cause:** `errors_<instance>.txt` persists for the session and records the last error from ANY source; `:run` tests only "non-empty". **Detected by:** the error text names a process id and code that belong to an earlier step. **Mitigation:** an optional step is a SKIP or an `expected_<reason>_<instance>.txt` MOVE (`try_delete_model` pattern), never a caught error; read the FIRST line of the file, not the last. `11` A1. [VERIFIED: FINDINGS 2026-09-02]
+
+### F-102 — `-selectModel` on a missing name is a silent no-op, so a blind `-deleteSelectedModel` deletes the wrong model
+**Symptom:** a working or high-poly model vanishes; every command reported success. **Cause:** inside a populated component a bogus name leaves the previous selection live with `lastError:0`. **Detected by:** re-reading the selected model's name from `-exportReport SelectedModel.html`. **Mitigation:** never issue a destructive command after an unverified select; treat an absent name as a safe skip. `ModelToFinal.bat` still carries the pattern (owner's call). `02` A1. [VERIFIED: FINDINGS 2026-09-03]
+
+### F-103 — `AdaptiveTexelSize` unwrap fails silently on a particular mesh and an untextured model still exports
+**Symptom:** OBJ exported "OK", passes a geometry census, has no texture (`.mtl` without `map_Kd`). **Cause:** `-unwrap` returned `0x83000003` in 3 s with `rev` unchanged; `-reprojectTexture` then `0x8200001F`; export does not care. **Detected by:** the model report shows no unwrapping style / `Textured False`. **Mitigation:** census `Textured` and texture count; fall back to `MaxTexturesCount` 4 × 4096 (which unwrapped the same mesh). `10` A5. [VERIFIED: FINDINGS 2026-09-03] [OPEN: why]
+
+### F-104 — Delegated component deletion does not persist through `-save`
+**Symptom:** a deleted component is back after reload; exit 0, empty errors file. **Cause:** deletion executes in memory and is discarded by save+reload, on GUI and headless instances alike. **Detected by:** post-save reload census byte-identical to baseline. **Mitigation:** exclude members at the driver level; GUI delete for the object. `08` A1. [VERIFIED: FINDINGS 2026-08-12]
+
+### F-105 — The `.rsInfo` CRS label is arbitrary while the geometry is ECEF
+**Symptom:** a mesh placed by its sidecar's `globalCoordinateSystem` lands ~16,000 km away. **Cause:** `exportCoordinateSystemType=3` writes geocentric geometry with identity transform; the label is the project's accumulated CRS list's first entry. **Detected by:** vertex magnitudes are ECEF (~6.07e6); area-of-use / nav-envelope validation fails. **Mitigation:** pin project + output CRS before import (`06` §3.2); derive the frame from geometry (`cesium_placement`). `10` A1. [VERIFIED: FINDINGS 2026-09-01/02]
+
+### F-106 — `-selectModel` without a selected component reads as "model missing"
+**Symptom:** `0x80070057` on `-selectModel` although the model exists; hours lost re-modelling. **Cause:** `-selectModel` resolves names only within the active component; `-exportModel` does not need one, which hides the omission for OBJ/FBX. **Mitigation:** `-selectComponent` before any `-selectModel`. `02` A3. [VERIFIED: FINDINGS 2026-09-02]
+
+Additional result codes seen since the code tables were written: `0x83000003` (unwrap failed, adaptive style, F-103), `0x8200001F` (`-reprojectTexture` failed after a failed unwrap, F-103), `-2147467259` / `0x80004005` E_FAIL (`-exportReport` with a minimal custom template → 0-byte file; also `-calculateTexture` with no model selected after `-load`, live gate B9 2026-08-07). [VERIFIED: FINDINGS 2026-09-03; HANDOFF 2026-08-07]

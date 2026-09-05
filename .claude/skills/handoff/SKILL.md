@@ -23,7 +23,10 @@ with ESTABLISHED / RESOLVED / OPEN (+ what would settle it).>
 
 Refuted hypotheses are never deleted: prefix the old entry
 `SUPERSEDED (date, see <new entry>)`. New owner decisions go to
-`docs/DECISIONS.md` as a row.
+`docs/DECISIONS.md` as a row. A finding that states RealityScan BEHAVIOUR
+also goes into the matching `docs/rs-reference/` file, as the next `A<n>`
+under its `## Addenda` section, citing the FINDINGS date (decision D14);
+campaign-specific and harness-internal facts stay in FINDINGS only.
 
 ## 2. HANDOFF.md - the new top section
 

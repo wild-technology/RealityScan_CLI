@@ -7,7 +7,7 @@ prompts fail fast headless, the planner is `modules/run_plan.py`, the TUI is
 archived FUNCTIONAL, `rs.py` is the one command surface, `modules/preflight.py`
 asks for every missing answer before a run, probes/campaign drivers/session
 docs are archived, CLAUDE.md is routing-only. Suite on the macOS box that did
-the work: **756 passed, 22 failed (platform-bound, listed in
+the work: **784 passed, 22 failed (platform-bound, listed in
 testing/conftest.py), 4 skipped**; Windows expectation unchanged: fully green
 (NOT run here — first thing to do on the Windows box). Nothing running. No
 RealityScan workflow content changed; no science argument changed.
@@ -38,8 +38,27 @@ RealityScan workflow content changed; no science argument changed.
   `docs/history/README.md`.
 - Docs: CLAUDE.md 128 lines (hard rule 10 added: the workflows are the
   product), README, ARCHITECTURE, AGENT_OPERATIONS compacted, `docs/DECISIONS.md`
-  (D1–D11), skills rewritten around `rs.py`, rules/agents/hook updated,
+  (D1–D14), skills rewritten around `rs.py`, rules/agents/hook updated,
   `.claude/settings.json` allow-list for `rs.py`/`modules.run_plan`/`preflight`.
+- Second pass (same day): preflight also checks every module the stages
+  import, every workflow script (present + CRLF), every Metadata preset
+  (present, well-formed, format GUIDs defined, frame templates, no `app*`
+  key, `.rsInfo` on) and `python` on PATH for the hooks. Three hooks added:
+  `route_driving_prompts.py` (UserPromptSubmit: injects the /charter →
+  /drive-run protocol on run phrasing), `guard_schtasks.py` (PreToolUse:
+  `schtasks /Create` only for a launcher `rs launch` wrote), `pre_compact.py`
+  + SessionStart on `compact` (re-orientation and an unflushed-facts warning
+  after compaction). Agents: `run-monitor` on haiku, `rs-reference` on sonnet.
+  `rs launch` prints the `/loop 30m` monitor line; `RUN_STATE.json` carries
+  `poll_interval_min`. `docs/OPERATOR_SETUP.md` (per-box checklist).
+- FINDINGS ↔ rs-reference RECONCILED: every RealityScan-behaviour entry
+  through 2026-09-03 is in the manual (per-file `## Addenda`, 13 files);
+  in-place corrections: 06 §3.2 CRS scopes RESOLVED, 09/10 export CRS type 3
+  = ECEF VERIFIED, 10 §9.2 texture registry (8K, not 16K; live 16K
+  fallthrough), 11 §10 recipe order (settings → CRS → flight log), 13 §10
+  rig table (cinema 0°, upper 45°), 12 result codes + F-101…F-106. FINDINGS
+  header states the organisation and the reconciliation rule; the 08-08
+  "GUID is decorative" probe is marked SUPERSEDED by 08-16.
 
 ### Running
 
@@ -59,7 +78,13 @@ Nothing.
    per-stage `<stage>_report.json` for extract/georeference/preprocess/export.
 5. `test_rig_mounts.py` leaks `logging.disable(CRITICAL)`; trivial fix.
 6. `rs launch` has never been exercised on Windows end to end (the launcher
-   pair is unit-tested for content and CRLF only).
+   pair is unit-tested for content and CRLF only); nor has the `/loop 30m`
+   monitor been run against a live task.
+7. **D12/D13** — `ModelToFinal.bat`'s blind `-selectModel`+`-deleteSelectedModel`
+   pattern and the 16K unwrap fallthrough for non-`4x8k` presets are owner
+   calls; both are documented (rs-reference 12 F-102, 10 A4), neither changed.
+8. The new hooks arm only in a NEW Claude Code session; the UserPromptSubmit
+   routing hook's phrasing list will need tuning on real prompts.
 
 ### Artifact locations
 

@@ -1014,12 +1014,22 @@ coordinate systems and, in general, it is not possible to convert points with ze
 
 **Order matters for imports.** Both the trajectory and the GCP Help pages open with the same
 instruction: *first* set the project coordinate system to the one the incoming data is in,
-*then* import. [OFFICIAL: tools/flightlogimport, tools/gcpimport] This repo never calls
-`-setProjectCoordinateSystem` — it relies entirely on `CoordinateSystemFlightLog` in the
-params XML, and the resulting components are correctly georeferenced in the GUI. So the
-project CRS is evidently not required for a trajectory import to place cameras correctly.
-[VERIFIED-as-practice: every production run since 2026-07-21]
-[OPEN] whether the unset project CRS degrades reported accuracies or the units of the
+*then* import. [OFFICIAL: tools/flightlogimport, tools/gcpimport] Until 2026-09-02 this repo never called
+`-setProjectCoordinateSystem` — it relied entirely on `CoordinateSystemFlightLog` in the
+params XML, and the resulting components were correctly georeferenced in the GUI: the
+per-object scope is enough to PLACE cameras. [VERIFIED-as-practice: every production run
+2026-07-21 … 2026-09-01]
+**What the unset project CRS does break — RESOLVED 2026-09-02.** A project ACCUMULATES a list
+of coordinate systems across cruises (NA165/H2060's master carried 57S from NA173 and an older
+55N beside its own 2S); the list order is not stable; `projectCoordinates` selected a leftover
+(57S) in both the align and the master project; and the export wrote the list's FIRST entry
+(55N) into the `.rsInfo` `globalCoordinateSystem` while the geometry itself was fine (ECEF, see
+`09` A1). The label was ARBITRARY, which looks authoritative. Fix in force: the align module
+derives `RS_PROJECT_CRS=epsg:<code>` from the flight log's zone tag and `AlignZone.bat` pins BOTH
+scopes with `-setProjectCoordinateSystem` / `-setOutputCoordinateSystem` BEFORE
+`-importFlightLog`; `ExportDeliverables.bat` re-asserts the output scope on the project it
+loads. [VERIFIED: FINDINGS 2026-09-02]
+[OPEN] whether the unset project CRS also degrades reported accuracies or the units of the
 `sfmCameraPriorAccuracy*` keys; cheapest probe: `-exportReport` an
 `$ExportProjectInfo`/`$(coordSystemName)`/`$(units)` template before and after
 `-setProjectCoordinateSystem epsg:32604` on the smoke fixture.
@@ -2209,3 +2219,17 @@ Each item states the question and the cheapest probe that answers it.
     run here, and ground-plane orientation is on the blindness list — the CLI cannot read it
     back. Probe: run each on smoke and check for an error marker; verify the effect via the
     `anchorYaw/anchorPitch/anchorRoll` report variables. (§5.5)
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Flight-log row matching and re-import semantics (probes P3/P4, 6-image fixture)
+
+- **Rows match by EXACT PATH when the Image column holds a path, by basename when it is bare.** A full-path log pointing at same-basename copies in a different folder FAILED the import loudly, per row; the same log with the scene's true paths imported; a bare-basename log imported. There is no silent basename fallback for path rows — the semantics the pool zone layout relies on. [VERIFIED: FINDINGS 2026-08-08]
+- **Re-importing a flight log onto an already-aligned scene, then `-update`, re-places every camera onto the new priors without re-aligning** (rigid update; intra-component geometry untouched). Importing the log at each workflow step genuinely re-pins georeferencing. [VERIFIED: FINDINGS 2026-08-08]
+- Import order: the flight log is imported AFTER the `sfm*` settings, because `sfmEnableCameraPrior`, `sfmCameraPriorWeight` and `sfmCameraPriorAccuracy*` govern how the incoming priors are weighted. `AlignZone.bat` was reordered accordingly. [VERIFIED-as-decision: FINDINGS 2026-08-14]
+
+### A2. Two UTM notations are live, and they disagree on one letter
+
+`epsg_for_utm_zone(2, 'S')` returns **32602 (north)**: MGRS latitude band `S` is NORTHERN, while the hemisphere notation ROVDataConcat writes ("2S") means SOUTH (EPSG:32702). Both notations reach this pipeline; the band-letter parser owns the flight-log filename tag, the hemisphere letter owns the nav tables. Pinned by test. [VERIFIED: FINDINGS 2026-09-02]

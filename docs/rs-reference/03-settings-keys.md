@@ -2785,3 +2785,11 @@ by value.
 | 36 | Do the `ifu*` import-accuracy keys (`ifuPosX/Y/Z`, `ifuRotY/P/R`, `ifuRotEnable`) actually carry the Import Trajectory accuracy block, and do they override or compose with the global `sfmCameraPriorAccuracy*` keys? Both families are currently unset in production (§8.5, §13.3) | Set the Import Trajectory accuracy fields in the GUI, save the params, and diff against the current `FlightLogParams.xml` — one minute, needs the GUI |
 | 37 | How did `ifKmode` get into `appConfig` when the string is not in the executable — params-XML import, GUI dialog, or a runtime-composed name? Determines whether the storage layer accepts *arbitrary* keys | Re-read `appConfig`, `-set "zzTestKeyNotReal=1"` on a live instance, re-read. If it appears, the storage layer accepts anything and no read-back is ever evidence of consumption |
 | 38 | **Does ordinal `N` really mean the `N`-th row of a string enum?** Proven only for `appProcessAction`. Epic's `unwrapStyle=1` example is weak counter-evidence (it co-occurs with `unwrapMaximalTexCount=1`, a key relevant only to `MaxTexturesCount`) | `-set "unwrapStyle=1"`, export the Unwrap panel from the GUI, read whether it says `FixedTexelSize` or `MaxTexturesCount`. Until then use the **name** form |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. The settings contract: a params XML is authoritative for every key it names
+
+RealityScan serialises part of its Alignment Settings dialog under obfuscated numeric ids — `s235l`, `s236l`, `s237l`, `s251l`…`s254l` — instead of `sfm*` names. An applier filtering on `sfm`/`lis` prefixes skipped those seven silently (28 of 35 entries applied) while promising "never from instance defaults". Owner contract (2026-08-15): **every key the XML names is applied; keys it does not name are UNDEFINED and inherit the instance.** `app*` keys fail closed (they persist into the owner's GUI session). Two `.bat` traps met while implementing it: never gate on token 1 of an `<entry` line (cmd reads `<` as a redirection — 35 settings lost), and `echo` of text containing `<` inside a `.bat` redirects the same way. [VERIFIED: FINDINGS 2026-08-15]

@@ -1,8 +1,25 @@
 # FINDINGS — consolidated running log
 
-One entry per established fact, WITH how it was discovered. Append new
-findings at the bottom of the relevant section with a date. Refuted
-hypotheses stay, marked SUPERSEDED.
+One entry per established fact, WITH how it was discovered. Refuted
+hypotheses stay, marked SUPERSEDED. This is the RAW log: grep it, never read
+it through (`grep -n '^## ' FINDINGS.md` lists every entry).
+
+HOW THIS FILE IS ORGANISED (2026-09-05):
+- New entries are dated sections appended at the END:
+  `## [TAG] YYYY-MM-DD - <claim in one line>`, tags `[NA165]`, `[NA168]`,
+  `[ON2026]`, `[CESIUM]`, `[ORIENTATION]`, `[HARNESS]`, `[RECON]`, ...
+- The topical sections in the middle ("RealityScan 2.2 CLI behavior",
+  "Merge & component growth", ...) are the July 2026 consolidation and are
+  frozen; the 2026-08 entries near the top were prepended under the older
+  convention. Nothing is reordered - line citations in other documents
+  point here.
+- RECONCILED WITH `docs/rs-reference/` ON 2026-09-05: every RealityScan
+  BEHAVIOUR established here up to 2026-09-03 is distilled into the manual
+  (per-file "Addenda" sections, plus in-place corrections of superseded
+  claims). Campaign-specific facts (which dive, which clock, which zone)
+  and harness-internal findings stay here only. When a new entry states
+  RealityScan behaviour, add it to the matching rs-reference file in the
+  same session.
 
 CONSOLIDATION NOTE (2026-07-24, extended 2026-08-07): this file merges
 THREE research lines:
@@ -203,6 +220,13 @@ PPU/PPV > focal (solved-free focals already sit near 24.17).
   registry-independently. Shipping consequence: no flightlogs.xml
   patching needed on customer installs; the REST of the params (CRS,
   YPR order, separator, ignore-first-line) still matters.
+  SUPERSEDED (2026-08-16, see "[NA168] 2026-08-16 - The flight-log FORMAT
+  must be installed, or columns vanish silently"): the POSITION columns
+  parse under any GUID because the first ten columns coincide with stock
+  {97F08A22}; the trailing accuracy columns are DROPPED when the GUID is
+  not installed. The probe only checked that positions landed, so it could
+  not see the loss. The format must be installed; the guard is
+  modules/flightlog_format.py.
 - **P4 - re-importing a flight log onto an ALREADY-ALIGNED scene works
   and -update re-places the components to the NEW priors without
   re-aligning**: export-before sat at the first log's positions

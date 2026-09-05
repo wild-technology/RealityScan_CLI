@@ -1999,3 +1999,13 @@ Every `[OPEN]` in this document, with the cheapest probe that closes it. Ordered
 | 26 | **Is `Approximate` or `Unknown` the right lens prior for the two 14 mm fisheyes?** Epic explicitly recommends **Unknown** "for images with significant lens distortion, wide-angle lenses" (§15), while this rig ships `Approximate` on all four cameras. The `Approximate`-works evidence (§15 SUPERSEDED) is from the *rectilinear* Cinema camera only. | A/B on the 665-image bow fixture: `Camera:LensDistortionPrior` = `Approximate` vs `Unknown` on Port/Starboard only, same box, judged on registered count and the solved k1 spread. ~30 min. |
 | 27 | **Is `lisPreferImagesAsFeatureSource` really default `true`?** The Help documents `true` in two places; this repo's GUI-exported `AlignmentParams.xml` carries `false` (§9). Irrelevant while there is no LiDAR, but it means the exported preset may not be a faithful default snapshot — which would put every other value in that file in question. | Export the alignment settings from a clean GUI profile and diff the whole file against `RS_CLI/Metadata/AlignmentParams.xml`. ~5 min, and it audits far more than this one key. |
 | 28 | **Is there a `-set` key for `Maximal depth-map pixel count`?** It is a real reconstruction-settings field with no row in `tutorials/setkeyvaluetable` (§20). | Same probe as #8/#21: set it in the GUI, export the settings, diff for a new key. |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Selection and grouping from the delegated CLI
+
+- `-selectImage <regexp> union` is hazardous: after it, the next delegated command errored `0x8000FFFF`; the mode-less `-selectImage <regexp>` and the full-path+union form (`GrowZone.bat`) behaved. [VERIFIED: FINDINGS 2026-08-08]
+- Whether `-setPriorCalibrationGroup` / `-setPriorLensGroup` take effect from the delegated CLI is an **open contradiction** (measured non-functional 2026-08-08; used unmeasured on two campaigns) — `02-command-reference.md` A5, `docs/DECISIONS.md` D1. Grouping is the only per-camera calibration control the CLI offers; `sfmDistortionModel` is global and no command sets a per-camera distortion model (`02` §, FINDINGS 2026-08-14).
+- `-exportXMP` is silently gated by `-setMinComponentSize`: a 6-image scene that fragmented 3+3 exported nothing until the minimum was lowered to 2 — the same silent-nothing class as the selection-export trap. [VERIFIED: FINDINGS 2026-08-08]

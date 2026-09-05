@@ -2991,3 +2991,27 @@ rest are headless and scriptable.
 | Q31 | The deterministic standalone-alignment failure `MSS_STR001` (generic `0x8000FFFF`) on one 1,476-image zone with fully exonerated data has **never been reported to Epic**. Forensic log at `testing/results/z14_forensic_rslog.txt`. |
 | Q32 | `-setMinComponentSize` is deprecated with **no documented replacement** while remaining required. What replaces it in the next release is unknown; nothing in the 2.2 Help says. |
 | Q33 | Whether "no re-optimization" still describes `-mergeComponents` in the current build. The staff claim is from 2021, pre-rename and outside the trust window; the observed 56-minute merge reconstruction argues against it. |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. `-selectModel` on a name that does not exist is a SILENT NO-OP
+
+Inside a component that has models, `-selectModel <bogus>` leaves the previous selection live and reports `lastError:0`, no marker, nothing. So `-selectModel X` followed by `-deleteSelectedModel` deletes **whatever was selected before** when `X` is absent. Proven directly on the H2060 master (`-selectModel zone_all_c15_THIS_DOES_NOT_EXIST` left `..._Simplified_Textured` selected). `ModelToFinal.bat`'s intermediate cleanup uses exactly this pair seven times; it is safe only while every name exists (not changed — owner's call). **Rule: never issue a destructive command after an unverified select**; prove the selection with `-exportReport` (A2) first. This supersedes the 2026-08-07 reading that a failed `-selectModel` always surfaces `0x80070057`: that code appears when *no* model can be resolved or there is no component context (A3), not for a bogus name inside a populated component. [VERIFIED: FINDINGS 2026-09-03]
+
+### A2. `-exportReport` is headless, non-blocking, and the model-measurement primitive
+
+`-exportReport <out.html> "<install>\Reports\SelectedModel.html"` returned in 3.87 s against a 119 GB project, wrote 14,864 bytes, left `lastError:0`; it does not block the way `-exportRegistration` does. The shipped template renders `$(modelTriangleCount)`, `$(modelVertexCount)`, `$(modelTextureCount)`, `$(modelTexelSize)` for the current selection — the only way to measure a mesh and to prove a select landed. A minimal hand-written template produced a 0-byte file and `lastError:-2147467259` (E_FAIL); use the shipped templates. [VERIFIED: FINDINGS 2026-09-03] [OPEN: what a custom template requires]
+
+### A3. `-selectModel` resolves names only inside the ACTIVE component
+
+`-exportModel` resolves a model by name on its own, `-selectModel` does not: without a preceding `-selectComponent` it fails with `0x80070057` (`err:5601` shape) even though the model exists — read for hours as "the model is missing". `ExportDeliverables.bat` gained `-selectComponent` at the head of each component; `GenerateModel.bat` always had it. [VERIFIED: FINDINGS 2026-09-02]
+
+### A4. Delegated component DELETION does not persist through `-save`
+
+`-selectComponent <name>` + `-deleteSelectedComponent`, and the name-free `-selectMaximalComponent` → delete → re-import → `-save`, exit 0 with an empty errors file and change nothing on disk: three post-delete censuses were byte-identical to baseline, on the GUI-visible instance **and** on a headless twin holding a copy (with real memory movement, so the operations executed in memory). Deletion executes in memory and is discarded by save+reload. Production rule: exclude a component's members at the driver level; leave the object for an interactive GUI delete. Fourth member of the silently-broken-delegated-command class. [VERIFIED: FINDINGS 2026-08-12]
+
+### A5. Calibration-group commands from the delegated CLI — open contradiction (decision D1)
+
+`-setPriorCalibrationGroup` / `-setPriorLensGroup` were measured **silently non-functional** on a 6-image fixture (2026-08-08): every delegated call returned success, and after `-align` every exported camera read `CalibrationGroup="-1"` with six distinct solved focals, under both the full-path+union and the regex `-selectImage` forms. The NA168 H2080 and NA165 H2063 campaigns later ran with these commands in `AlignZone.bat` (`modules/prior_groups.py`) **without measuring the effect**. Both claims stand until the solved-focal-equality oracle is run on the smoke fixture; `docs/DECISIONS.md` D1. Related: `-selectImage <regexp> union` left the selection in a state where the next command errored `0x8000FFFF`; the mode-less regexp form and path+union are fine. `-addImageWithCalibration <image> <xmp>` **does** work end to end (groups echoed, solved focals identical within an eye, approximate prior honoured, not fixed). [CONTRADICTED: FINDINGS 2026-08-08 vs [RECON] 2026-09-03]

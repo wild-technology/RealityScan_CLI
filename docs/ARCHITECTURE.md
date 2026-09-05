@@ -23,9 +23,15 @@ subsystem; `CLAUDE.md` carries the invariants and routes here.
   (derived from their own `Parameter` declarations via
   `run_plan.build_questions`), every path answer exists, every imagery
   filename prefix is a known camera family (unknown = a question, never an
-  assumed mount), flight-log tag vs `science.frame`, machine checks (Windows),
-  free disk vs budget, and the plan builds. JSON `{missing[], blocking[],
-  warnings[], checked[]}`; exit 0 ready / 1 not ready / 2 invalid.
+  assumed mount), flight-log tag vs `science.frame`, every Python module the
+  stages import (a missing wheel is named), every workflow script present and
+  CRLF, every `RS_CLI/Metadata` preset present and well-formed (format GUIDs
+  defined in the repo's `flightlogs.xml`/`calibration.xml`, frame templates
+  declaring the frame their name promises, no `app*` key in the alignment
+  preset, export presets writing the `.rsInfo`), `python` on PATH importing the
+  repo (the hooks call it), machine checks (Windows), free disk vs budget, and
+  the plan builds. JSON `{missing[], blocking[], warnings[], checked[]}`; exit
+  0 ready / 1 not ready / 2 invalid.
 - `modules/run_plan.py` — THE planner (ex `wildscan/session.py` + `plan.py`):
   `Session`, `build_commands` (ONE `main.py` invocation for the enabled chain
   stages — the in-process hand-off between Batch Directory and Alignment IS

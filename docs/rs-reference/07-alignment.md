@@ -2102,3 +2102,11 @@ point here.
     declares `componentCameraCount` and then uses `$(componentCamerasCount)` in its own
     example.) *Probe:* a two-line custom template emitting both; free once question 1
     lands.
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Settings contract and import order
+
+Every key the params XML names is applied — including the obfuscated dialog ids `s235l`…`s254l` — and keys it does not name are undefined (`03` A1); `app*` keys fail closed. The flight log is imported AFTER the `sfm*` settings and after pinning the project/output CRS (`06` A1, `11` A2). The "Division registers ZERO on rectilinear imagery" A/B was RETRACTED as confounded (inherited sidecars, thumbnails); owner position: Division universal; no clean A/B exists. `sfmDistortionModel` is global and no CLI command sets a per-camera model. [VERIFIED: FINDINGS 2026-08-14/15]

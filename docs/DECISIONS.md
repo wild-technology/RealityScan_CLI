@@ -16,6 +16,9 @@ flips it. Numbering continues from `docs/history/AGENT_NATIVE_ROADMAP.md`.
 | D9 | Promote `stage_features` out of `testing/run_on2026_run2.py` into `modules/feature_merge.py` (the driver stays in `testing/` only because `test_feature_merge.py` imports it) | **OPEN** - low risk, not science | `testing/run_on2026_run2.py` |
 | D10 | Per-stage `<stage>_report.json` for extract/georeference/preprocess/export (roadmap Phase 2 step 3) | **OPEN** - `RUN_STATE.json` records exit codes per stage meanwhile | `modules/verify.py` |
 | D11 | The three legacy Cesium assets still sit at the sea surface (`2017323`, `2335997`, `2336618`); ion cannot reposition after tiling | **OPEN** - owner decision to re-publish from source | `publish_cesium.py` |
+| D12 | `ModelToFinal.bat` drops simplify intermediates with `-selectModel <name>` + `-deleteSelectedModel`; a missing name is a silent no-op, so the delete lands on the working model (FINDINGS 2026-09-03, rs-reference 12 F-102) | **OPEN** - a production-script change; verify each select via `-exportReport` first, as `run_decimate.py` does | `ModelToFinal.bat` |
+| D13 | `ModelToFinal.bat` pairs an unwrap with the texture preset only for `4x8k`; every other preset falls through to `Unwrapping_Simplified.xml` (1 × 16K), breaching the 4096 export cap (FINDINGS 2026-09-03, rs-reference 10 A4) | **OPEN** - default path is safe; fix the fallthrough or retire the other presets | `ModelToFinal.bat` |
+| D14 | Reconciliation cadence: a FINDINGS entry stating RealityScan behaviour is added to the matching `docs/rs-reference/` file in the same session (Addenda section) | SETTLED 2026-09-05 (this pass reconciled everything through 2026-09-03) | `.claude/skills/handoff` |
 
 ## Recording a decision
 
