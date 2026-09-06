@@ -894,27 +894,33 @@ of the optimal texel size**, texel size [OFFICIAL: tools/texturing_part2].
 
 ### 9.2 Production presets and the texture budget
 
-**Texture budget in force: max 4 textures at 8192×8192 in BOTH texture
-passes** (`GenerateModel.bat` `[6/8]` `Texturing_MaxTextureCount4_8k.xml`, `[8/8]`
-`Unwrapping_Simplified_4x8k.xml` — 8K cap, owner 2026-07-31) [VERIFIED-by-inspection:
-`GenerateModel.bat` 2026-09-05; FINDINGS 2026-09-03]. Owner cap for EXPORTED deliverables:
-nothing above 4096 (`run_decimate.py`, `Texturing_AdaptiveTexel_4k.xml`). The rows below
-attributing the 16k presets to `GenerateModel.bat` were stale (2026-08-04) and are corrected.
+**Texture policy in force (owner 2026-09-05, decision D13): `unwrapStyle=AdaptiveTexelSize`
+at a 4096 page cap in BOTH texture passes of every workflow** — `GenerateModel.bat` `[6/8]`
+`Texturing_AdaptiveTexel_4k.xml` and `[8/8]` `Unwrapping_AdaptiveTexel_4k.xml`;
+`ModelToFinal.bat` preset `adaptive` (default) and the same unwrap for the final model whatever
+preset was chosen; `run_decimate.py` unchanged. Never 16K and never a forced 4 × 8K page budget:
+the nine `MaxTexturesCount` presets (8K and 16K) are retired to `archive/metadata_retired/`, the
+two `FixedTexelSize` presets are capped at 4096, and `modules/preflight.py` BLOCKS any live
+preset above 4096 (`testing/test_texture_policy.py`). Because `AdaptiveTexelSize` can reject a
+mesh outright (A5), the final unwrap in both workflows goes through a `:try_unwrap` subroutine
+that falls back to `Unwrapping_MaxCount4_4k.xml` (4 × 4096, still inside the cap). Deliverable
+textures are JPG in every export preset (§13.6).
+[VERIFIED-by-inspection: `GenerateModel.bat`, `ModelToFinal.bat`, `RS_CLI/Metadata/*.xml`,
+2026-09-05]. History: 2 × 16K / 1 × 16K (2026-07), 4 × 8K in both passes (owner 2026-07-31; the
+NA165/H2060 production bakes), adaptive 4K everywhere (owner 2026-09-05). The unresolved
+`unwrapMinTexelSize`/`unwrapMaxTexelSize` enum-vs-float question (§9.1, OPEN 27) applies to the
+adaptive presets; they have produced the verified 4096-page H2060 exports as written.
 
 | File | Style | Count | Max res | Gutter | LargeTriRemovalThr | Extra | Used by |
 |---|---|---|---|---|---|---|---|
-| `Texturing_MaxTextureCount4_16k.xml` | `MaxTexturesCount` | 4 | 16384 | 2 | 1000 | `unwrapFillTextures=0x1` | unreferenced since the 8K cap (was `[6/8]`) |
-| `Unwrapping_Simplified_4x16k.xml` | `MaxTexturesCount` | 4 | 16384 | 2 | 10 | `unwrapMinTexResolution=512`, `unwrapMethod=Geometric`, `unwrapFillTextures=0x0` | unreferenced since the 8K cap (was `[8/8]`) |
-| `Unwrapping_Simplified_4x8k.xml` | `MaxTexturesCount` | 4 | 8192 | 2 | 10 | as above | **`-unwrap` in `GenerateModel.bat` `[8/8]`** |
-| `Texturing_HighPolyTexture.xml` | `MaxTexturesCount` | 2 | 16384 | 2 | 1000 | — | superseded (was `[6/8]`) |
-| `Texturing_SimplifiedTexture.xml` | `MaxTexturesCount` | 2 | 16384 | 2 | 1000 | — | unused |
-| `Unwrapping_Simplified.xml` | `MaxTexturesCount` | 1 | 16384 | 2 | 10 | `Geometric`, min 512 | **LIVE by fallthrough**: `ModelToFinal.bat` pairs an unwrap with the texture preset only for `4x8k`; every other preset falls through to this 1 × 16K page (A4; not changed — owner's call) |
-| `Texturing_MaxTextureCount4_8k.xml` | `MaxTexturesCount` | 4 | 8192 | 2 | 1000 | — | **`-calculateTexture` in `GenerateModel.bat` `[6/8]`**; `ModelToFinal.bat` preset `4x8k` (default) |
-| `Texturing_MaxTextureCount1_8k.xml` / `1_16k` | `MaxTexturesCount` | 1 / 1 | 8192 / 16384 | 2 | 1000 | — | `ModelToFinal.bat` presets `8k` / `16k` (both fall through to the 1 × 16K unwrap) |
-| `Texturing_FixedTexelSize100perQuality.xml` | `FixedTexelSize` | — | 8192 | 10 | 400 | `unwrapFixedTexelSizeType=0` (optimal) | alternatives |
-| `Texturing_FixedTexelSize50perQuality.xml` | `FixedTexelSize` | — | 8192 | 10 | 400 | `unwrapFixedTexelSizeType=1` (2× optimal) | alternatives |
+| `Texturing_AdaptiveTexel_4k.xml` | `AdaptiveTexelSize` | as needed | 4096 | 2 | 1000 | `unwrapMinTexelSize=0`, `unwrapMaxTexelSize=4`, `unwrapFillTextures=0x1`, `Geometric`, min 512 | **`-calculateTexture` in `GenerateModel.bat` `[6/8]`**; `ModelToFinal.bat` `adaptive` (default); `run_decimate.py` |
+| `Unwrapping_AdaptiveTexel_4k.xml` | `AdaptiveTexelSize` | as needed | 4096 | 2 | 10 | same clamp, `unwrapFillTextures=0x0` | **`-unwrap` in `GenerateModel.bat` `[8/8]`** and `ModelToFinal.bat`'s final unwrap (both via `:try_unwrap`); `run_decimate.py` |
+| `Unwrapping_MaxCount4_4k.xml` | `MaxTexturesCount` | 4 | 4096 | 2 | 1000 | `Geometric`, min 512, `unwrapFillTextures=0x0` | the `:try_unwrap` fallback (and `run_decimate.py`'s) when adaptive does nothing (A5) |
+| `Texturing_FixedTexelSize100perQuality.xml` | `FixedTexelSize` | as needed | 4096 | 10 | 400 | `unwrapFixedTexelSizeType=0` (optimal) | `ModelToFinal.bat` preset `fixed100` |
+| `Texturing_FixedTexelSize50perQuality.xml` | `FixedTexelSize` | as needed | 4096 | 10 | 400 | `unwrapFixedTexelSizeType=1` (2× optimal) | `ModelToFinal.bat` preset `fixed50` |
+| `archive/metadata_retired/`: `Texturing_MaxTextureCount{1,4}_{8k,16k}.xml`, `Texturing_HighPolyTexture.xml`, `Texturing_SimplifiedTexture.xml`, `Unwrapping_Simplified{,_4x8k,_4x16k}.xml` | `MaxTexturesCount` | 1–4 | 8192 / 16384 | 2 | 1000 / 10 | — | **retired 2026-09-05**; nothing live references them (pinned by `testing/test_texture_policy.py`) |
 
-[VERIFIED-by-inspection: `RS_CLI/Metadata/*.xml`, 2026-08-04]
+[VERIFIED-by-inspection: `RS_CLI/Metadata/*.xml`, `archive/metadata_retired/*.xml`, 2026-09-05]
 
 **Terminology trap.** `GenerateModel.bat`'s comment calls
 `unwrapStyle=MaxTexturesCount` "the adaptive mode". Epic's `AdaptiveTexelSize`
@@ -1002,12 +1008,13 @@ Owner-specified, 2026-07-23; the literal step order and model names as shipped
       + -removeSelectedTriangles                             -> rename <tag>_Cleanup3
 [5/8] -closeHoles ; -cleanModel                              -> rename <tag>_Manifold
 [6/8] -simplify SimplifyNoise_Params.xml                     -> rename <tag>_HighPoly
-      -calculateTexture Texturing_MaxTextureCount4_16k.xml   -> rename <tag>_HighPoly_Textured
+      -calculateTexture Texturing_AdaptiveTexel_4k.xml      -> rename <tag>_HighPoly_Textured
       (if RS_PROJECTS_DIR+RS_PROJECT_LABEL: -save <dated copy>  <-- all intermediates live)
 [7/8] 4 x ( -simplify SimplifySmooth_80per_Params.xml -> <tag>_SimplifyPassNRaw
             -cleanModel                                -> <tag>_SimplifyPassN )
       last pass renames to <tag>_Simplified
-[8/8] -unwrap Unwrapping_Simplified_4x16k.xml
+[8/8] :try_unwrap  (-unwrap Unwrapping_AdaptiveTexel_4k.xml; on a reported error the errors
+                    file becomes evidence and -unwrap Unwrapping_MaxCount4_4k.xml runs through :run)
       -reprojectTexture <tag>_HighPoly_Textured <tag>_Simplified ReprojectionParams.xml
       -selectModel <tag>_Simplified -> rename <tag>_Simplified_Textured
 delete intermediates: Cleanup1, Cleanup2, Cleanup3, Manifold, HighPoly,
@@ -1284,11 +1291,11 @@ component, ~35–38 s each) [VERIFIED: FINDINGS 2026-07-29]:
 exports\<component>\obj\
     <component>.obj              4 parts
     <component>.mtl              per-part MTL
-    <component>_u1_v1_*.png      textures, u1_v1 tiling
+    <component>_u1_v1_*.jpg      textures, u1_v1 tiling (png until 2026-09-05, D13)
     <component>.obj.rsInfo
 exports\<component>\fbx\
     <component>.fbx              4 parts
-    <component>_*.png            textures
+    <component>_*.jpg            textures (png until 2026-09-05, D13)
 ```
 
 ### 13.5 Params key families (`Mvs*`)
@@ -1365,18 +1372,20 @@ file with `Texture maximal side` below 32768 silently downsamples
 
 | File | FormatVersion | ByParts | TileType | Tex format / pix | Colors | Scale | CRS type | Preset & notes |
 |---|---|---|---|---|---|---|---|---|
-| `ModelExportParamsOBJ_NiraParts.xml` | 0 | **1** | 0 (`u1_v1`) | `png` / `24bppBGR` | false | 1.0 | 3 | `Custom`, `NumberFormat=6`, `Texturing=true` |
-| `ModelExportParamsFBX_Parts.xml` | 13 | **1** | 0 | `png` / `24bppBGR` | false | 1.0 | 3 | `Custom`, `Materials=true`, `Texturing=-1` |
+| `ModelExportParamsOBJ_NiraParts.xml` | 0 | **1** | 0 (`u1_v1`) | `jpg` / `24bppBGR` | false | 1.0 | 3 | `Custom`, `NumberFormat=6`, `Texturing=true` |
+| `ModelExportParamsFBX_Parts.xml` | 13 | **1** | 0 | `jpg` / `24bppBGR` | false | 1.0 | 3 | `Custom`, `Materials=true`, `Texturing=-1` |
 | `ModelExportParamsPLY_DensePoints.xml` | 13 | 0 | 0 | — | **true** | 1.0 | 0 | `Custom`, `Texturing=0`, `Materials=false` |
 | `ModelExportParamsObj.xml` | 0 | 0 | 0 | `jpg` / `24bppBGR` (+ `_Normal_0` layer) | false | 100.0 | 0 | `Unreal`, `NumberFormat=5` |
 | `ModelExportParams.xml` | 13 | 0 | 0 | `jpg` / `24bppBGR` | false | 100.0 | 3 | `Maya + Arnold, Unreal` |
-| `ModelExportParamsFBX_U1V1.xml` | 13 | 0 | **0** | `png` / `32bppBGRA` | false | 100.0 | 0 | `Maya + Arnold, Unreal`, `Materials=false` |
-| `ModelExportParamsFBX_UV.xml` | 13 | 0 | **1** | `png` / `32bppBGRA` | false | 100.0 | 0 | same |
-| `ModelExportParamsFBX_UDIM.xml` | 13 | 0 | **2** | `png` / `32bppBGRA` | false | 100.0 | 0 | same |
-| `ModelExportParamsFBX_U1V1_material.xml` / `…UDIM_material.xml` | 13 | 0 | 0 / **2** | `png` / `32bppBGRA` + `_Normal_0` layer | false | 100.0 | 0 | same, `Materials=true` |
+| `ModelExportParamsFBX_U1V1.xml` | 13 | 0 | **0** | `jpg` / `24bppBGR` | false | 100.0 | 0 | `Maya + Arnold, Unreal`, `Materials=false` |
+| `ModelExportParamsFBX_UV.xml` | 13 | 0 | **1** | `jpg` / `24bppBGR` | false | 100.0 | 0 | same |
+| `ModelExportParamsFBX_UDIM.xml` | 13 | 0 | **2** | `jpg` / `24bppBGR` | false | 100.0 | 0 | same |
+| `ModelExportParamsFBX_U1V1_material.xml` / `…UDIM_material.xml` | 13 | 0 | 0 / **2** | `jpg` / `24bppBGR` + `_Normal_0` layer | false | 100.0 | 0 | same, `Materials=true` |
 | `ModelExportParamsGLB.xml` | 0 | 0 | *(absent)* | `jpeg` / `24bppBGR`, keys suffixed **`_no_alpha`** | `0` | 10.0 | 0 | **`[[Custom]]`**, `EmbeddTxrs=true`, **`MvsExportRotationX=-90.0`**, `IsGeoreferenced=1.0` |
 
-[VERIFIED-by-inspection: `RS_CLI/Metadata/ModelExportParams*.xml`, 2026-08-04]
+[VERIFIED-by-inspection: `RS_CLI/Metadata/ModelExportParams*.xml`, 2026-08-04; texture format
+re-verified 2026-09-05 — every preset now `jpg` / `24bppBGR` (D13; the FBX presets were
+`png` / `32bppBGRA`, OBJ_NiraParts and FBX_Parts `png` / `24bppBGR`)]
 
 Eleven files; only three have a production call site — `…OBJ_NiraParts.xml`,
 `…FBX_Parts.xml`, and `…PLY_DensePoints.xml` (whose call site is defective,
@@ -1761,7 +1770,7 @@ so a Nira upload of a large asset is another consumer of the cache disk that
 §12.4 is about.
 
 `ModelExportParamsOBJ_NiraParts.xml` is exactly this specification
-(`ByParts=1`, `Colors=false`, `NumberFormat=6`, `TexImgFormat=png`,
+(`ByParts=1`, `Colors=false`, `NumberFormat=6`, `TexImgFormat=jpg` — `png` until D13, 2026-09-05,
 `InfoFile=true`, scale 1.0). `publish_nira.py` builds an explicit typed JSON
 file list rather than relying on Nira's auto-detection (its docstring records
 that image auto-detection is unreliable) and pipes it to
@@ -2231,7 +2240,7 @@ RealityScan.exe -load "F:\na156_h2024_v2\aligned\zone_1.rsproj" ^
   -calculateHighModel ^
   -closeHoles ^
   -cleanModel ^
-  -calculateTexture "%MD%\Texturing_MaxTextureCount4_16k.xml" ^
+  -calculateTexture "%MD%\Texturing_AdaptiveTexel_4k.xml" ^
   -renameSelectedModel "zone_1_High" ^
   -exportModel "zone_1_High" "F:\out\zone_1.obj" "%MD%\ModelExportParamsOBJ_NiraParts.xml" ^
   -save "F:\na156_h2024_v2\aligned\zone_1.rsproj" ^
@@ -2380,6 +2389,8 @@ With `MvsExportcoordinatesystemtype=3` (the OBJ/FBX presets) the exported vertic
 ### A4. Adaptive texturing: the style, the 4K cap, and a live 16K leak
 
 Owner's "adaptive" means `unwrapStyle=AdaptiveTexelSize` (texel clamped between min/max texel size); `MaxTexturesCount` auto-fits texel to a page budget and is a different style — the repo's shorthand had them swapped for a month. `Texturing_AdaptiveTexel_4k.xml` / `Unwrapping_AdaptiveTexel_4k.xml` are the first presets to use the style. **Owner cap: nothing above 4096 may reach an exported deliverable.** `Unwrapping_Simplified.xml` (1 × 16384) is still LIVE: `ModelToFinal.bat` matches an unwrap to the texture preset only for `4x8k`; every other preset (`8k`, `16k`, `highpoly`, `fixed100`, `fixed50`) falls through to it, so asking for *smaller* 8K textures exports a **16K** page. The default `4x8k` path is safe (not changed — owner's call). `GenerateModel.bat` `[6/8]` uses `Texturing_MaxTextureCount4_8k.xml` (8K cap, owner 2026-07-31); the §9.2 registry rows attributing the 16k presets to it were stale and are corrected. [VERIFIED: FINDINGS 2026-09-03]
+
+**Resolved 2026-09-05 (decision D13, owner):** adaptive 4096 is now the style of every texture pass in every workflow, the nine `MaxTexturesCount` presets are retired to `archive/metadata_retired/`, `ModelToFinal.bat` no longer pairs an unwrap with a preset (its final unwrap is always `Unwrapping_AdaptiveTexel_4k.xml` with the A5 fallback), the fixed-texel presets are capped at 4096, export presets write JPG, and `modules/preflight.py` blocks a live preset above 4096 or a non-JPG export. §9.2 carries the live table. [VERIFIED-by-inspection: 2026-09-05]
 
 ### A5. `AdaptiveTexelSize` can fail on a particular mesh, silently, and an untextured model still exports
 

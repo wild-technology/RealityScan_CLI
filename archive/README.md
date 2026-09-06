@@ -12,6 +12,7 @@ Kept for reference and provenance; nothing here is imported by live code
 | `legacy_scripts/` | Superseded `.bat` workflows. |
 | `colmap/` | Retired COLMAP scripts and the frozen COLMAP fact base (`colmap/docs/`). |
 | `reference_data/` | `sensorsdb.xml` - RealityScan's install-tree sensor database, read by nothing here. |
+| `metadata_retired/` | The nine `MaxTexturesCount` texture/unwrap presets (8K and 16K) retired by decision D13 on 2026-09-05; cited by FINDINGS and the rs-reference manual, referenced by nothing live (`testing/test_texture_policy.py`). |
 
 ## colmap/
 

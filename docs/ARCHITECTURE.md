@@ -156,7 +156,12 @@ are the two gitignored exceptions the interactive lane still writes there.
   GUI-subsystem launcher that keeps console windows from popping.
 - `RS_CLI/Metadata/*.xml` — parameter presets passed to CLI commands.
   Documented profile by profile in
-  `docs/rs-reference/09-xml-parameter-files.md`.
+  `docs/rs-reference/09-xml-parameter-files.md`. Texture policy (decision
+  D13, 2026-09-05): `Texturing_AdaptiveTexel_4k.xml` /
+  `Unwrapping_AdaptiveTexel_4k.xml` in every workflow, 4096 cap, JPG
+  exports, `Unwrapping_MaxCount4_4k.xml` as the `:try_unwrap` fallback;
+  the retired `MaxTexturesCount` presets sit in `archive/metadata_retired/`
+  and `modules/preflight.py` blocks a regression.
   `RegistrationExportParams.xml` (sidecars branch, 2026-09-03) is the
   `-exportRegistration` preset for the non-destructive identity capture:
   its `calexFileFormatId` resolves against `calibration.xml` in the

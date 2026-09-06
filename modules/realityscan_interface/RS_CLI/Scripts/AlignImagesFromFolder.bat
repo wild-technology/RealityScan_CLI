@@ -24,10 +24,12 @@ echo Reading default variables
 call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
 set "MetadataDir=%Metadata%"
-set "HighModelTexture=%MetadataDir%\Texturing_HighPolyTexture.xml"
-set "SimplifiedModelTexture=%MetadataDir%\Texturing_SimplifiedTexture.xml"
+:: Texture policy D13 (2026-09-05): AdaptiveTexelSize at the 4096 cap for
+:: both passes; the 2 x 16K / 1 x 16K presets this script used are retired
+:: to archive/metadata_retired/.
+set "HighModelTexture=%MetadataDir%\Texturing_AdaptiveTexel_4k.xml"
 set "SimplifyParams=%MetadataDir%\SimplifyAutomationParams.xml"
-set "UnwrapSimplified=%MetadataDir%\Unwrapping_Simplified.xml"
+set "UnwrapSimplified=%MetadataDir%\Unwrapping_AdaptiveTexel_4k.xml"
 
 :: Per-instance marker files written by RealityScan / ErrorWriter.bat
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"

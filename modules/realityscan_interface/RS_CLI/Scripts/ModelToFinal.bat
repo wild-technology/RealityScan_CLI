@@ -15,8 +15,8 @@ setlocal EnableDelayedExpansion
 ::   %2 export directory     where final model files are written (required
 ::                           unless export=none)
 ::   %3 final model name     base name for the exported model (default Final)
-::   %4 texture preset       highpoly|8k|4x8k|16k|fixed100|fixed50
-::                           (default 4x8k - the owner's 8K cap)
+::   %4 texture preset       adaptive|fixed100|fixed50
+::                           (default adaptive - AdaptiveTexelSize, 4096 cap)
 ::   %5 simplify             true/false (default false)
 ::   %6 export format        obj|objmetric|fbx|glb|none (default obj)
 ::                           obj = stock preset, scale 100 (Unreal);
@@ -47,11 +47,14 @@ set "MetadataDir=%Metadata%"
 if not "%~1" == "" ( set "RS_TARGET=%~1" ) else ( if defined RS_INSTANCE_FROM_CALLER ( set "RS_TARGET=%RS_INSTANCE%" ) else ( set "RS_TARGET=*" ) )
 set "export_dir=%~2"
 if "%~3" == "" ( set "final_name=Final" ) else ( set "final_name=%~3" )
-:: Default preset 4x8k per the owner's 8K cap (2026-07-31, reaffirmed for
-:: this script 2026-08-07): both texture passes limited to 4 x 8192, matching
-:: GenerateModel.bat. "highpoly" (2 x 16K) remains available explicitly for
-:: the rare consumer that wants single big pages.
-if "%~4" == "" ( set "tex_preset=4x8k" ) else ( set "tex_preset=%~4" )
+:: Default preset "adaptive" (owner 2026-09-05, decision D13):
+:: unwrapStyle=AdaptiveTexelSize with a 4096 page cap, matching
+:: GenerateModel.bat. The MaxTexturesCount presets (8k, 4x8k, 16k, highpoly)
+:: are retired to archive/metadata_retired/ - never 16K, and no forced 4 x 8K
+:: page budget - so nothing above 4096 can reach an exported deliverable.
+:: fixed100 / fixed50 (FixedTexelSize, also capped at 4096) stay as explicit
+:: alternatives.
+if "%~4" == "" ( set "tex_preset=adaptive" ) else ( set "tex_preset=%~4" )
 if "%~5" == "" ( set "simplify_model=false" ) else ( set "simplify_model=%~5" )
 if "%~6" == "" ( set "export_format=obj" ) else ( set "export_format=%~6" )
 if "%~7" == "" ( set "cull_polygons=false" ) else ( set "cull_polygons=%~7" )
@@ -60,10 +63,7 @@ set "source_model=%~9"
 
 :: Resolve the texture preset to one of the repo's parameter XMLs.
 set "TexParams="
-if /i "%tex_preset%" == "highpoly"  set "TexParams=%MetadataDir%\Texturing_HighPolyTexture.xml"
-if /i "%tex_preset%" == "8k"        set "TexParams=%MetadataDir%\Texturing_MaxTextureCount1_8k.xml"
-if /i "%tex_preset%" == "4x8k"      set "TexParams=%MetadataDir%\Texturing_MaxTextureCount4_8k.xml"
-if /i "%tex_preset%" == "16k"       set "TexParams=%MetadataDir%\Texturing_MaxTextureCount1_16k.xml"
+if /i "%tex_preset%" == "adaptive"  set "TexParams=%MetadataDir%\Texturing_AdaptiveTexel_4k.xml"
 if /i "%tex_preset%" == "fixed100"  set "TexParams=%MetadataDir%\Texturing_FixedTexelSize100perQuality.xml"
 if /i "%tex_preset%" == "fixed50"   set "TexParams=%MetadataDir%\Texturing_FixedTexelSize50perQuality.xml"
 :: NOTE: every failure below jumps to a label that ends in a single-line
@@ -82,14 +82,17 @@ set "ReprojParams=%MetadataDir%\ReprojectionParams.xml"
 
 :: The UV layout of the FINAL model comes from the unwrap preset, not from
 :: the texture preset - with simplify on, the exported model is the
-:: simplified one and it is unwrapped fresh. The stock
-:: Unwrapping_Simplified.xml is 1 x 16384, which would silently override a
-:: caller who asked for multiple smaller pages (and 16k exceeds the maximum
-:: texture size a lot of engines accept). Match the unwrap to the texture
-:: preset so "4x8k" means 4x8k all the way to the exported file.
-set "UnwrapSimplified=%MetadataDir%\Unwrapping_Simplified.xml"
-if /i "%tex_preset%" == "4x8k" set "UnwrapSimplified=%MetadataDir%\Unwrapping_Simplified_4x8k.xml"
+:: simplified one and it is unwrapped fresh. That unwrap is ALWAYS
+:: AdaptiveTexelSize at the 4096 cap, whatever texture preset was chosen
+:: (D13: never 16K, never a forced 4 x 8K page budget). Until 2026-09-05
+:: every preset but 4x8k fell through to a 1 x 16384 unwrap here
+:: (rs-reference 10 A4). AdaptiveTexelSize can reject a particular mesh
+:: (FINDINGS 2026-09-03, c5), so :try_unwrap falls back to MaxTexturesCount
+:: 4 x 4096 - still inside the cap - when adaptive does nothing.
+set "UnwrapSimplified=%MetadataDir%\Unwrapping_AdaptiveTexel_4k.xml"
+set "UnwrapFallback=%MetadataDir%\Unwrapping_MaxCount4_4k.xml"
 if not exist "%UnwrapSimplified%" goto :noUnwrapParams
+if not exist "%UnwrapFallback%" goto :noUnwrapParams
 
 :: Resolve the export format to an extension + parameter XML.
 set "ExportExt="
@@ -125,6 +128,7 @@ echo Cull polygons   : %cull_polygons%
 echo Texture preset  : %tex_preset% (%TexParams%)
 echo Simplify        : %simplify_model%
 echo Unwrap (final)  : %UnwrapSimplified%
+echo Unwrap fallback : %UnwrapFallback%
 echo Export          : %export_format%  -^> %export_dir%
 echo Final name      : %final_name%
 echo.
@@ -201,7 +205,7 @@ call :run -deleteSelectedModel || goto :fail
 
 echo Unwrapping simplified model
 call :run -selectModel "Simplified" || goto :fail
-call :run -unwrap "%UnwrapSimplified%" || goto :fail
+call :try_unwrap || goto :fail
 
 echo Reprojecting texture onto simplified model
 call :run -reprojectTexture "HighPolyTextured" "Simplified" "%ReprojParams%" || goto :fail
@@ -252,7 +256,7 @@ echo        The instance was left running and the scene untouched by teardown.
 exit /b 1
 
 :badPreset
-echo ERROR: unknown texture preset "%tex_preset%" - use highpoly^|8k^|4x8k^|16k^|fixed100^|fixed50
+echo ERROR: unknown texture preset "%tex_preset%" - use adaptive^|fixed100^|fixed50
 exit /b 1
 
 :noTexParams
@@ -260,7 +264,7 @@ echo ERROR: texture parameter file not found: %TexParams%
 exit /b 1
 
 :noUnwrapParams
-echo ERROR: unwrap parameter file not found: %UnwrapSimplified%
+echo ERROR: unwrap parameter file not found: %UnwrapSimplified% or %UnwrapFallback%
 exit /b 1
 
 :badFormat
@@ -276,6 +280,45 @@ echo ERROR: no reachable RealityScan instance "%RS_TARGET%".
 echo        This workflow attaches to a running instance whose mesh is already
 echo        computed; it does not start one and never resets a scene. Boot an
 echo        instance and load the project first, or pass the right instance name.
+exit /b 1
+
+:: ------------------------------------------------------------------
+:: :try_unwrap - AdaptiveTexelSize first, MaxTexturesCount 4 x 4096 second.
+:: In attach mode the only truth is -getStatus, and "rev" tracks scene
+:: MUTATIONS: an unwrap that took advances it, one that did nothing leaves
+:: it where it was (FINDINGS 2026-09-03, c5: lastError 0x83000003, rev
+:: unchanged, three times). So the adaptive attempt succeeds only when :run
+:: passes AND rev moved; otherwise the fallback runs, judged by rev alone -
+:: lastError is sticky and would still carry the adaptive failure's code,
+:: which :run's "same code, rev moved" branch would misread as a new
+:: failure. Both unchanged = the model is not unwrapped = abort.
+:: ------------------------------------------------------------------
+:try_unwrap
+call :readstat
+set "RS_UNWRAP_REV0=%RS_REV%"
+call :run -unwrap "%UnwrapSimplified%"
+if errorlevel 1 goto :unwrapFallback
+call :readstat
+if not "%RS_REV%" == "%RS_UNWRAP_REV0%" exit /b 0
+echo NOTE: adaptive unwrap left the scene revision unchanged at %RS_REV% - it did nothing
+
+:unwrapFallback
+echo NOTE: falling back to MaxTexturesCount 4 x 4096: %UnwrapFallback%
+call :readstat
+set "RS_UNWRAP_REV0=%RS_REV%"
+%RealityScan% -delegateTo %RS_TARGET% -unwrap "%UnwrapFallback%"
+if errorlevel 1 goto :runDelegateFailed
+ping -n 3 127.0.0.1 >nul
+%RealityScan% -waitCompleted %RS_TARGET%
+ping -n 2 127.0.0.1 >nul
+%RealityScan% -waitCompleted %RS_TARGET%
+call :readstat
+if not defined RS_STATUS goto :runInstanceGone
+if "%RS_REV%" == "%RS_UNWRAP_REV0%" goto :unwrapBothFailed
+exit /b 0
+
+:unwrapBothFailed
+echo ERROR: both unwrap styles left the scene revision unchanged at %RS_REV% - the model is NOT unwrapped
 exit /b 1
 
 :: ------------------------------------------------------------------

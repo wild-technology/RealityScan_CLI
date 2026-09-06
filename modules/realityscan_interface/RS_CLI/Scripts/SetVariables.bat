@@ -92,14 +92,14 @@ set ModelExportParamsFBXUDIM=%Metadata%\ModelExportParamsFBX_UDIM.xml
 :: Variable storing name of file with parameters for exporting model to .fbx file format with UDIM tile type and material creation ON.
 set ModelExportParamsFBXUDIMMaterial=%Metadata%\ModelExportParamsFBX_UDIM_material.xml
 
-:: Variable storing name of file with parameters for texturing (MaxTextureCount1 8K UV unwrap)
-set Texturing1x8k=%Metadata%\Texturing_MaxTextureCount1_8k.xml
+:: Variable storing name of file with parameters for texturing (AdaptiveTexelSize, 4096 cap - decision D13)
+set TexturingAdaptive4k=%Metadata%\Texturing_AdaptiveTexel_4k.xml
 
-:: Variable storing name of file with parameters for texturing (MaxTextureCount4 8K UV unwrap)
-set Texturing4x8k=%Metadata%\Texturing_MaxTextureCount4_8k.xml
+:: Variable storing name of file with parameters for unwrapping (AdaptiveTexelSize, 4096 cap - decision D13)
+set UnwrappingAdaptive4k=%Metadata%\Unwrapping_AdaptiveTexel_4k.xml
 
-:: Variable storing name of file with parameters for texturing (MaxTextureCount1 16K UV unwrap)
-set Texturing1x16k=%Metadata%\Texturing_MaxTextureCount1_16k.xml
+:: Variable storing name of file with parameters for the fallback unwrap (MaxTexturesCount 4 x 4096)
+set UnwrappingMaxCount4x4k=%Metadata%\Unwrapping_MaxCount4_4k.xml
 
 :: Variable storing name of file with parameters for texturing (Fixed texel size 50% quality UV unwrap)
 set TexturingFixedTexSize50=%Metadata%\Texturing_FixedTexelSize50perQuality.xml

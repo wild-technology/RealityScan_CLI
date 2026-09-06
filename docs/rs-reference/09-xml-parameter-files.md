@@ -305,8 +305,8 @@ Two further routes exist and are worth knowing:
 
 - **Copy a sibling and change one value.** `SimplifyNoise_Params.xml` and
   `SimplifySmooth_80per_Params.xml` differ in exactly one line
-  (`mvsFltTargetTrisCountRel` `70` → `80`); `Texturing_MaxTextureCount1_16k.xml` and
-  `Texturing_MaxTextureCount4_16k.xml` differ in exactly one value
+  (`mvsFltTargetTrisCountRel` `70` → `80`); the retired `Texturing_MaxTextureCount1_16k.xml` and
+  `Texturing_MaxTextureCount4_16k.xml` (`archive/metadata_retired/` since D13, 2026-09-05) differ in exactly one value
   (`unwrapMaximalTexCount` `1` → `4`) — their whole-file diff is noise from CRLF vs LF, not content.
   [VERIFIED-by-probe: `diff` over both pairs, 2026-08-04]
 - **Start from Epic's own shipped profiles.** `C:\Program Files\Epic Games\RealityScan_2.2\
@@ -335,9 +335,10 @@ interchangeable in shape; two with different GUIDs are not.
 
 **`-unwrap` and `-calculateTexture` share one profile type.** The texturing and unwrap dialogs are
 one settings panel, so a single `Texturing_*.xml` can be passed to either command, and this repo
-does exactly that: `GenerateModel.bat` passes `Texturing_MaxTextureCount4_16k.xml` to
-`-calculateTexture` and `Unwrapping_Simplified_4x16k.xml` — same GUID, same key family — to
-`-unwrap`. The only structural difference between the two file groups is that the unwrap files add
+does exactly that: `GenerateModel.bat` passes `Texturing_AdaptiveTexel_4k.xml` to
+`-calculateTexture` and `Unwrapping_AdaptiveTexel_4k.xml` — same GUID, same key family — to
+`-unwrap` (the `MaxTextureCount4_16k` / `Simplified_4x16k` pair it used until 2026-07-31 and the
+`4_8k` / `Simplified_4x8k` pair until 2026-09-05 are retired, decision D13). The only structural difference between the two file groups is that the unwrap files add
 `unwrapMinTexResolution` and `unwrapMethod` and the texturing files add
 `unwrapCheckerBoardCellSize`. [VERIFIED-by-inspection + production use, 2026-07-29]
 
@@ -425,8 +426,8 @@ pass the variable:
 ```bat
 :: Model tools - profile is the SOLE argument
 call :run -simplify         "%MetadataDir%\SimplifyNoise_Params.xml"
-call :run -calculateTexture "%MetadataDir%\Texturing_MaxTextureCount4_16k.xml"
-call :run -unwrap           "%MetadataDir%\Unwrapping_Simplified_4x16k.xml"
+call :run -calculateTexture "%MetadataDir%\Texturing_AdaptiveTexel_4k.xml"
+call :try_unwrap                     :: -unwrap Unwrapping_AdaptiveTexel_4k.xml, fallback Unwrapping_MaxCount4_4k.xml
 
 :: Reprojection - profile is the THIRD argument, after two model names
 call :run -reprojectTexture "%model_tag%_HighPoly_Textured" "%model_tag%_Simplified" ^
@@ -803,21 +804,25 @@ are byte-identical (§4.3).
 | **Producing dialog** | MESH & COLOR ▸ Color & Texture ▸ Unwrap tool |
 | **Root** | `<Configuration id="{54A4029C-DE57-43F6-8F81-75C62E159021}">` — **shared with texturing** |
 | **Consumed by** | `-unwrap <params.xml>` |
-| **Repo files** | `Unwrapping_Simplified.xml`, `Unwrapping_Simplified_4x16k.xml` |
+| **Repo files** | `Unwrapping_AdaptiveTexel_4k.xml` (production), `Unwrapping_MaxCount4_4k.xml` (the `:try_unwrap` fallback); `Unwrapping_Simplified*.xml` retired to `archive/metadata_retired/` (D13, 2026-09-05) |
 
 ```xml
 <Configuration id="{54A4029C-DE57-43F6-8F81-75C62E159021}">
   <entry key="unwrapButtonDisabled" value="0"/>
   <entry key="unwrapGutter" value="2"/>
+  <entry key="unwrapStyle" value="AdaptiveTexelSize"/>
+  <entry key="unwrapMinTexelSize" value="0"/>
+  <entry key="unwrapMaxTexelSize" value="4"/>
   <entry key="unwrapMinTexResolution" value="512"/>
-  <entry key="unwrapStyle" value="MaxTexturesCount"/>
-  <entry key="unwrapMaximalTexCount" value="4"/>
+  <entry key="unwrapMaxTexResolution" value="4096"/>
   <entry key="unwrapFillTextures" value="0x0"/>
-  <entry key="unwrapMaxTexResolution" value="16384"/>
   <entry key="unwrapLargeTriangleRemovalThr" value="10"/>
   <entry key="unwrapMethod" value="Geometric"/>
 </Configuration>
 ```
+(`Unwrapping_AdaptiveTexel_4k.xml`, verbatim. The retired `Unwrapping_Simplified_4x16k.xml` was
+the same shape with `unwrapStyle=MaxTexturesCount`, `unwrapMaximalTexCount=4`,
+`unwrapMaxTexResolution=16384`.)
 
 | Key | Type | Values seen | GUI control | Tag |
 |---|---|---|---|---|
@@ -850,9 +855,12 @@ algorithm parameters.** Preview-only controls and button-enabled flags ride alon
 Same GUID, same key family, same commands' worth of keys as §2.6 — the difference is which command
 you hand the file to. `-calculateTexture <params.xml>` reads the same panel.
 
-Two shapes are in production use here:
+Three shapes exist here; since 2026-09-05 (decision D13) only `AdaptiveTexelSize` is in
+production, the fixed-texel presets are capped at 4096, and the texture-count presets are
+retired to `archive/metadata_retired/`:
 
-**Texture-count budget** (`Texturing_MaxTextureCount<N>_<res>.xml`, four variants):
+**Texture-count budget** (`Texturing_MaxTextureCount<N>_<res>.xml`, four variants — RETIRED
+2026-09-05, kept under `archive/metadata_retired/` for reading old projects):
 
 ```xml
 <Configuration id="{54A4029C-DE57-43F6-8F81-75C62E159021}">
@@ -926,6 +934,17 @@ Which to use — and a naming trap:
   > so the default path is safe and the defect is invisible until someone passes
   > an explicit preset. Flagged, not changed: the fix is a matched 4K unwrap per
   > preset, and re-pointing `ModelToFinal.bat` is the owner's call.
+  >
+  > **Resolved 2026-09-05 (decision D13, owner).** The policy is now mechanical: every
+  > workflow textures and unwraps with `unwrapStyle=AdaptiveTexelSize` at a 4096 cap
+  > (`Texturing_AdaptiveTexel_4k.xml` / `Unwrapping_AdaptiveTexel_4k.xml`);
+  > `ModelToFinal.bat` defaults to `adaptive` and never pairs the unwrap with the texture
+  > preset; all nine `MaxTexturesCount` presets (8K and 16K) are retired to
+  > `archive/metadata_retired/`; the fixed-texel presets are capped at 4096; the final unwrap
+  > of `GenerateModel.bat` and `ModelToFinal.bat` goes through `:try_unwrap`, which falls
+  > back to `Unwrapping_MaxCount4_4k.xml` when adaptive rejects a mesh (10 A5); every export
+  > preset writes JPG; and `modules/preflight.py` BLOCKS a live preset above 4096 or a
+  > non-JPG export (`testing/test_texture_policy.py`).
 - **`FixedTexelSize` delivers a pre-declared visual precision** (e.g. 1 cm texels for a true
   ortho-photo map) and "there will be so many textures how many are needed".
   [OFFICIAL: tools/texturing_part2] [VERIFIED-as-decision: HANDOFF 2026-07-29 texture budget]
@@ -1075,13 +1094,13 @@ from the GUI with each toggled and diff]
 |---|---|---|---|---|---|---|---|---|
 | `ModelExportParams.xml` | generic (v13) | 100 | 3 | 0 | 0 | — | jpg / 24bppBGR | `Maya + Arnold, Unreal` |
 | `ModelExportParamsObj.xml` | OBJ (v0) | 100 | 0 | 0 | 0 | — | jpg / 24bppBGR + a `_Normal_0` layer | `Unreal` |
-| `ModelExportParamsOBJ_NiraParts.xml` | OBJ (v0) | **1.0** | 3 | 0 | **1** | — | **png** / 24bppBGR | `Custom` |
-| `ModelExportParamsFBX_Parts.xml` | FBX (v13) | **1.0** | 3 | 0 | **1** | **true** | png / 24bppBGR | `Custom` |
-| `ModelExportParamsFBX_U1V1.xml` | FBX (v13) | 100 | 0 | **0** | 0 | false | png / **32bppBGRA** | `Maya + Arnold, Unreal` |
-| `ModelExportParamsFBX_U1V1_material.xml` | FBX (v13) | 100 | 0 | 0 | 0 | **true** | png / 32bppBGRA + `_Normal_0` | `Maya + Arnold, Unreal` |
-| `ModelExportParamsFBX_UV.xml` | FBX (v13) | 100 | 0 | **1** | 0 | false | png / 32bppBGRA | `Maya + Arnold, Unreal` |
-| `ModelExportParamsFBX_UDIM.xml` | FBX (v13) | 100 | 0 | **2** | 0 | false | png / 32bppBGRA | `Maya + Arnold, Unreal` |
-| `ModelExportParamsFBX_UDIM_material.xml` | FBX (v13) | 100 | 0 | **2** | 0 | **true** | png / 32bppBGRA + `_Normal_0` | `Maya + Arnold, Unreal` |
+| `ModelExportParamsOBJ_NiraParts.xml` | OBJ (v0) | **1.0** | 3 | 0 | **1** | — | jpg / 24bppBGR | `Custom` |
+| `ModelExportParamsFBX_Parts.xml` | FBX (v13) | **1.0** | 3 | 0 | **1** | **true** | jpg / 24bppBGR | `Custom` |
+| `ModelExportParamsFBX_U1V1.xml` | FBX (v13) | 100 | 0 | **0** | 0 | false | jpg / 24bppBGR | `Maya + Arnold, Unreal` |
+| `ModelExportParamsFBX_U1V1_material.xml` | FBX (v13) | 100 | 0 | 0 | 0 | **true** | jpg / 24bppBGR + `_Normal_0` | `Maya + Arnold, Unreal` |
+| `ModelExportParamsFBX_UV.xml` | FBX (v13) | 100 | 0 | **1** | 0 | false | jpg / 24bppBGR | `Maya + Arnold, Unreal` |
+| `ModelExportParamsFBX_UDIM.xml` | FBX (v13) | 100 | 0 | **2** | 0 | false | jpg / 24bppBGR | `Maya + Arnold, Unreal` |
+| `ModelExportParamsFBX_UDIM_material.xml` | FBX (v13) | 100 | 0 | **2** | 0 | **true** | jpg / 24bppBGR + `_Normal_0` | `Maya + Arnold, Unreal` |
 | `ModelExportParamsGLB.xml` | GLB (v0) | **10** | 0 | — | 0 | — | **jpeg embedded** | `[[Custom]]`, rotation X = `-90.0` |
 | `ModelExportParamsPLY_DensePoints.xml` | PLY (v13) | **1.0** | 0 | 0 | 0 | false | **none** (`MvsMeshExportTexturing=0`), **vertex colours on** | `Custom` |
 
@@ -2023,26 +2042,27 @@ and is listed below.
 | `Smoothing_02_2_Params.xml` | smoothing | declared in `SetVariables.bat` only | weight 0.2, 2 iterations, style 1, type 0 | Unused |
 | `SmoothingSurface_02_2_Params.xml` | smoothing | **nothing** | **byte-identical to `Smoothing_02_2_Params.xml`** | Unused duplicate |
 | `SmoothingPeaks_05_5_Params.xml` | smoothing | **nothing** | weight 0.5, 5 iterations, style 3 — i.e. Epic's shipped default minus `mvsSmoothing_useIntelligentSmoothing`, with `mvsFltSmoothingType` 1→0 | Unused |
-| `Texturing_MaxTextureCount4_16k.xml` | texturing | **nothing** | 4 × 16K. This row claimed `GenerateModel.bat` step [6/8] until 2026-09-03; that step actually sets `Texturing_MaxTextureCount4_8k.xml` ("8K cap, owner 2026-07-31"). Also mislabelled **adaptive** — it is `MaxTexturesCount` (auto *texel*), not `AdaptiveTexelSize` | **Unreferenced** |
-| `Texturing_AdaptiveTexel_4k.xml` | texturing | `DecimateComponent.bat` step [1/5] | **`AdaptiveTexelSize`**, texel clamp 0…4 (optimal → 100× optimal), 512…**4096** | **Production** |
-| `Unwrapping_AdaptiveTexel_4k.xml` | unwrapping | `DecimateComponent.bat` step [3/5] | same style/clamp, large-tri threshold 10, fill 0x0 — the reprojection target's unwrap | **Production** |
-| `Texturing_MaxTextureCount1_16k.xml` | texturing | `SetVariables.bat` only | 1 × 16K | Unused |
-| `Texturing_MaxTextureCount1_8k.xml` | texturing | `SetVariables.bat` only | 1 × 8K | Unused |
-| `Texturing_MaxTextureCount4_8k.xml` | texturing | `SetVariables.bat` only | 4 × 8K | Unused |
-| `Texturing_HighPolyTexture.xml` | texturing | `AlignImagesFromFolder.bat` (deprecated) | 2 × 16K | Legacy |
-| `Texturing_SimplifiedTexture.xml` | texturing | `AlignImagesFromFolder.bat` (deprecated) | **byte-identical to `Texturing_HighPolyTexture.xml`** | Legacy duplicate |
-| `Texturing_FixedTexelSize100perQuality.xml` | texturing | `SetVariables.bat` only | `FixedTexelSize`, type 0 (optimal texel), gutter 10, max 8K, large-tri thr 400 | Unused |
-| `Texturing_FixedTexelSize50perQuality.xml` | texturing | `SetVariables.bat` only | same but type 1 (2× optimal = 50 % quality) | Unused |
-| `Unwrapping_Simplified_4x16k.xml` | unwrap | `GenerateModel.bat` step [8/8] | 4 × 16K, min 512, `Geometric`, gutter 2, large-tri thr 10 | **Production** |
-| `Unwrapping_Simplified.xml` | unwrap | `AlignImagesFromFolder.bat` (**deprecated** workflow) only — `GenerateModel.bat` references the 4×16k file exclusively | same but 1 × 16K | Legacy; superseded by the 4× variant |
+| `Texturing_MaxTextureCount4_16k.xml` | texturing | **nothing** — retired to `archive/metadata_retired/` (D13, 2026-09-05) | 4 × 16K. Claimed `GenerateModel.bat` step [6/8] until 2026-09-03; that step set `Texturing_MaxTextureCount4_8k.xml` from 2026-07-31 and `Texturing_AdaptiveTexel_4k.xml` from 2026-09-05. Also mislabelled **adaptive** — it is `MaxTexturesCount` (auto *texel*), not `AdaptiveTexelSize` | **Retired** |
+| `Texturing_AdaptiveTexel_4k.xml` | texturing | `GenerateModel.bat` step [6/8]; `ModelToFinal.bat` preset `adaptive` (default); `AlignImagesFromFolder.bat` (deprecated); `run_decimate.py` step [1/5] | **`AdaptiveTexelSize`**, texel clamp 0…4 (optimal → 100× optimal), 512…**4096** | **Production** |
+| `Unwrapping_AdaptiveTexel_4k.xml` | unwrapping | `GenerateModel.bat` step [8/8] and `ModelToFinal.bat` final unwrap (both via `:try_unwrap`); `AlignImagesFromFolder.bat`; `run_decimate.py` step [3/5] | same style/clamp, large-tri threshold 10, fill 0x0 — the reprojection target's unwrap | **Production** |
+| `Unwrapping_MaxCount4_4k.xml` | unwrap | `:try_unwrap` fallback in `GenerateModel.bat` and `ModelToFinal.bat`; `run_decimate.py` | `MaxTexturesCount` 4 × **4096**, min 512, `Geometric`, gutter 2, large-tri thr 1000 — used only when the adaptive unwrap does nothing (10 A5) | **Production fallback** |
+| `Texturing_MaxTextureCount1_16k.xml` | texturing | **nothing** — retired (D13) | 1 × 16K; was `ModelToFinal.bat` preset `16k` | **Retired** |
+| `Texturing_MaxTextureCount1_8k.xml` | texturing | **nothing** — retired (D13) | 1 × 8K; was `ModelToFinal.bat` preset `8k` | **Retired** |
+| `Texturing_MaxTextureCount4_8k.xml` | texturing | **nothing** — retired (D13) | 4 × 8K; was `GenerateModel.bat` step [6/8] and `ModelToFinal.bat` preset `4x8k` (default) from 2026-07-31 to 2026-09-05 — the NA165/H2060 high-poly bakes | **Retired** |
+| `Texturing_HighPolyTexture.xml` | texturing | **nothing** — retired (D13) | 2 × 16K; was `ModelToFinal.bat` preset `highpoly` and `AlignImagesFromFolder.bat` | **Retired** |
+| `Texturing_SimplifiedTexture.xml` | texturing | **nothing** — retired (D13) | **byte-identical to `Texturing_HighPolyTexture.xml`** | **Retired** duplicate |
+| `Texturing_FixedTexelSize100perQuality.xml` | texturing | `ModelToFinal.bat` preset `fixed100` | `FixedTexelSize`, type 0 (optimal texel), gutter 10, max **4096** (8K until D13), large-tri thr 400 | Alternative |
+| `Texturing_FixedTexelSize50perQuality.xml` | texturing | `ModelToFinal.bat` preset `fixed50` | same but type 1 (2× optimal = 50 % quality), max **4096** | Alternative |
+| `Unwrapping_Simplified_4x16k.xml` | unwrap | **nothing** — retired (D13) | 4 × 16K, min 512, `Geometric`, gutter 2, large-tri thr 10; was `GenerateModel.bat` step [8/8] until 2026-07-31 (then `_4x8k` until 2026-09-05, also retired) | **Retired** |
+| `Unwrapping_Simplified.xml` | unwrap | **nothing** — retired (D13) | 1 × 16K; was `AlignImagesFromFolder.bat` and `ModelToFinal.bat`'s unwrap for every preset but `4x8k` (the live 16K leak above) | **Retired** |
 | `ReprojectionParams.xml` | reprojection | `GenerateModel.bat` step [8/8] | **enables colour reprojection** (`allowColor=true`, `enableColor=-1`, `sourceColorLayer=Color8_0`), `normal=2` | **Production** |
-| `ModelExportParamsOBJ_NiraParts.xml` | model export | `ExportDeliverables.bat` | OBJ, **by parts**, png, scale 1.0, number format 6, CRS type 3 — Nira's documented layout | **Production** |
-| `ModelExportParamsFBX_Parts.xml` | model export | `ExportDeliverables.bat` | FBX, **by parts**, materials on, png, scale 1.0 | **Production** |
+| `ModelExportParamsOBJ_NiraParts.xml` | model export | `ExportDeliverables.bat` | OBJ, **by parts**, jpg, scale 1.0, number format 6, CRS type 3 — Nira's documented layout | **Production** |
+| `ModelExportParamsFBX_Parts.xml` | model export | `ExportDeliverables.bat` | FBX, **by parts**, materials on, jpg, scale 1.0 | **Production** |
 | `ModelExportParamsPLY_DensePoints.xml` | model export | `ExportDeliverables.bat` | PLY, **vertex colours on, textures off**, scale 1.0 | **Production** |
 | `ModelExportParams.xml` | model export | `SetVariables.bat` + declared in `ExportDeliverables.bat` | generic v13, scale 100, jpg | Unused as an argument |
 | `ModelExportParamsObj.xml` | model export | **nothing** (`SetVariables.bat` refers to `ModelExportParamsOBJ.xml`, which resolves only because NTFS is case-insensitive — and the variable is never consumed) | OBJ, scale 100, `Unreal` preset, jpg, a `_Normal_0` layer | Unreferenced |
 | `ModelExportParamsGLB.xml` | model export | `SetVariables.bat` only | GLB, scale 10, rotation X `-90.0`, **embedded jpeg** | Unused |
-| `ModelExportParamsFBX_U1V1.xml` | model export | `SetVariables.bat` only | FBX, tile `_u1_v1`, no materials, 32bppBGRA | Unused |
+| `ModelExportParamsFBX_U1V1.xml` | model export | `SetVariables.bat` only | FBX, tile `_u1_v1`, no materials, 24bppBGR | Unused |
 | `ModelExportParamsFBX_U1V1_material.xml` | model export | `SetVariables.bat` only | same + materials + normal layer | Unused |
 | `ModelExportParamsFBX_UV.xml` | model export | `SetVariables.bat` only | FBX, tile `(u,v)` | Unused |
 | `ModelExportParamsFBX_UDIM.xml` | model export | `SetVariables.bat` only | FBX, UDIM tiles, no materials | Unused |

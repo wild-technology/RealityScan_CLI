@@ -1847,8 +1847,8 @@ Do not put it in a workflow until that probe runs.
   [VERIFIED-as-practice: FINDINGS 2026-07-21].
 
 ```bat
-call :run -calculateTexture "%Metadata%\Texturing_MaxTextureCount4_16k.xml"
-call :run -unwrap "%Metadata%\Unwrapping_Simplified_4x16k.xml"
+call :run -calculateTexture "%Metadata%\Texturing_AdaptiveTexel_4k.xml"
+call :try_unwrap    :: -unwrap "%Metadata%\Unwrapping_AdaptiveTexel_4k.xml", fallback Unwrapping_MaxCount4_4k.xml (D13)
 call :run -reprojectTexture "%model_tag%_HighPoly_Textured" "%model_tag%_Simplified" "%Metadata%\ReprojectionParams.xml"
 ```
 

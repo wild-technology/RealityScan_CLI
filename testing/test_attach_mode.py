@@ -253,11 +253,11 @@ def test_instance_is_first_script_argument(tmp_path):
     script, record = _stub_workflow(tmp_path)
     cli = _cli(exe)
 
-    cli.run_attach_script(script, ['D:/out', 'Final', '4x8k'],
+    cli.run_attach_script(script, ['D:/out', 'Final', 'adaptive'],
                           str(tmp_path / 'logs'), instance=TARGET)
 
     (line,) = _calls(record)
-    assert line.split() == [TARGET, 'D:/out', 'Final', '4x8k']
+    assert line.split() == [TARGET, 'D:/out', 'Final', 'adaptive']
 
 
 def test_wildcard_instance_passes_through_and_locks_safely(tmp_path):

@@ -24,7 +24,7 @@ never writes errors_<instance>.txt.
 
 Usage:
     py -3.13 finish_model.py --outdir "M:/.../final" [--instance RS1]
-        [--name Final] [--preset 4x8k] [--simplify true]
+        [--name Final] [--preset adaptive] [--simplify true]
         [--format objmetric] [--save-path "M:/.../final/scene.rsproj"]
 
 ``--instance`` defaults to ``*`` ("first available") - fine for a single
@@ -44,7 +44,12 @@ sys.path.insert(0, REPO)
 from module_base.settings_store import SettingsStore, realityscan_env  # noqa: E402
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa: E402
 
-TEXTURE_PRESETS = ('highpoly', '8k', '4x8k', '16k', 'fixed100', 'fixed50')
+# Decision D13 (owner 2026-09-05): AdaptiveTexelSize at the 4096 cap is the
+# default and the only page-count-free preset; the MaxTexturesCount presets
+# (highpoly, 8k, 4x8k, 16k) are retired to archive/metadata_retired/. The
+# final unwrap is always adaptive (with a 4 x 4096 fallback) whatever the
+# texture preset - ModelToFinal.bat no longer pairs unwraps with presets.
+TEXTURE_PRESETS = ('adaptive', 'fixed100', 'fixed50')
 EXPORT_FORMATS = ('obj', 'objmetric', 'fbx', 'glb', 'none')
 
 # What ModelToFinal.bat is expected to leave on disk per --format. Both OBJ
@@ -83,8 +88,9 @@ def main() -> int:
                         help='directory the final model files are exported to')
     parser.add_argument('--name', default='Final',
                         help='base name for the exported model')
-    parser.add_argument('--preset', default='4x8k', choices=TEXTURE_PRESETS,
-                        help='texture preset (4x8k = the owner 8K cap)')
+    parser.add_argument('--preset', default='adaptive', choices=TEXTURE_PRESETS,
+                        help='texture preset (adaptive = AdaptiveTexelSize, '
+                             '4096 cap; D13)')
     parser.add_argument('--simplify', default='true',
                         choices=('true', 'false'),
                         help='run the four simplify/clean passes')

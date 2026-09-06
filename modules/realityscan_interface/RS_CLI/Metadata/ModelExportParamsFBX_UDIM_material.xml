@@ -11,17 +11,17 @@
   <entry key="MvsMeshExportNormals" value="true"/>
   <entry key="MvsExportScaleX" value="100.0"/>
   <entry key="MvsMeshExportTexAlpha" value="false"/>
-  <entry key="MvsMeshExportTexImgFormat_Color8_0" value="png"/>
+  <entry key="MvsMeshExportTexImgFormat_Color8_0" value="jpg"/>
   <entry key="MvsMeshExportMaterials" value="true"/>
   <entry key="MvsExportcoordinatesystemtype" value="0"/>
-  <entry key="MvsMeshExportTexPixFormat_Color8_0" value="32bppBGRA"/>
+  <entry key="MvsMeshExportTexPixFormat_Color8_0" value="24bppBGR"/>
   <entry key="MvsMeshExportNormalsAllowed" value="-1"/>
   <entry key="MvsMeshExportNumberFormatAllowed" value="0"/>
   <entry key="MvsExportMoveZ" value="0.0"/>
   <entry key="MvsExportMoveX" value="0.0"/>
   <entry key="MvsExportNormalRange" value="ZeroToOne"/>
   <entry key="MvsExportMoveY" value="0.0"/>
-  <entry key="MvsMeshExportTexPixFormat_Normal_0" value="32bppBGRA"/>
+  <entry key="MvsMeshExportTexPixFormat_Normal_0" value="24bppBGR"/>
   <entry key="MvsMeshExportInfoFile" value="true"/>
   <entry key="MvsMeshExportByParts" value="0"/>
   <entry key="MvsMeshExportEmbeddTxrs" value="false"/>
@@ -35,7 +35,7 @@
   <entry key="MvsExportNormalFlipY" value="true"/>
   <entry key="MvsExportNormalSpace" value="Mikktspace"/>
   <entry key="MvsMeshExportCamerasAllowed" value="-1"/>
-  <entry key="MvsMeshExportTexImgFormat_Normal_0" value="png"/>
+  <entry key="MvsMeshExportTexImgFormat_Normal_0" value="jpg"/>
   <entry key="MvsMeshExportColors" value="false"/>
   <entry key="MvsExportNormalFlipX" value="false"/>
   <entry key="MvsExportRotationZ" value="0.0"/>

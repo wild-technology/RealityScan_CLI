@@ -10,10 +10,10 @@
   <entry key="MvsExportScaleY" value="100.0"/>
   <entry key="MvsMeshExportTexAlpha" value="false"/>
   <entry key="MvsExportScaleX" value="100.0"/>
-  <entry key="MvsMeshExportTexImgFormat_Color8_0" value="png"/>
+  <entry key="MvsMeshExportTexImgFormat_Color8_0" value="jpg"/>
   <entry key="MvsMeshExportMaterials" value="false"/>
   <entry key="MvsExportcoordinatesystemtype" value="0"/>
-  <entry key="MvsMeshExportTexPixFormat_Color8_0" value="32bppBGRA"/>
+  <entry key="MvsMeshExportTexPixFormat_Color8_0" value="24bppBGR"/>
   <entry key="MvsMeshExportNormalsAllowed" value="-1"/>
   <entry key="MvsMeshExportNumberFormatAllowed" value="0"/>
   <entry key="MvsExportMoveZ" value="0.0"/>

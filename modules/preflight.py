@@ -117,14 +117,22 @@ STAGE_XML: dict[str, tuple[str, ...]] = {
               "FlightLogParamsLocal.xml", "RegistrationExportParams.xml"),
     "merge": ("AlignmentParams.xml", "FlightLogParams.xml",
               "FlightLogParamsLocal.xml"),
-    "model": ("Texturing_MaxTextureCount4_8k.xml", "SimplifyNoise_Params.xml",
-              "SimplifySmooth_80per_Params.xml", "Unwrapping_Simplified_4x8k.xml",
-              "ReprojectionParams.xml"),
+    "model": ("Texturing_AdaptiveTexel_4k.xml", "SimplifyNoise_Params.xml",
+              "SimplifySmooth_80per_Params.xml", "Unwrapping_AdaptiveTexel_4k.xml",
+              "Unwrapping_MaxCount4_4k.xml", "ReprojectionParams.xml"),
     "export": ("ModelExportParamsOBJ_NiraParts.xml", "ModelExportParamsFBX_Parts.xml",
                "ModelExportParamsPLY_DensePoints.xml"),
 }
 #: Repo-root FORMAT files RealityScan resolves GUIDs against once installed.
 FORMAT_FILES = ("flightlogs.xml", "calibration.xml")
+
+#: Texture policy, decision D13 (owner 2026-09-05): no texture or unwrap
+#: preset may allow a page above 4096 ("we should never be exporting 16k
+#: files"), and every export preset writes JPG textures. Both are checked
+#: on every preset a planned stage passes, so the policy cannot regress by
+#: editing an XML.
+MAX_TEXTURE_RES = 4096
+TEXTURE_IMAGE_FORMATS = ("jpg", "jpeg")
 
 EXIT_CODES = {"ready": 0, "not_ready": 1, "invalid": 2}
 
@@ -619,11 +627,29 @@ class Preflight:
                     except Exception as exc:  # noqa: BLE001
                         self.block(f"calibration.xml unreadable: {exc}")
                         bad += 1
+            if name.startswith(("Texturing_", "Unwrapping_")):
+                res = entries.get("unwrapMaxTexResolution", "")
+                try:
+                    too_big = int(res) > MAX_TEXTURE_RES
+                except ValueError:
+                    too_big = False
+                if too_big:
+                    self.block(f"{name} allows {res} px texture pages; the cap is "
+                               f"{MAX_TEXTURE_RES} (decision D13 - never 16K, "
+                               "nothing above 4096 reaches an export)")
+                    bad += 1
             if name.startswith("ModelExportParams"):
                 if entries.get("MvsMeshExportInfoFile", "").lower() not in ("true", "1", "0x1"):
                     self.warn(f"{name}: MvsMeshExportInfoFile is not true - no "
                               ".rsInfo would be written and Cesium placement "
                               "cannot resolve the export's frame")
+                wrong = sorted(f"{k}={v}" for k, v in entries.items()
+                               if k.startswith("MvsMeshExportTexImgFormat")
+                               and v.lower() not in TEXTURE_IMAGE_FORMATS)
+                if wrong:
+                    self.block(f"{name} writes non-JPG textures ({', '.join(wrong)}); "
+                               "deliverable textures are JPG (decision D13)")
+                    bad += 1
         if "align" in self.stages:
             for fmt in FORMAT_FILES:
                 fpath = REPO_ROOT / fmt

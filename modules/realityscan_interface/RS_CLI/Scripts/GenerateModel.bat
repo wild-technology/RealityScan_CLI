@@ -43,22 +43,27 @@ echo Reading default variables
 call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
 set "MetadataDir=%Metadata%"
-:: Texture budget (owner 2026-07-29): no more than FOUR large textures.
-:: unwrapStyle=MaxTexturesCount auto-adapts the TEXEL SIZE to fit the count,
-:: so the budget caps cost while small components use fewer/smaller pages.
-:: Previously 2 x 16K (high poly) and 1 x 16K (simplified unwrap).
+:: Texture policy (owner 2026-09-05, decision D13): BOTH texture passes use
+:: unwrapStyle=AdaptiveTexelSize with a 4096 page cap - never 16K, and the
+:: final unwrap is never forced to a 4 x 8K page budget. AdaptiveTexelSize
+:: clamps an estimated texel between unwrapMinTexelSize and
+:: unwrapMaxTexelSize and emits however many pages that needs; it is a
+:: DIFFERENT style from MaxTexturesCount (which auto-fits the texel to a
+:: page count and which this repo mislabelled "adaptive" for a month,
+:: FINDINGS 2026-09-03). The retired MaxTexturesCount presets live in
+:: archive/metadata_retired/ for citation only.
 ::
-:: NAMING (corrected 2026-09-03): this comment used to call MaxTexturesCount
-:: "the adaptive mode". It is not. AdaptiveTexelSize is a DIFFERENT value of
-:: the same key - it clamps an estimated texel between unwrapMinTexelSize and
-:: unwrapMaxTexelSize and emits however many pages that needs. The nickname
-:: cost real time: asked for "adaptive", this repo would have reached for the
-:: wrong style. See Texturing_AdaptiveTexel_4k.xml for the real one.
-:: 8K cap (owner 2026-07-31): both texture passes limited to 4 x 8K.
-set "HighModelTexture=%MetadataDir%\Texturing_MaxTextureCount4_8k.xml"
+:: AdaptiveTexelSize can reject a particular mesh outright (FINDINGS
+:: 2026-09-03, H2060 c5: 0x83000003 in 3 s, scene revision unchanged, three
+:: times) and an untextured model still exports "successfully". The final
+:: unwrap therefore goes through :try_unwrap - adaptive first, then
+:: MaxTexturesCount 4 x 4096 (still inside the cap) when adaptive reports an
+:: error - exactly what run_decimate.py does.
+set "HighModelTexture=%MetadataDir%\Texturing_AdaptiveTexel_4k.xml"
 set "SimplifyNoise=%MetadataDir%\SimplifyNoise_Params.xml"
 set "SimplifySmooth=%MetadataDir%\SimplifySmooth_80per_Params.xml"
-set "UnwrapSimplified=%MetadataDir%\Unwrapping_Simplified_4x8k.xml"
+set "UnwrapSimplified=%MetadataDir%\Unwrapping_AdaptiveTexel_4k.xml"
+set "UnwrapFallback=%MetadataDir%\Unwrapping_MaxCount4_4k.xml"
 set "ReprojectionParams=%MetadataDir%\ReprojectionParams.xml"
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
@@ -159,7 +164,7 @@ call :run -cleanModel || goto :fail
 call :run -renameSelectedModel "%model_tag%_Simplified" || goto :fail
 
 echo [8/8] Unwrapping and reprojecting high-poly texture
-call :run -unwrap "%UnwrapSimplified%" || goto :fail
+call :try_unwrap || goto :fail
 call :run -reprojectTexture "%model_tag%_HighPoly_Textured" "%model_tag%_Simplified" "%ReprojectionParams%" || goto :fail
 call :run -selectModel "%model_tag%_Simplified" || goto :fail
 call :run -renameSelectedModel "%model_tag%_Simplified_Textured" || goto :fail
@@ -309,6 +314,36 @@ if exist "%ErrorsFile%" (
     )
 )
 exit /b 0
+
+:: :try_unwrap - AdaptiveTexelSize first, MaxTexturesCount 4 x 4096 second.
+:: The adaptive attempt is delegated with the same double-wait shape as
+:: :run, but an error is a FALLBACK, not an abort: the errors file moves to
+:: an evidence name and the fallback unwrap runs through :run, so a second
+:: failure still aborts the workflow. What this cannot see is an unwrap
+:: that neither errors nor mutates the scene; the Python census
+:: (run_decimate.info / rs verify) is what proves "Textured" downstream.
+:: Single-line exits only: `exit /b N` inside a parenthesized block returns
+:: 0 to the caller (CLAUDE.md, Windows automation traps).
+:try_unwrap
+%RealityScan% -delegateTo %RS_INSTANCE% -unwrap "%UnwrapSimplified%"
+if errorlevel 1 goto :unwrapDelegateFailed
+ping -n 3 127.0.0.1 >nul
+%RealityScan% -waitCompleted %RS_INSTANCE%
+ping -n 2 127.0.0.1 >nul
+%RealityScan% -waitCompleted %RS_INSTANCE%
+if not exist "%ErrorsFile%" exit /b 0
+for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 goto :unwrapFallback
+exit /b 0
+
+:unwrapFallback
+echo NOTE: adaptive unwrap reported an error on %model_tag% - falling back to MaxTexturesCount 4 x 4096
+move /y "%ErrorsFile%" "%ErrorPath%\expected_unwrap_adaptive_%RS_INSTANCE%_%model_tag%.txt" >nul
+call :run -unwrap "%UnwrapFallback%" || exit /b 1
+exit /b 0
+
+:unwrapDelegateFailed
+echo ERROR: Failed to delegate -unwrap "%UnwrapSimplified%"
+exit /b 1
 
 :: :run - delegate one operation, double-wait, abort on reported error
 :: (see AlignZone.bat for the rationale).

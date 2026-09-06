@@ -886,10 +886,10 @@ This repo sets none of these globally; it passes the equivalent values as params
 | Key | Type | Default | Allowed values | GUI label / what it controls | Repo params-XML values |
 |---|---|---|---|---|---|
 | `unwrapGutter` | int | `2` | positive int | **Default unwrap parameters → Gutter** (texel padding) | `2` in the MaxTexturesCount presets, `10` in the FixedTexelSize presets |
-| `unwrapMinTexResolution` | enum | `512` | `512` `1024` `2048` `4096` `8192` `16384` | **Minimal texture resolution** | `512` in `Unwrapping_Simplified*.xml` |
-| `unwrapMaxTexResolution` | enum | `8192` | `512` `1024` `2048` `4096` `8192` `16384` | **Maximal texture resolution** | `8192` or `16384` per preset |
+| `unwrapMinTexResolution` | enum | `512` | `512` `1024` `2048` `4096` `8192` `16384` | **Minimal texture resolution** | `512` in every unwrap preset |
+| `unwrapMaxTexResolution` | enum | `8192` | `512` `1024` `2048` `4096` `8192` `16384` | **Maximal texture resolution** | `4096` in every live preset since D13 (2026-09-05); `8192` / `16384` only under `archive/metadata_retired/` |
 | `unwrapLargeTriangleRemovalThr` | int | `10` | positive int | **Large triangle removal threshold** | `10` / `400` / `1000` per preset |
-| `unwrapStyle` | enum | `MaxTexturesCount` | `MaxTexturesCount` `FixedTexelSize` `AdaptiveTexelSize` (row order; ordinals accepted but the mapping is **not** established — see §1.4) | **Style** — Epic's own example uses an ordinal: `-set "unwrapStyle=1"` | `MaxTexturesCount` or `FixedTexelSize` (name form, in every repo preset) |
+| `unwrapStyle` | enum | `MaxTexturesCount` | `MaxTexturesCount` `FixedTexelSize` `AdaptiveTexelSize` (row order; ordinals accepted but the mapping is **not** established — see §1.4) | **Style** — Epic's own example uses an ordinal: `-set "unwrapStyle=1"` | `AdaptiveTexelSize` (production since D13, 2026-09-05), `MaxTexturesCount` (the fallback unwrap; the retired texturing presets), `FixedTexelSize` (name form, in every repo preset) |
 | `unwrapMaximalTexCount` | int | `1` | positive int | **Maximal textures' count**; relevant when `unwrapStyle=MaxTexturesCount` | `1`, `2` or `4` per preset |
 | `unwrapFixedTexelSizeType` | enum | `0` | `0` Optimal · `1` 2× optimal (50% quality) · `2` 4× (25%) · `3` 10× (10%) · `4` 100× (1%) · `5` Custom | **Texel size**; relevant when `unwrapStyle=FixedTexelSize` | `0` or `1` |
 | `unwrapFixedTexelSize` | float | `0.01` | > 0 | **Custom texel size**; relevant when `unwrapFixedTexelSizeType=5` | not used |
@@ -939,10 +939,11 @@ mechanism for "align on originals, texture from enhanced imagery" in this pipeli
 | `txtCount` | — | texture-count read-back | [UNDOCUMENTED: binary] |
 | `txtFillInUntexturedParts` (correctly spelled) | — | present in the binary **alongside** the typo'd `txtFillInUntextoredParts`; which one is live is [OPEN] | [UNDOCUMENTED: binary] |
 
-`unwrapCheckerBoardCellSize`, present with value `64` in **six** of the eight repo
+`unwrapCheckerBoardCellSize`, present with value `64` in the six retired `MaxTexturesCount`
 `Texturing_*.xml` presets (`HighPolyTexture`, `MaxTextureCount1_8k`, `MaxTextureCount1_16k`,
-`MaxTextureCount4_8k`, `MaxTextureCount4_16k`, `SimplifiedTexture` — the two
-`FixedTexelSize*` presets omit it), is **inert** — see §12.
+`MaxTextureCount4_8k`, `MaxTextureCount4_16k`, `SimplifiedTexture` — under
+`archive/metadata_retired/` since D13, 2026-09-05) and in none of the live presets
+(`AdaptiveTexel_4k`, the two `FixedTexelSize*`), is **inert** — see §12.
 [VERIFIED-by-inspection: `RS_CLI/Metadata/Texturing_*.xml`]
 
 ---

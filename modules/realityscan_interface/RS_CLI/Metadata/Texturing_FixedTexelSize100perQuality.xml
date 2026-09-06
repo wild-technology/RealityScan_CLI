@@ -4,6 +4,6 @@
   <entry key="unwrapFixedTexelSizeType" value="0"/>
   <entry key="unwrapStyle" value="FixedTexelSize"/>
   <entry key="unwrapFillTextures" value="0x0"/>
-  <entry key="unwrapMaxTexResolution" value="8192"/>
+  <entry key="unwrapMaxTexResolution" value="4096"/>
   <entry key="unwrapLargeTriangleRemovalThr" value="400"/>
 </Configuration>

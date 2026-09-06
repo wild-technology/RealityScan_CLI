@@ -5636,3 +5636,84 @@ POSIX `os.path`). The Windows expectation is unchanged (fully green).
 - Instruction-layer sizes after the pass: `CLAUDE.md` 11.9 KB -> 6.7 KB
   (200 -> 128 lines), `HANDOFF.md` 91.6 KB -> the two current sections
   (older sections verbatim in `docs/history/HANDOFF_2026-07_to_2026-09.md`).
+
+## [HARNESS] 2026-09-05 - first Windows run of the consolidated suite: 810/812, both failures Windows-only test defects
+
+The consolidation branch (`claude/agent-native-consolidation`, macOS box) shipped
+with "Windows expectation: fully green (NOT run here)". First run on the
+Honeybadger box (`jonat`, Python 3.13.5 at
+`C:\Users\jonat\AppData\Local\Programs\Python\Python313`, `py` launcher present,
+RealityScan 2.2 installed): **810 passed, 1 failed, 1 skipped in 28 s**, then
+a HYGIENE FAILURE at session end. Neither is a pipeline defect:
+
+- `testing/test_rs_cli.py::test_launch_never_calls_schtasks` replaced
+  `subprocess.run` with a lambda returning `None`. `modules/preflight.py`'s
+  hook-interpreter check (`check_hook_interpreter`) runs `python -c "import
+  modules.run_charter"` wherever `python` is on PATH - it is on Windows and
+  was not on the macOS box, which is why the test passed there. The fake then
+  broke `.returncode`. A second latent defect in the same test: replacing
+  `subprocess.Popen` with a lambda makes the first import of
+  `asyncio.windows_utils` (which subclasses `subprocess.Popen` at import time)
+  fail with `TypeError: function() argument 'code' must be code`. FIX: the
+  run fake returns a `CompletedProcess`, the Popen spy is a class that
+  raises, and the assertion is what the test means - no argv naming
+  `schtasks`/`wscript`, no spawn.
+- `testing/conftest.py` failed the session on the mere EXISTENCE of a
+  repo-root `rs_settings.json`. The owner's interactive store sits there on
+  every box that has run the interactive lane (gitignored). FIX: the check
+  records (size, mtime) at session start and fails only when the suite
+  created or modified the file.
+
+After both fixes and the D13 change below: **840 passed, 1 skipped in 30 s**.
+[VERIFIED: two runs, 2026-09-05] The `M:\` basename and alignment tests the
+macOS box could not run pass here.
+
+## [TEXTURE] 2026-09-05 - decision D13 applied: AdaptiveTexelSize 4096 in every workflow, MaxTexturesCount presets retired, JPG exports, preflight-enforced
+
+Owner instruction (chat, 2026-09-05): *"This needs to be changed globally to
+'adaptive texture size' never 16 or enforced 4x8k during unwrap. Crucial
+textures generates jpgs not pngs."* Applied on branch `agent-native-execution`
+(worktree `recon-tmp`); nothing was run against RealityScan - every claim
+below is by inspection and unit test, and the first modelled component on the
+NA173 test dataset is the live verification.
+
+What changed, and where the old value went:
+
+| Site | Before | After |
+|---|---|---|
+| `GenerateModel.bat` [6/8] `-calculateTexture` | `Texturing_MaxTextureCount4_8k.xml` (4 x 8192) | `Texturing_AdaptiveTexel_4k.xml` (AdaptiveTexelSize, <= 4096) |
+| `GenerateModel.bat` [8/8] `-unwrap` | `Unwrapping_Simplified_4x8k.xml` | `:try_unwrap`: `Unwrapping_AdaptiveTexel_4k.xml`, on a reported error the errors file becomes `expected_unwrap_adaptive_<inst>_<tag>.txt` and `Unwrapping_MaxCount4_4k.xml` runs through `:run` |
+| `ModelToFinal.bat` %4 default / table | `4x8k`; `highpoly|8k|4x8k|16k|fixed100|fixed50` | `adaptive`; `adaptive|fixed100|fixed50` |
+| `ModelToFinal.bat` final unwrap | `Unwrapping_Simplified.xml` (1 x 16384) for every preset but `4x8k` | always `Unwrapping_AdaptiveTexel_4k.xml`; `:try_unwrap` judges the attach-lane result by `-getStatus` `rev` (moved = took), falls back to 4 x 4096, aborts if both leave `rev` unchanged |
+| `AlignImagesFromFolder.bat` (deprecated) | `Texturing_HighPolyTexture.xml` (2 x 16K), `Unwrapping_Simplified.xml` | the adaptive pair |
+| `SetVariables.bat` | `Texturing1x8k`, `Texturing4x8k`, `Texturing1x16k` | `TexturingAdaptive4k`, `UnwrappingAdaptive4k`, `UnwrappingMaxCount4x4k` |
+| `Texturing_FixedTexelSize{100,50}perQuality.xml` | `unwrapMaxTexResolution=8192` | `4096` |
+| 9 `MaxTexturesCount` presets (`Texturing_MaxTextureCount{1,4}_{8k,16k}`, `HighPolyTexture`, `SimplifiedTexture`, `Unwrapping_Simplified{,_4x8k,_4x16k}`) | `RS_CLI/Metadata/` | `archive/metadata_retired/` with a README; nothing live names them |
+| `ModelExportParams{OBJ_NiraParts,FBX_Parts,FBX_U1V1,FBX_U1V1_material,FBX_UV,FBX_UDIM,FBX_UDIM_material}.xml` | `MvsMeshExportTexImgFormat_*=png`, FBX pixel format `32bppBGRA` | `jpg`, `24bppBGR` (JPG has no alpha channel; `MvsMeshExportTexAlpha` was already false). `Obj`, `Obj_Metric`, `GLB` were jpg/jpeg already; PLY has no textures |
+| `finish_model.py` | `TEXTURE_PRESETS` six names, default `4x8k` | `('adaptive', 'fixed100', 'fixed50')`, default `adaptive` |
+| `modules/preflight.py` | model presets = the 4x8k pair | the adaptive pair + fallback; NEW BLOCKS: any live `Texturing_*`/`Unwrapping_*` preset with `unwrapMaxTexResolution` > 4096, any `ModelExportParams*` texture format that is not jpg/jpeg |
+
+Pinned by `testing/test_texture_policy.py` (25 tests: cap, style, retired set,
+no live reference, script contents, CRLF, JPG, preflight blocks). Docs of
+record updated: rs-reference 02, 03, 09 (registry rows, unwrap example, the
+A4 audit box), 10 (sec.9.2 live table, the [8/8] recipe line, export trees,
+sec.13.6 table, A4), ARCHITECTURE, DECISIONS D13, archive README.
+
+Two things this does NOT settle, stated so nobody credits them:
+
+1. **Bake quality of the high-poly at adaptive 4K vs the old 4 x 8K is
+   unmeasured.** FINDINGS 2026-09-03 noted the 4 x 8K high-poly source was
+   "better for bake quality than the 4K it was asked to become". The owner
+   chose adaptive globally; the first NA173 component is the A/B against
+   H2060's look, and `run_decimate.py`'s texture census (`Textured`, texture
+   count, page size) is the oracle.
+2. **The `:try_unwrap` fallback in `GenerateModel.bat` sees only the errors
+   channel.** An adaptive unwrap that neither errors nor mutates the scene
+   (the c5 case DID set `0x83000003`, so the errors file should carry it) is
+   invisible to the .bat; the model report (`-exportReport` /
+   `run_decimate.info`) is the only proof of "Textured". The export census
+   still counts files, not textures - D10 territory.
+
+`unwrapMinTexelSize=0` / `unwrapMaxTexelSize=4` in the adaptive presets remain
+the OPEN enum-vs-float question (rs-reference 03 OPEN 17, 10 OPEN 27); the
+presets have produced the verified 4096-page H2060 exports as written.
