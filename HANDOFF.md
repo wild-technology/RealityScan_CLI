@@ -10,7 +10,7 @@ beside any image. The owner's instruction ("D1: design and execute an end to
 end comprehensive test of the CSV workflow. End to end means zones too and
 merging. Ideally no xmp are written") is the sign-off quote in both charters;
 every charter answer was DERIVED by the agent and is listed below for veto.
-Suite: **922 passed, 1 skipped** (`python -m pytest testing -q`, this box). Nothing pushed.
+Suite: **934 passed, 1 skipped** (`python -m pytest testing -q`, this box). Nothing pushed.
 
 ### Done
 
@@ -42,9 +42,18 @@ Suite: **922 passed, 1 skipped** (`python -m pytest testing -q`, this box). Noth
   on the charter (the first probe launch died at start-up on
   `b_target_images < 100` after READY) and compares the log width with the
   charter's `r_flight_log_params`, not the canonical template.
+- **Owner-relayed H2063 findings checked and fixed here** (FINDINGS
+  `[HARNESS] 2026-09-06` scale oracle entry): `f972b6d` was already in the
+  branch; the scale oracle now reads `identity/*.csv` (rigid-invariant, so
+  the model frame is fine - my earlier "not a scale readback" line is
+  SUPERSEDED); `merge_zones.attribute_result` accepts a fusion's peel count
+  anywhere from its unique image count to its camera sum and counts only
+  the shortfall below unique as loss (`cameras_lost` no longer includes
+  folded copies). Tests carry the H2063 and F2 numbers.
 - **D1 decision narrowed** (`docs/DECISIONS.md`): CSV lane proven end to end;
   arm (i) of C6 measured (prior groups alone -> every camera its own focal);
-  arms (ii)/(iii) still to run; the scale oracle is BLIND under csv.
+  arms (ii)/(iii) still to run; the scale oracle now reads the identity CSVs
+  (F2 stays unmeasured only because the ROV moved under 3 m in the window).
 - `testing/NA173_TEST_PLAN.md`: C0 answered, C1 done (F2), C2 partial
   (model + export half pending), C6 arm (i), C12 done, C13 re-estimated.
 - Memory: `honeybadger-box` corrected (hostname RiverOtter; scheduler notes),
@@ -68,12 +77,13 @@ is free; RealityScan's CRTemp logs are copied under each workspace's
 
 ### Ranked loose ends
 
-1. **Scale under the CSV lane.** The scale oracle reads `identity_r0` poses,
-   which the CSV capture does not write, so `--scale_gate true` passed with
-   both inputs `unmeasured`. Either pin the Export Registration coordinate
-   system (`calexTrans` bundle; a GUI-saved params XML is rs-reference 05
-   Q20) so the identity CSV carries UTM positions and teach
-   `scale_oracle` to read it, or keep `xmp` the default. Owner call (D1).
+1. **When does RealityScan fold duplicate copies?** F2 kept both copies of
+   the 21 shared images (158 = 78 + 80); the owner's H2063 numbers show
+   fused components peeling at the unique count. The accounting now accepts
+   both (`attribute_result`, `duplicates_collapsed` in the report), but the
+   condition (merge mode? shared-image graph? build?) is unmeasured. The
+   H2063 re-merge the owner's other session proposed (`--resume`,
+   `--loss_tolerance 0.0025`) is the live test; it runs on the NA165 box.
 2. **C6 arms (ii) and (iii)** on F0/F2 (XMP sidecars = known-good; neither
    = known-bad) to finish D1's prior-group question; arm (i) is measured.
 3. **C2's model + export half** on the F2 assembly (158 cameras) - D12/D13

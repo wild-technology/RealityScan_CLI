@@ -65,6 +65,94 @@ class TestPartitionClusters(unittest.TestCase):
         self.assertEqual(len(clusters[0]), 3)
 
 
+class TestAttributionWithDuplicates(unittest.TestCase):
+    """Copy-layout overlap images live in two zones, so two inputs share
+    basenames. RealityScan has been seen to keep BOTH copies (NA173 F2,
+    2026-09-06: 78 + 80 with 21 shared peeled as 158) and to fold them
+    into one camera (H2063, another session: 400 + 360 with 4 shared
+    peeled as 756). Both are lossless; before 2026-09-06 the second read
+    as a loss of exactly the duplicate count and was rejected."""
+
+    @staticmethod
+    def pair(n_a, n_b, shared, za='z3', zb='z7'):
+        a_imgs = [f'a_{i}.jpg' for i in range(n_a)]
+        b_imgs = a_imgs[:shared] + [f'b_{i}.jpg' for i in range(n_b - shared)]
+        return (mk(za, 'c0', n_a, None, images=a_imgs),
+                mk(zb, 'c0', n_b, None, images=b_imgs))
+
+    def test_both_copies_kept_is_exact_sum(self):
+        # NA173 F2: 78 + 80 with 21 shared -> peel [158, 80, 78]
+        a, b = self.pair(78, 80, 21, 'zone_1', 'zone_2')
+        res, conf = merge_zones.attribute_result([a, b], [158, 80, 78], logger)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual(res[0]['inputs'], ['zone_1/c0', 'zone_2/c0'])
+        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (0, 0))
+        self.assertEqual(len(res[0]['members']), 137)
+        self.assertTrue(res[1]['residual'] and res[2]['residual'])
+
+    def test_folded_duplicates_are_a_lossless_fusion(self):
+        # H2063 zone_3/3 + zone_7/1: sum 760, unique 756, peel 756
+        a, b = self.pair(400, 360, 4)
+        res, conf = merge_zones.attribute_result([a, b], [756, 400, 360], logger)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual(res[0]['inputs'], ['z3/c0', 'z7/c0'])
+        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (0, 4))
+        self.assertEqual(len(res[0]['members']), 756)
+
+    def test_heavy_overlap_folded(self):
+        # H2063 zone_3/3 + zone_7/2: sum 743, unique 541, peel 541
+        a, b = self.pair(500, 243, 202)
+        res, conf = merge_zones.attribute_result([a, b], [541], logger)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (0, 202))
+
+    def test_real_loss_below_unique_needs_tolerance(self):
+        # H2063 zone_2/8 + zone_5/4: sum 1488, unique 1248, peel 1240
+        a, b = self.pair(800, 688, 240, 'z2', 'z5')
+        res, conf = merge_zones.attribute_result([a, b], [1240], logger)
+        self.assertEqual(conf, 'ambiguous')       # 8 cameras really lost, no budget
+        self.assertIsNone(res[0]['members'])
+        res, conf = merge_zones.attribute_result([a, b], [1240], logger,
+                                                 loss_tolerance=8)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (8, 240))
+
+    def test_same_zone_loss_is_still_a_loss(self):
+        # H2063 zone_5/5 + zone_5/9: no shared images, 1110 -> 1029
+        a, b = self.pair(555, 555, 0, 'z5', 'z5b')
+        res, conf = merge_zones.attribute_result([a, b], [1029], logger)
+        self.assertEqual(conf, 'ambiguous')
+        res, conf = merge_zones.attribute_result([a, b], [1029], logger,
+                                                 loss_tolerance=81)
+        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (81, 0))
+
+    def test_partial_fold_is_adopted_and_warned(self):
+        a, b = self.pair(100, 100, 10)         # sum 200, unique 190
+        with self.assertLogs(logger, level='WARNING') as cm:
+            res, conf = merge_zones.attribute_result([a, b], [195], logger)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (0, 5))
+        self.assertTrue(any('indistinguishable' in m for m in cm.output))
+
+    def test_lone_input_is_not_mistaken_for_a_folded_pair(self):
+        # A single 100-camera input and a 100+20 pair sharing 20: a peel of
+        # 100 reads as the lone input AND as the folded pair - ambiguous,
+        # never silently one of them.
+        a, b = self.pair(100, 20, 20, 'z1', 'z2')
+        c = mk('z9', 'c0', 100, None)
+        res, conf = merge_zones.attribute_result([a, b, c], [100, 100, 20], logger)
+        self.assertEqual(conf, 'ambiguous')
+
+    def test_manifest_without_images_keeps_the_sum_rule(self):
+        a = mk('z1', 'c0', 78, None)
+        a['images'] = []
+        b = mk('z2', 'c0', 42, None)
+        b['images'] = []
+        res, conf = merge_zones.attribute_result([a, b], [120], logger)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual(res[0]['inputs'], ['z1/c0', 'z2/c0'])
+
+
 class TestAttribution(unittest.TestCase):
     def test_exact_fusion(self):
         a = mk('z1', 'c0', 78, None)

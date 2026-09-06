@@ -1987,6 +1987,8 @@ with prior groups alone and no calibration sidecars, every camera in a family ca
 its OWN focal (78 distinct of 78; k2 pinned at 0) - see rs-reference 13 A-series and FINDINGS
 `[RECON] 2026-09-06`. The `x,y,z` columns came out in a local frame (-1..8 m) on a scene pinned
 to EPSG:32757: the export CRS is the dialog's "Coordinate system" choice (`calexTrans`
-bundle, sec.14), which the params file does not pin - so the CSV is membership plus
-calibration readback, not a georeference or scale readback (Q10/U13 still open for this
-writer). [VERIFIED: FINDINGS `[NA173] 2026-09-06`]
+bundle, sec.14), which the params file does not pin - so the CSV is membership, calibration
+readback and (since the same day) the scale oracle's pose source: `modules/scale_oracle`
+compares solved-to-nav distance RATIOS, which any rigid frame preserves, so the model-frame
+x/y/z serve exactly as the `identity_r0` XMP poses did. It is NOT a georeference readback
+(Q10/U13 still open for this writer). [VERIFIED: FINDINGS `[NA173]` and `[HARNESS]` 2026-09-06]

@@ -412,14 +412,20 @@ logs, copied). [VERIFIED: this run]
   imported: the export CRS is the instance's current "Coordinate system"
   choice (rs-reference 13 sec.8 frame #8; only `calexFileFormatId` is pinned,
   the `calexTrans` bundle is not), so the CSV positions are NOT a scale or
-  georeference readback yet. [VERIFIED: the CSVs; frame [OPEN]]
+  georeference readback yet. [VERIFIED: the CSVs; frame [OPEN]] [SUPERSEDED
+  2026-09-06, same day, for the SCALE half: the oracle is rigid-invariant, so
+  the model-frame x/y/z ARE a scale readback - `[HARNESS]` scale oracle entry
+  below. Not a georeference readback: that half stands]
 - **Merge.** `merge_report.json` schema 2: cluster_0 = zone_1_c0 + zone_2_c0
   -> ONE final component, 158 cameras, attribution exact, cameras_lost 0,
   converged, 116 s, `EVALUATION_READY`. 158 = 78 + 80 because the copy
   layout holds the 21 overlap images twice (137 unique registered images;
   `unique_images` 365 counts log rows). **Scale: UNMEASURED for both inputs**
   - the scale oracle reads `identity_r0/*.xmp` poses, which the CSV lane does
-  not write; the gate passed vacuously. [VERIFIED: report]
+  not write; the gate passed vacuously. [VERIFIED: report] [SUPERSEDED
+  2026-09-06, same day: the oracle now reads the identity CSVs too; F2 stays
+  unmeasured because the ROV moved under 3 m - see the `[HARNESS]` scale
+  oracle entry below]
 - **`rs verify`** first returned BLOCKED: "navigation flight log DIFFERS
   across aligned zones". False - the batcher cuts every zone its own log.
   Fixed (`591a30f`): the batch fingerprint records each zone log's sha and
@@ -485,7 +491,8 @@ are still to run before the decision rule fires. [MEASURED: the CSVs; the
   string out of scripts; append long text through a file.
 - `rs verify` blocked a healthy copy-layout run on per-zone flight logs
   (above; fixed `591a30f`). The oracle had never seen a real copy layout.
-- The scale oracle is BLIND under the CSV lane (no `identity_r0` poses);
+- [SUPERSEDED same day - ported, see the scale oracle entry below] The scale
+  oracle is BLIND under the CSV lane (no `identity_r0` poses);
   `merge_zones --scale_gate true` passes with `unmeasured`. Until the CSV
   positions are exported in the output CRS (pin the `calexTrans` bundle, or
   a GUI-saved Export Registration params - rs-reference 05 Q20) the CSV lane
@@ -535,3 +542,61 @@ RealityScan logs copied to `_agent/logs/rs_logs/`. [VERIFIED: this run]
   charter-driven `main.py` log and are NOT failures: the store's own
   refusal of inherited defaults, printed while the declared default is
   installed instead. ESTABLISHED.
+
+## [HARNESS] 2026-09-06 - scale oracle reads the CSV lane; merge attribution counts duplicates correctly (owner-relayed H2063 findings checked against this branch)
+
+The owner relayed three findings from another session (H2063, NA165): (1) the
+scale oracle is frame-invariant and only went dark under the CSV lane because
+its input (`identity_r0` XMPs) stopped being produced; (2) the batcher copies
+overlap images into both zones, RealityScan fuses by content; (3)
+`merge_zones.attribute_result` summed input camera counts, so a fusion whose
+duplicate copies RealityScan folded into one camera read as a loss of exactly
+the duplicate count and was rejected as `ambiguous` (two byte-perfect H2063
+cross-zone fusions thrown away). Checked in `agent-native-execution`:
+
+- **`f972b6d` (export CRS set explicitly) IS in this branch.** [VERIFIED: git]
+- **The scale oracle CSV port was NOT here** - `scale_for_images` and
+  `report` read `identity_r0/*.xmp` only. Ported: `solved_positions()` takes
+  the XMP harvest when it holds poses, else `identity/*.csv`;
+  `component_members` treats each CSV as one component. The oracle IS
+  frame-invariant (`scale_ratio` = median of solved/nav pairwise-distance
+  ratios; `solved_position_cloud`'s own docstring: "the frame is the model
+  frame, not UTM; irrelevant"), so the identity CSV's model-frame x/y/z is
+  exactly the input it wants. **This SUPERSEDES the 2026-09-06 `[NA173]`
+  entry's line "the CSV positions are NOT a scale or georeference readback
+  yet" and the `[HARNESS]` line "until the CSV positions are exported in the
+  output CRS ... the CSV lane has no metric-scale check"** - they are a scale
+  readback; they are not a georeference readback. Known-good / known-bad in
+  `testing/test_scale_gate.py` (synthetic zone: rotated + shifted model
+  frame at 1.0 passes, at 0.236 fails; two CSVs = two components; an XMP
+  harvest beside a CSV still wins). [VERIFIED: tests]
+- **F2 itself stays UNMEASURED for a geometric reason, not a lane one**: the
+  ported oracle matched 78/78 and 80/80 stems, but the ROV moved 0.4 x 0.4 x
+  0.6 m (zone_1) and 0.9 x 1.8 x 1.9 m (zone_2) during the 120 s window, so
+  NO nav pair exceeds the oracle's 3 m floor (`min_nav_distance`, there to
+  keep nav noise out of the ratio) - 0 of 3,003 and 0 of 3,160 pairs. For
+  information only, at a 1 m floor zone_2 reads 0.93 (IQR 0.73-1.09, 2,004
+  pairs) [EST - below the floor, nav noise dominates]. A fixture that
+  translates > 3 m is needed for a real F2 scale number; the full dive does.
+- **RealityScan did NOT fold the duplicates on F2**: 78 + 80 with 21 shared
+  basenames peeled as 158 (`peel_sizes [158, 80, 78]`, fused manifest
+  `camera_count 158`, `images 137`). The H2063 numbers relayed by the owner
+  show the opposite (400 + 360 with 4 shared peeled as 756 = the unique
+  count). Both are lossless fusions; which condition decides whether
+  RealityScan keeps both copies or one camera per unique image is OPEN
+  (candidates: merge mode `merge_georef` vs an `align` rung, whether the
+  duplicate pair sits in the shared-image graph, RealityScan build). The
+  accounting no longer depends on it.
+- **`attribute_result` rewritten**: a subset matches a peel count anywhere
+  from its UNIQUE basename count up to its camera-count SUM (lossless;
+  `collapsed` = copies folded); below the unique count the shortfall is the
+  real `loss` and must fit `loss_tolerance`; manifests without an image list
+  keep the old sum rule. The attempt record gains `duplicates_collapsed`, and
+  `cameras_lost` no longer counts folded copies. Tests carry the owner's
+  H2063 numbers (760/756/4 -> lossless; 743/541/202 -> lossless; 1488/1248
+  peel 1240 -> loss 8, needs the budget; 1110 -> 1029 same-zone -> loss 81)
+  and F2's 158. A lone 100-camera input beside a 100+20 pair sharing 20
+  still reads `ambiguous` for a peel of 100 - two lossless readings, never
+  silently one. [VERIFIED: `testing/test_merge_zones_rework.py`]
+- NOT done here: re-running the H2063 merge (that workspace is on the NA165
+  box) - the owner's step 3.

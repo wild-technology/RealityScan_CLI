@@ -463,29 +463,49 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
     CLI fact (smoke E2E, 2026-07-24): a merge/align leaves the SOURCE
     components in the scene alongside the freshly fused one - the peel
     of a fused 78+42 pair reads [120, 78, 42]. So peel entries are
-    attributed LARGEST FIRST against the remaining inputs (duplicate-path
-    exports share no camera identity, so a fusion's count is EXACTLY the
-    sum of its inputs); an entry matching no remaining subset but equal
-    to an already-consumed input's count is that input's RESIDUAL SOURCE
-    component - expected, recorded, never adopted.
+    attributed LARGEST FIRST against the remaining inputs; an entry
+    matching no remaining subset but equal to an already-consumed input's
+    count is that input's RESIDUAL SOURCE component - expected, recorded,
+    never adopted.
+
+    DUPLICATES (2026-09-06). The copy layout puts every overlap image into
+    both zones it touches, so two inputs can share basenames, and the fused
+    component then holds EITHER both copies (NA173 F2: 78 + 80 with 21
+    shared basenames peeled as 158) OR one camera per unique image (H2063,
+    the other session's numbers: 400 + 360 with 4 shared peeled as 756).
+    Both are lossless fusions. A subset therefore matches a peel count
+    anywhere from its UNIQUE basename count up to its camera-count SUM;
+    only a count BELOW the unique count is a real loss, and that shortfall
+    must fit `loss_tolerance`. The previous rule ("a fusion's count is
+    EXACTLY the sum") read every collapsed fusion as a loss of exactly the
+    duplicate count and rejected it as ambiguous - two byte-perfect
+    cross-zone fusions on H2063 were thrown away that way.
 
     Returns (results, confidence). Each result dict carries its
     peel_index (-> <name>_c<K>.rsalign), camera_count, inputs (consumed
     keys; empty for residuals), members (attributed basename union; None
-    when unattributable), and residual flag. confidence 'exact' iff
-    every entry was uniquely attributed or a residual and every input
-    was consumed.
+    when unattributable), residual flag, `loss` (cameras REALLY lost) and
+    `collapsed` (duplicate copies RealityScan folded into one camera).
+    confidence 'exact' iff every entry was uniquely attributed or a
+    residual and every input was consumed.
 
     `loss_tolerance` (absolute cameras, 0 = exact only) admits a subset whose
-    sum EXCEEDS the peel count by up to that many cameras - i.e. a fusion that
-    dropped a few marginal cameras. Without it a solver-lossy fusion is
-    invisible: H2024's hull fused 4,860 of 4,865 cameras on every rung and was
-    rejected all three times because 4,860 is not an exact subset sum
-    (FINDINGS 2026-07-28). Exact matches always win; a lossy match is only
-    considered when no exact one exists, and each adopted result carries the
-    `loss` it was accepted with so the report can state it."""
+    unique count EXCEEDS the peel count by up to that many cameras - i.e. a
+    fusion that dropped a few marginal cameras. Without it a solver-lossy
+    fusion is invisible: H2024's hull fused 4,860 of 4,865 cameras on every
+    rung and was rejected all three times because 4,860 is not an exact
+    subset sum (FINDINGS 2026-07-28). Lossless matches always win; a lossy
+    match is only considered when no lossless one exists."""
     by_key = {component_analysis.component_key(m): m for m in input_manifests}
     remaining = {k: m['camera_count'] for k, m in by_key.items()}
+    basenames = {k: {os.path.basename(str(i)).lower()
+                     for i in (m.get('images') or [])}
+                 for k, m in by_key.items()}
+    # A manifest with no image list (older exports) cannot be de-duplicated:
+    # its unique count is its camera count, exactly the pre-2026-09-06 rule.
+    for k, m in by_key.items():
+        if not basenames[k]:
+            basenames[k] = {f'{k}#{i}' for i in range(m['camera_count'])}
     consumed_counts: list[int] = []
     results, confidence = [], 'exact'
 
@@ -493,49 +513,80 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
     by_index: dict[int, dict] = {}
     for idx in order:
         count = peel_counts[idx]
-        matched, matched_loss = None, 0
+        matched, matched_loss, matched_collapsed = None, 0, 0
         keys = sorted(remaining)
-        exact_subsets, lossy_subsets = [], []
+        # (loss, kind, -len, chosen, collapsed, unique, total) per candidate
+        # subset. kind: 0 = count is the exact SUM (no copy folded), 1 = count
+        # is the exact UNIQUE count (every duplicate folded), 2 = in between
+        # (some folded - or a loss smaller than the duplicate count, which
+        # this instrument cannot tell apart), 3 = below unique (real loss).
+        candidates: list[tuple] = []
 
-        def search(i, acc, chosen):
-            if acc >= count:
-                if acc == count:
-                    exact_subsets.append(list(chosen))
-                elif acc - count <= loss_tolerance and chosen:
-                    lossy_subsets.append((acc - count, list(chosen)))
-                return
+        def search(i, chosen, total, union):
+            if chosen:
+                unique = len(union)
+                if unique - loss_tolerance > count:
+                    return  # every superset has at least this many unique
+                if total >= count:
+                    if count == total:
+                        kind, loss, collapsed = 0, 0, 0
+                    elif count >= unique:
+                        kind = 1 if count == unique else 2
+                        loss, collapsed = 0, total - count
+                    else:
+                        kind, loss, collapsed = 3, unique - count, total - unique
+                    candidates.append((loss, kind, -len(chosen), list(chosen),
+                                       collapsed, unique, total))
             if i >= len(keys):
                 return
-            chosen.append(keys[i])
-            search(i + 1, acc + remaining[keys[i]], chosen)
+            k = keys[i]
+            chosen.append(k)
+            search(i + 1, chosen, total + remaining[k], union | basenames[k])
             chosen.pop()
-            search(i + 1, acc, chosen)
+            search(i + 1, chosen, total, union)
 
-        search(0, 0, [])
-        if len(exact_subsets) == 1:
-            matched = exact_subsets[0]
-        elif len(exact_subsets) > 1:
-            matched = exact_subsets[0]
-            confidence = 'ambiguous'
-            logger.warning('attribution ambiguous for count %d: %d candidate '
-                           'subsets, took %s',
-                           count, len(exact_subsets), matched)
-        elif lossy_subsets:
-            # Smallest loss first, then the LARGEST subset, so a genuine fusion
-            # beats a lone input that happens to sit within tolerance.
-            lossy_subsets.sort(key=lambda t: (t[0], -len(t[1])))
-            matched_loss, matched = lossy_subsets[0]
-            tied = [s for loss, s in lossy_subsets
-                    if loss == matched_loss and len(s) == len(matched)]
-            if len(tied) > 1:
-                confidence = 'ambiguous'
-                logger.warning('lossy attribution ambiguous for count %d: %d '
-                               'candidates at loss %d, took %s',
-                               count, len(tied), matched_loss, matched)
+        search(0, [], 0, set())
+        if candidates:
+            candidates.sort(key=lambda t: (t[0], t[1], t[2]))
+            lossless_exact = [c for c in candidates if c[0] == 0 and c[1] in (0, 1)]
+            if lossless_exact:
+                best = lossless_exact[0]
+                if len({tuple(c[3]) for c in lossless_exact}) > 1:
+                    confidence = 'ambiguous'
+                    logger.warning('attribution ambiguous for count %d: %d '
+                                   'candidate subsets, took %s',
+                                   count, len(lossless_exact), best[3])
+                elif best[1] == 1:
+                    logger.info('peel count %d is the UNIQUE image count of %s '
+                                '(%d camera(s) summed): RealityScan folded %d '
+                                'duplicate cop%s into one camera - lossless',
+                                count, best[3], best[6], best[4],
+                                'y' if best[4] == 1 else 'ies')
+            elif candidates[0][0] == 0:
+                best = candidates[0]
+                logger.warning('peel count %d sits between the unique (%d) and '
+                               'summed (%d) camera counts of %s - adopted as a '
+                               'lossless fusion with %d duplicate(s) folded; a '
+                               'real loss smaller than the duplicate count is '
+                               'indistinguishable from this',
+                               count, best[5], best[6], best[3], best[4])
             else:
-                logger.info('attributed peel count %d to %s with a %d-camera '
-                            'loss (tolerance %d)',
-                            count, matched, matched_loss, loss_tolerance)
+                # Smallest loss first, then the LARGEST subset, so a genuine
+                # fusion beats a lone input that happens to sit within tolerance.
+                best = candidates[0]
+                tied = [c for c in candidates
+                        if c[0] == best[0] and c[2] == best[2]]
+                if len({tuple(c[3]) for c in tied}) > 1:
+                    confidence = 'ambiguous'
+                    logger.warning('lossy attribution ambiguous for count %d: '
+                                   '%d candidates at loss %d, took %s',
+                                   count, len(tied), best[0], best[3])
+                else:
+                    logger.info('attributed peel count %d to %s with a '
+                                '%d-camera loss (tolerance %d)%s',
+                                count, best[3], best[0], loss_tolerance,
+                                f', {best[4]} duplicate(s) folded' if best[4] else '')
+            matched, matched_loss, matched_collapsed = best[3], best[0], best[4]
 
         if matched is not None:
             members = set()
@@ -544,7 +595,8 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
                 consumed_counts.append(remaining.pop(k))
             by_index[idx] = {'peel_index': idx, 'camera_count': count,
                              'inputs': matched, 'members': sorted(members),
-                             'residual': False, 'loss': matched_loss}
+                             'residual': False, 'loss': matched_loss,
+                             'collapsed': matched_collapsed}
         elif count in consumed_counts:
             consumed_counts.remove(count)
             by_index[idx] = {'peel_index': idx, 'camera_count': count,
@@ -1008,7 +1060,11 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
             adopted = [r for r in attributed if r['inputs']]
             residuals = [r for r in attributed if r['residual']]
             adopted_cams = sum(r['camera_count'] for r in adopted)
-            lost = input_cams - adopted_cams if adopted else None
+            # Duplicate copies RealityScan folded into one camera are not
+            # lost cameras (attribute_result, 2026-09-06): the count deficit
+            # they leave is provenance, and only the remainder is a loss.
+            collapsed = sum(r.get('collapsed', 0) for r in adopted)
+            lost = (input_cams - adopted_cams - collapsed) if adopted else None
 
             entry = {'attempt': attempt_no, 'label': step['label'],
                      'mode': step['mode'], 'workflow_success': result.success,
@@ -1018,6 +1074,7 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                      'input_count': len(subset), 'adopted_count': len(adopted),
                      'residual_count': len(residuals),
                      'camera_delta': (adopted_cams - input_cams) if adopted else None,
+                     'duplicates_collapsed': collapsed if adopted else None,
                      'cameras_lost': lost,
                      'loss_tolerance': tol,
                      'loss_tolerance_frac': loss_tolerance_frac,

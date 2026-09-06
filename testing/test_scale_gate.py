@@ -128,3 +128,83 @@ def test_sound_only_set_is_untouched():
 
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-v']))
+
+
+# ------------------------------------------------- CSV identity lane (D1)
+#
+# The CSV capture (RS_LEGACY_XMP_IDENTITY=0) writes identity/<comp>.csv with
+# x, y, z per camera instead of an identity_r0 XMP harvest. The oracle uses
+# distance RATIOS only, so the export's frame is irrelevant; before
+# 2026-09-06 it read the harvest alone and every CSV-lane component came
+# back UNMEASURED (NA173 F2: the merge's scale gate passed vacuously).
+
+def _line_cameras(n=40, step=5.0):
+    return [(f'cam_{i:03d}', (585000.0 + i * step, 8980000.0 + 0.3 * i, -850.0))
+            for i in range(n)]
+
+
+def _nav(path, cams):
+    lines = ['filename;X (East);Y (North);Alt']
+    lines += [f'{name}.jpg;{x};{y};{z}' for name, (x, y, z) in cams]
+    path.write_text(chr(10).join(lines) + chr(10), encoding='utf-8')
+    return str(path)
+
+
+def _csv(zone, comp, cams, scale=1.0):
+    """Model-frame positions: rotated 90 deg, shifted, scaled by `scale`."""
+    d = zone / 'identity'
+    d.mkdir(parents=True, exist_ok=True)
+    rows = [f'#cameras {len(cams)}', '#name,x,y,z,yaw,pitch,roll,focal,k1,k2']
+    for name, (x, y, z) in cams:
+        mx, my = -(y - 8980000.0) * scale + 3.0, (x - 585000.0) * scale - 7.0
+        rows.append(f'{name}.jpg,{mx},{my},{(z + 850.0) * scale},0,0,0,2660,-0.39,0')
+    (d / f'{comp}.csv').write_text(chr(10).join(rows) + chr(10), encoding='utf-8')
+
+
+def test_csv_lane_measures_a_sound_component(tmp_path):
+    cams = _line_cameras()
+    zone = tmp_path / 'zone_1'
+    _csv(zone, 'zone_1_c0', cams, scale=1.0)
+    nav = scale_oracle.load_nav_positions(_nav(tmp_path / 'flight_log_57L_UTM.txt', cams))
+    stats = scale_oracle.scale_for_images([f'{n}.jpg' for n, _ in cams], str(zone), nav)
+    assert stats is not None and stats['cameras'] == 40
+    assert scale_oracle.verdict(stats)[0] == 'pass'
+    assert abs(stats['median'] - 1.0) < 1e-6
+
+
+def test_csv_lane_catches_a_collapse(tmp_path):
+    cams = _line_cameras()
+    zone = tmp_path / 'zone_1'
+    _csv(zone, 'zone_1_c0', cams, scale=0.236)
+    nav = scale_oracle.load_nav_positions(_nav(tmp_path / 'flight_log_57L_UTM.txt', cams))
+    stats = scale_oracle.scale_for_images([f'{n}.jpg' for n, _ in cams], str(zone), nav)
+    status, why = scale_oracle.verdict(stats)
+    assert status == 'fail' and '0.236' in why
+
+
+def test_csv_lane_report_treats_each_csv_as_one_component(tmp_path):
+    cams = _line_cameras(80)
+    zone = tmp_path / 'zone_1'
+    _csv(zone, 'zone_1_c0', cams[:50])
+    _csv(zone, 'zone_1_c1', cams[50:])
+    log = _nav(tmp_path / 'flight_log_57L_UTM.txt', cams)
+    members = scale_oracle.component_members(str(zone))
+    assert [len(m) for m in members] == [50, 30]
+    rows = scale_oracle.report(str(zone), log)
+    assert [r['component'] for r in rows] == [0, 1]
+
+
+def test_xmp_harvest_still_wins_and_nothing_is_still_unmeasured(tmp_path):
+    cams = _line_cameras()
+    zone = tmp_path / 'zone_1'
+    nav = scale_oracle.load_nav_positions(_nav(tmp_path / 'flight_log_57L_UTM.txt', cams))
+    assert scale_oracle.scale_for_images([f'{n}.jpg' for n, _ in cams], str(zone), nav) is None
+    _csv(zone, 'zone_1_c0', cams, scale=1.0)
+    harvest = zone / 'identity_r0'
+    harvest.mkdir()
+    for name, (x, y, z) in cams:      # an XMP lane at half scale beside the CSV
+        (harvest / f'{name}.xmp').write_text(
+            f'<x:xmpmeta><rdf:Description xcr:Position="{x * 0.5} {y * 0.5} {z * 0.5}"/></x:xmpmeta>',
+            encoding='utf-8')
+    stats = scale_oracle.scale_for_images([f'{n}.jpg' for n, _ in cams], str(zone), nav)
+    assert abs(stats['median'] - 0.5) < 1e-6

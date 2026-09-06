@@ -25,10 +25,15 @@ merge_zones before any model is generated, so it must not live beside the unit
 tests. A 0.236-scale H2024 component passed every existing check and reached a
 deliverable because nothing called this module (review finding D3).
 
-Positions come from the pose XMPs of an identity_r<K> harvest directory
-(zone-scene exports carry real stems - B10 only degrades imported-
-component scenes). Components are separated by successive difference,
-exactly as the align workflow's identity loop defines them.
+Positions come from whichever identity capture the align ran (2026-09-06):
+the pose XMPs of an identity_r<K> harvest directory (zone-scene exports
+carry real stems - B10 only degrades imported-component scenes), or the
+identity/<component>.csv registration exports of the CSV lane
+(RS_LEGACY_XMP_IDENTITY=0), which carry x, y, z per camera in the export's
+own frame. Either way only distance RATIOS are used, so the frame is
+irrelevant. With XMPs, components are separated by successive difference,
+exactly as the align workflow's identity loop defines them; with CSVs each
+file IS one component.
 """
 from __future__ import annotations
 
@@ -56,6 +61,52 @@ def load_solved_positions(identity_dir: str) -> dict[str, tuple]:
             out[os.path.splitext(os.path.basename(path))[0].lower()] = tuple(
                 float(v) for v in raw.split())
     return out
+
+
+def load_identity_csv_positions(components_dir: str) -> dict[str, tuple]:
+    """{stem_lower: (x, y, z)} from the identity/*.csv files the CSV identity
+    capture writes (AlignZone.bat under RS_LEGACY_XMP_IDENTITY=0; format
+    {E7C3B1A9} in calibration.xml: '#cameras N', '#name,x,y,z,...', then one
+    row per camera). Every component of a zone exports into the same folder
+    and no camera sits in two components, so the union is the zone's pose
+    table - the CSV lane's twin of identity_r0. The frame is whatever the
+    export's coordinate-system setting held (the model frame on every run
+    so far: -1..8 m on NA173 F2); only ratios are used, so it does not
+    matter. Empty when the folder is absent."""
+    out: dict[str, tuple] = {}
+    identity_dir = os.path.join(components_dir, 'identity')
+    if not os.path.isdir(identity_dir):
+        return out
+    for path in sorted(glob.glob(os.path.join(identity_dir, '*.csv'))):
+        with open(path, encoding='utf-8-sig', errors='replace') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split(',')
+                if len(parts) < 4:
+                    continue
+                name = parts[0].strip().strip('"')
+                try:
+                    pos = (float(parts[1]), float(parts[2]), float(parts[3]))
+                except ValueError:
+                    continue
+                if name:
+                    out[os.path.splitext(os.path.basename(name))[0].lower()] = pos
+    return out
+
+
+def solved_positions(components_dir: str) -> dict[str, tuple]:
+    """The zone's solved pose table from whichever identity capture ran:
+    the identity_r0 XMP harvest when it holds poses (the XMP lane), else
+    the identity/*.csv exports (the CSV lane). Empty when neither is on
+    disk - callers report UNMEASURED, never pass. Before 2026-09-06 only
+    the harvest was read, so every CSV-lane component came back
+    unmeasured and the merge's scale gate passed vacuously (NA173 F2)."""
+    solved = load_solved_positions(os.path.join(components_dir, 'identity_r0'))
+    if solved:
+        return solved
+    return load_identity_csv_positions(components_dir)
 
 
 def load_nav_positions(flight_log: str) -> dict[str, tuple]:
@@ -95,8 +146,32 @@ def component_members(components_dir: str) -> list[set]:
             break
         rounds.append(stems)
         k += 1
-    return [rounds[i] - (rounds[i + 1] if i + 1 < len(rounds) else set())
-            for i in range(len(rounds))]
+    if rounds:
+        return [rounds[i] - (rounds[i + 1] if i + 1 < len(rounds) else set())
+                for i in range(len(rounds))]
+    # CSV lane: one identity/<scene>_c<K>.csv per component, K ascending.
+    identity_dir = os.path.join(components_dir, 'identity')
+    if not os.path.isdir(identity_dir):
+        return []
+
+    def ordinal(path: str) -> tuple:
+        m = re.search(r'_c(\d+)\.csv$', os.path.basename(path), re.IGNORECASE)
+        return (0, int(m.group(1))) if m else (1, os.path.basename(path).lower())
+
+    members = []
+    for path in sorted(glob.glob(os.path.join(identity_dir, '*.csv')), key=ordinal):
+        stems = set()
+        with open(path, encoding='utf-8-sig', errors='replace') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                name = line.split(',', 1)[0].strip().strip('"')
+                if name:
+                    stems.add(os.path.splitext(os.path.basename(name))[0].lower())
+        if stems:
+            members.append(stems)
+    return members
 
 
 def solved_position_cloud(identity_dir: str) -> list[tuple]:
@@ -235,9 +310,10 @@ def scale_for_images(images: list, components_dir: str, nav: dict) -> dict | Non
     and cannot mis-attribute a component by ordinal position. Returns None when
     the component cannot be measured (no harvest on disk, or fewer than 30
     images shared between the harvest and the nav table) - callers must treat
-    None as UNMEASURED, never as passing.
+    None as UNMEASURED, never as passing. Reads the identity_r0 harvest or,
+    on the CSV lane, the identity/*.csv exports (solved_positions).
     """
-    solved = load_solved_positions(os.path.join(components_dir, 'identity_r0'))
+    solved = solved_positions(components_dir)
     if not solved:
         return None
     members = {os.path.splitext(str(i))[0].lower() for i in images}
@@ -253,7 +329,8 @@ def verdict(stats: dict | None, scale_min: float = DEFAULT_SCALE_MIN,
     similarity error - drift, a fold, or mixed bodies.
     """
     if stats is None:
-        return 'unmeasured', ('no pose harvest on disk, or too few images shared '
+        return 'unmeasured', ('no pose harvest on disk (identity_r0 XMPs or '
+                              'identity/*.csv), or too few images shared '
                               'with the nav table - scale could not be measured')
     median = stats['median']
     width = stats['iqr_high'] - stats['iqr_low']
@@ -270,7 +347,7 @@ def verdict(stats: dict | None, scale_min: float = DEFAULT_SCALE_MIN,
 
 def report(components_dir: str, flight_log: str) -> list[dict]:
     """Per-component scale for a finished align. Component 0 is maximal."""
-    solved = load_solved_positions(os.path.join(components_dir, 'identity_r0'))
+    solved = solved_positions(components_dir)
     nav = load_nav_positions(flight_log)
     rows = []
     for i, members in enumerate(component_members(components_dir)):

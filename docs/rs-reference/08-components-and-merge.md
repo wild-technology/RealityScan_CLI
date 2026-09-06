@@ -1394,6 +1394,11 @@ Under the CSV identity lane (`RS_LEGACY_XMP_IDENTITY=0`) the align stage writes 
 left 316 ordinal `NNNNN.xmp` under `merged/cluster_0/attempt_1_merge_georef/identity_r{0,1,2}/`
 (158 + 80 + 78 = the peel sizes), none beside an image. The copy layout counts the overlap images
 twice (158 cameras = 78 + 80 for 137 unique registered images); `merge_report.json` reports
-`attribution: exact`, `cameras_lost 0`. **The scale gate cannot measure under the CSV lane**: it
-reads `identity_r0` poses from the ALIGN stage, which the CSV capture does not write, so
-`--scale_gate true` passed with both inputs `unmeasured`. [VERIFIED: FINDINGS `[NA173] 2026-09-06`]
+`attribution: exact`, `cameras_lost 0`. Note the count: RealityScan kept BOTH copies of the 21
+shared images here, whereas on H2063 (owner-relayed, same day) fused components peeled at the
+UNIQUE image count - both are lossless, and `merge_zones.attribute_result` now accepts any count
+from the unique count up to the sum (`collapsed` = copies folded) and calls only a shortfall
+below the unique count a loss. Which condition makes RealityScan fold duplicates is OPEN. The
+scale gate measured nothing on this run because the CSV lane wrote no `identity_r0` poses - the
+oracle reads `identity/*.csv` since the same day - and F2 itself moves under 3 m, below the
+oracle's nav-distance floor. [VERIFIED: FINDINGS `[NA173]` and `[HARNESS]` 2026-09-06]
