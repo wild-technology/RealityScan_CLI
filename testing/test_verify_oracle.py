@@ -20,7 +20,7 @@ from modules.verify import (EXIT_CODES, SCALE_MAX, SCALE_MIN, format_text,
 # --------------------------------------------------------------- fixtures
 
 def _zone(ws, name, *, cameras=3, nav_sha="aaa", settings_sha="zzz",
-          frame="utm", fingerprint=True):
+          frame="utm", fingerprint=True, nav_path=None):
     """One aligned zone: images, a component, its manifest, its fingerprint."""
     batched = ws / "batched_images_by_zone" / name
     batched.mkdir(parents=True, exist_ok=True)
@@ -36,7 +36,8 @@ def _zone(ws, name, *, cameras=3, nav_sha="aaa", settings_sha="zzz",
     if fingerprint:
         (aligned / "align_inputs.json").write_text(json.dumps(
             {"schema": 1, "frame": frame,
-             "flight_log": {"sha256": nav_sha},
+             "flight_log": ({"sha256": nav_sha, "path": nav_path}
+                            if nav_path else {"sha256": nav_sha}),
              "align_settings": {"sha256": settings_sha},
              "flight_log_params": {"sha256": "ppp"},
              "min_component_size": 10}), encoding="utf-8")
@@ -229,3 +230,68 @@ def test_text_output_is_ascii(tmp_path):
     _zone(ws, "zone_2", frame="local_euclidean")
     text = format_text(verify_workspace(str(ws)))
     text.encode("ascii")
+
+
+# ------------------------------------- per-zone nav (copy / pool layouts)
+#
+# The batcher cuts every zone its own flight log from ONE source log, so
+# the per-zone shas differ by construction. The first copy-layout run this
+# oracle saw (NA173 F2, 2026-09-06) was BLOCKED on that: known-bad for the
+# raw comparison, and the reason the batch record now vouches per zone.
+
+def _batch_record(ws, source_sha="src", zone_shas=None):
+    rec = {"schema": 1, "flight_log": "flight_log_54N_UTM.txt",
+           "flight_log_sha256": source_sha, "status": "complete"}
+    if zone_shas is not None:
+        rec["zone_flight_logs"] = {
+            z: {"file": "flight_log_54N_UTM.txt", "sha256": sha}
+            for z, sha in zone_shas.items()}
+    (ws / "batched_images_by_zone" / "batch_inputs.json").write_text(
+        json.dumps(rec), encoding="utf-8")
+
+
+def test_per_zone_logs_recorded_by_the_batcher_do_not_block(tmp_path):
+    ws = _workspace(tmp_path, zones=())
+    _zone(ws, "zone_1", nav_sha="aaa")
+    _zone(ws, "zone_2", nav_sha="bbb")
+    _batch_record(ws, zone_shas={"zone_1": "aaa", "zone_2": "bbb"})
+    out = verify_workspace(str(ws))
+    assert not any("navigation flight log DIFFERS" in b for b in out["blocking"])
+    assert out["provenance"]["flight_log_source_sha256"] == "src"
+    assert "recorded by the batcher" in (
+        out["provenance"]["zones"]["zone_1"]["flight_log_origin"])
+
+
+def test_per_zone_log_the_batcher_did_not_write_blocks(tmp_path):
+    """A zone re-aligned with an edited log must still disagree."""
+    ws = _workspace(tmp_path, zones=())
+    _zone(ws, "zone_1", nav_sha="aaa")
+    _zone(ws, "zone_2", nav_sha="edited")
+    _batch_record(ws, zone_shas={"zone_1": "aaa", "zone_2": "bbb"})
+    out = verify_workspace(str(ws))
+    assert out["verdict"] == "blocked"
+    assert any("navigation flight log DIFFERS" in b for b in out["blocking"])
+    assert "differs from the log the batcher wrote" in (
+        out["provenance"]["zones"]["zone_2"]["flight_log_origin"])
+
+
+def test_per_zone_logs_by_location_pass_for_older_batch_records(tmp_path):
+    ws = _workspace(tmp_path, zones=())
+    for z, sha in (("zone_1", "aaa"), ("zone_2", "bbb")):
+        _zone(ws, z, nav_sha=sha, nav_path=str(
+            ws / "batched_images_by_zone" / z / "flight_log_54N_UTM.txt"))
+    _batch_record(ws)  # a record from before per-zone shas existed
+    out = verify_workspace(str(ws))
+    assert not any("navigation flight log DIFFERS" in b for b in out["blocking"])
+    assert "by location" in out["provenance"]["zones"]["zone_2"]["flight_log_origin"]
+
+
+def test_per_zone_logs_elsewhere_still_compare_raw(tmp_path):
+    ws = _workspace(tmp_path, zones=())
+    _zone(ws, "zone_1", nav_sha="aaa",
+          nav_path=str(tmp_path / "elsewhere" / "log.txt"))
+    _zone(ws, "zone_2", nav_sha="bbb",
+          nav_path=str(tmp_path / "elsewhere" / "log2.txt"))
+    _batch_record(ws)
+    out = verify_workspace(str(ws))
+    assert any("navigation flight log DIFFERS" in b for b in out["blocking"])

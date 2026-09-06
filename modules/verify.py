@@ -90,6 +90,45 @@ def _zone_fingerprints(ws: Workspace) -> dict[str, Optional[dict]]:
     return out
 
 
+def _nav_key(ws: Workspace, zone: str, fp: dict,
+             batch_fp: Optional[dict]) -> tuple[Optional[str], str]:
+    """The value nav unanimity compares for one zone, and where it came from.
+
+    The batcher writes every zone its OWN flight log - the rows of that
+    zone's images, cut from one source log - so per-zone shas differ by
+    construction, and comparing them raw blocked the first copy-layout
+    run this oracle ever saw (NA173 F2, 2026-09-06). A zone log the batch
+    fingerprint vouches for collapses to the SOURCE log's sha: recorded
+    per zone by the batcher (``zone_flight_logs``, since 2026-09-06), or,
+    for older batch records, by sitting in that zone's own batched folder,
+    which nothing but the batcher writes. A zone log the batcher did not
+    write - or wrote differently - is compared as itself, so a zone
+    re-aligned with a hand-edited log still disagrees.
+    """
+    sha = _sha_of(fp.get("flight_log"))
+    source = (batch_fp or {}).get("flight_log_sha256")
+    if not sha or not source:
+        return sha, "as aligned"
+    recorded = ((batch_fp.get("zone_flight_logs") or {}).get(zone) or {}
+                ).get("sha256")
+    if recorded:
+        if recorded == sha:
+            return (f"batch:{source}",
+                    "per-zone cut of the batch source log (recorded by the batcher)")
+        return sha, "differs from the log the batcher wrote for this zone"
+    path = (fp.get("flight_log") or {}).get("path") or ""
+    try:
+        inside = bool(path) and (Path(path).resolve().parent
+                                 == (ws.batched / zone).resolve())
+    except OSError:
+        inside = False
+    if inside:
+        return (f"batch:{source}",
+                "per-zone cut of the batch source log (by location; the batch "
+                "record predates per-zone shas)")
+    return sha, "as aligned"
+
+
 def check_provenance(ws: Workspace) -> tuple[dict, list[str]]:
     """Provenance block + the invariant violations it reveals.
 
@@ -132,10 +171,17 @@ def check_provenance(ws: Workspace) -> tuple[dict, list[str]]:
             f"COORDINATE FRAMES DISAGREE across aligned zones ({listing}) - "
             "never merge across frames")
 
+    batch_fp = _load_json(ws.batched / "batch_inputs.json") or None
+    nav_keys = {z: _nav_key(ws, z, fp, batch_fp) for z, fp in present.items()}
+    for zone, (_value, origin) in nav_keys.items():
+        zones[zone]["flight_log_origin"] = origin
+
     for key, label in _UNANIMITY_FIELDS:
         seen: dict[Optional[str], list[str]] = {}
         for zone, fp in present.items():
-            seen.setdefault(_sha_of(fp.get(key)), []).append(zone)
+            value = (nav_keys[zone][0] if key == "flight_log"
+                     else _sha_of(fp.get(key)))
+            seen.setdefault(value, []).append(zone)
         if len(seen) > 1:
             groups = "; ".join(
                 f"{sha or 'absent'} <- {', '.join(sorted(zs))}"
@@ -147,8 +193,8 @@ def check_provenance(ws: Workspace) -> tuple[dict, list[str]]:
 
     provenance = {
         "repo_sha": _repo_sha(),
-        "batch_fingerprint": _load_json(ws.batched / "batch_inputs.json")
-        or None,
+        "batch_fingerprint": batch_fp,
+        "flight_log_source_sha256": (batch_fp or {}).get("flight_log_sha256"),
         "zones": zones,
         "frames": distinct_frames,
         "frame_unanimous": len(distinct_frames) <= 1,

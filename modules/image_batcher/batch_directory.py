@@ -313,7 +313,8 @@ class BatchDirectory(RSModule):
             except (OSError, ValueError):
                 return True, None
 
-        comparable = {k: v for k, v in previous.items() if k != 'status'}
+        comparable = {k: v for k, v in previous.items()
+                      if k not in ('status', 'zone_flight_logs')}
         if comparable == current:
             return True, None
         changed = [k for k in current if comparable.get(k) != current.get(k)]
@@ -322,6 +323,35 @@ class BatchDirectory(RSModule):
             f'(changed: {", ".join(changed)}). Reusing them would mix two '
             'zonings, because copies are skipped but stale members are never '
             f'removed. {remedy}')
+
+    def _zone_flight_log_shas(self, output_dir: str) -> dict:
+        """sha256 of the flight log this run wrote into each zone folder.
+
+        Provenance, not an input: modules.verify compares nav across the
+        aligned zones, and every zone's log is a per-zone cut of ONE source
+        log, so the per-zone shas differ by construction. This record lets
+        the verifier tell "cut from the same source by the batcher" from
+        "aligned with some other log" (NA173 F2 run, 2026-09-06). Excluded
+        from the reuse comparison for the same reason status is.
+        """
+        out: dict = {}
+        if not os.path.isdir(output_dir):
+            return out
+        for name in sorted(os.listdir(output_dir)):
+            zone_dir = os.path.join(output_dir, name)
+            if not (name.startswith('zone_') and os.path.isdir(zone_dir)):
+                continue
+            logs = sorted(f for f in os.listdir(zone_dir)
+                          if f.startswith('flight_log')
+                          and f.lower().endswith('.txt'))
+            if not logs:
+                continue
+            h = hashlib.sha256()
+            with open(os.path.join(zone_dir, logs[0]), 'rb') as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b''):
+                    h.update(chunk)
+            out[name] = {'file': logs[0], 'sha256': h.hexdigest()}
+        return out
 
     def _zone_tree_has_images(self, output_dir: str) -> bool:
         """True when the batched tree already contains at least one image."""
@@ -343,6 +373,8 @@ class BatchDirectory(RSModule):
         """
         data = self._input_fingerprint(flight_log_path)
         data['status'] = status
+        if status == 'complete':
+            data['zone_flight_logs'] = self._zone_flight_log_shas(output_dir)
         try:
             with open(os.path.join(output_dir, self.FINGERPRINT_NAME), 'w',
                       encoding='utf-8') as fh:

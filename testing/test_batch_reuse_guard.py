@@ -212,3 +212,34 @@ def test_status_is_not_compared_as_an_input(tmp_path):
 
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-v']))
+
+
+# --------------------------------------------- per-zone log provenance
+
+def test_complete_fingerprint_records_each_zone_log(tmp_path):
+    """The batcher vouches for the per-zone logs it cut, so modules.verify
+    can tell them from a zone aligned with some other log (NA173 F2,
+    2026-09-06). Provenance, not an input: reuse ignores it."""
+    raw = _images(tmp_path / 'raw_images', ['a.jpg'])
+    log = _flight_log(tmp_path / 'flight_log_4Q_UTM.txt')
+    mod = _module(tmp_path, raw)
+    out = _zone_tree(tmp_path, ['a.jpg'])
+    _flight_log(out / 'zone_1' / 'flight_log_4Q_UTM.txt', rows=1)
+    mod._write_fingerprint(str(out), str(log), status='complete')
+
+    rec = json.loads((out / 'batch_inputs.json').read_text(encoding='utf-8'))
+    zone = rec['zone_flight_logs']['zone_1']
+    assert zone['file'] == 'flight_log_4Q_UTM.txt'
+    assert len(zone['sha256']) == 64
+    assert zone['sha256'] != rec['flight_log_sha256']
+    ok, msg = mod._check_reuse_is_safe(str(out), str(log))
+    assert ok, msg
+
+
+def test_in_progress_fingerprint_records_no_zone_logs(tmp_path):
+    raw = _images(tmp_path / 'raw_images', ['a.jpg'])
+    log = _flight_log(tmp_path / 'flight_log_4Q_UTM.txt')
+    out = _zone_tree(tmp_path, ['a.jpg'])
+    _module(tmp_path, raw)._write_fingerprint(str(out), str(log), status='in_progress')
+    rec = json.loads((out / 'batch_inputs.json').read_text(encoding='utf-8'))
+    assert 'zone_flight_logs' not in rec
