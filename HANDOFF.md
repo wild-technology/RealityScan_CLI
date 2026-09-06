@@ -19,8 +19,8 @@ RealityScan; no dataset, instance or scheduled task was touched.
   the classifier had refused `git checkout` / `git restore` / `git branch -f`
   and a compound merge earlier). The scratch worktree that carried the work
   (`C:/Users/jonat/AppData/Local/Temp/claude/C--Users-jonat-Desktop-CoyoteThings-RealityScan-CLI/5b974d57-9075-4336-af70-4a3cd147b20b/scratchpad/rs_recon`,
-  branch `recon-tmp`, `git worktree list`) is now redundant:
-  `git worktree remove <that path>` and `git branch -d recon-tmp`.
+  branch `recon-tmp`) was removed and the branch deleted at session end;
+  `git worktree list` shows only the main checkout.
 - The main checkout had **90 tracked files deleted on disk** when the session
   started (`CLAUDE.md`, `HANDOFF.md`, `FINDINGS.md`, all of `testing/`,
   `wildscan/`, `archive/`; mtime 2026-09-05 22:25, minutes before the
@@ -69,8 +69,8 @@ Nothing.
 
 ### Ranked loose ends
 
-1. Decide the parked deletions (`stash@{0}`: pop or drop); remove the
-   worktree; push when the owner says so.
+1. Decide the parked deletions (`stash@{0}`: pop or drop); push when the
+   owner says so (`git push -u origin agent-native-execution`).
 2. **Owner decisions still open** - the prompts are in the session's final
    report and in `docs/DECISIONS.md`: D1 (run cell C6 first, or keep the XMP
    default), D9 (promote `stage_features` - cell C11, low risk), D10 (export
