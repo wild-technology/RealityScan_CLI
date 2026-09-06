@@ -49,7 +49,9 @@ Usage:
                           [--visible true] [--auto_model false]
                           [--complist <file>]  (explicit component inputs)
 
-All prompts default to the previous run's answers (rs_settings.json).
+All prompts default to the previous run's answers (rs_settings.json) -
+except under a charter / RS_NO_SETTINGS_INHERITANCE, where a missing
+argument is refused by name instead of inherited (module_base.settings_store).
 """
 from __future__ import annotations
 

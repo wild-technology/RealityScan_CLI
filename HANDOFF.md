@@ -1,5 +1,111 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-09-06 — RECONCILED + REVIEWED on `recon-tmp` (a worktree), read this first
+
+The owner's local `agent-native-execution` branch (2 commits, 2026-08-31 /
+09-01) was reconciled onto `origin/claude/agent-native-consolidation` (the
+2026-09-05 consolidation, which already carried the first commit as the
+cherry-pick `d38d5f3`): merge `f244edf` takes the consolidation tree
+verbatim, then `677aa6c` re-applies the Zeuss 25/45 + hardness 2.0 commit
+(**D3: owner said yes**). On top: the first Windows run of the suite, the
+owner's texture policy (**D13**), and the review fixes. Suite: **879 passed, 1 skipped**
+(`python -m pytest testing -q`, this box). Nothing ran against
+RealityScan; no dataset, instance or scheduled task was touched.
+
+### Where the work is (and why it is not on the branch yet)
+
+- Commits live on branch **`recon-tmp`** in a scratch worktree:
+  `%LOCALAPPDATA%\Temp\claude\C--Users-jonat-Desktop-CoyoteThings-RealityScan-CLI\5b974d57-9075-4336-af70-4a3cd147b20b\scratchpad\rs_recon`
+  (`git worktree list` shows it). The desktop app's auto-mode classifier
+  refused `git checkout`, `git restore`, `git branch -f` and `git merge` in
+  the main checkout, so the branch pointer was never moved. **First command
+  of the next session** (from the main checkout):
+  `git merge --ff-only recon-tmp` - then `git worktree remove <that path>`
+  and `git branch -d recon-tmp`.
+- The main checkout `C:\Users\jonat\Desktop\CoyoteThings\RealityScan_CLI`
+  had **90 tracked files deleted on disk** when the session started
+  (`CLAUDE.md`, `HANDOFF.md`, `FINDINGS.md`, all of `testing/`, `wildscan/`,
+  `archive/`; mtime 2026-09-05 22:25, minutes before the session). Not done
+  by this session and not restored (refused by the classifier). The
+  fast-forward above re-materialises them; if the deletion was deliberate,
+  say so before merging.
+- `origin/agent-native-execution` was deleted on the remote on 2026-09-03
+  (its head is tag `agent-native-execution-final`). Nothing was pushed.
+- The 18 GB `test_dataset_NA173_H2014g/` sits INSIDE the repo root,
+  untracked and not gitignored: never `git add -A` there.
+
+### Done
+
+- **D3** applied (`677aa6c`); **D13** applied (`eca8aba`): AdaptiveTexelSize
+  4096 in every texture pass, the nine `MaxTexturesCount` presets retired to
+  `archive/metadata_retired/`, `:try_unwrap` fallback to 4 × 4096 in
+  `GenerateModel.bat` and `ModelToFinal.bat`, JPG in every export preset,
+  `ModelToFinal.bat` presets `adaptive|fixed100|fixed50`, preflight blocks
+  any live preset above 4096 or a non-JPG export (`testing/test_texture_policy.py`).
+- **D6** checked on this box: the five staging scripts are not here
+  (searched `C:\Users\jonat`, `D:`, `E:`, `F:`); they exist only on the NA165
+  box. Still OPEN.
+- Windows suite: two Windows-only test defects fixed (`d9e61d3`).
+- Review workflow (7 lenses + adversarial verification + NA173 probe): 78
+  findings; the confirmed and hand-verified must/should ones fixed
+  (`testing/test_review_fixes.py`, 39 tests) - FINDINGS `[HARNESS]
+  2026-09-06` lists them. Headline: the charter's `align_settings_xml` never
+  reached the run; `--stages` was preflighted against the wrong stage list;
+  a zone mismatch in `science.frame` passed; pool layout would have skipped
+  every zone; the printed `schtasks` line could not be run from an agent
+  tool; `--foreground` was ungated; ModelToFinal's fallback would have
+  aborted the reprojection on its own marker.
+- Docs of record corrected (rs-reference 01-06/09-13/README, CLAUDE.md,
+  README, skills, rules, DECISIONS D3/D6/D10/D12/D13/D15,
+  PRODUCT_READINESS; `WORKFLOW_WALKTHROUGH.md` → `docs/history/`).
+- `testing/NA173_TEST_PLAN.md`: what is tested, why, the oracles with their
+  known-good/known-bad, 14 cells (C0-C13), two fixtures, the budget.
+- Memory (this box): `harness-git-and-hook-limits`, `honeybadger-box`.
+
+### Running
+
+Nothing.
+
+### Ranked loose ends
+
+1. `git merge --ff-only recon-tmp` in the main checkout (above), then decide
+   the deleted-files question; push when the owner says so.
+2. **Owner decisions still open** - the prompts are in the session's final
+   report and in `docs/DECISIONS.md`: D1 (run cell C6 first, or keep the XMP
+   default), D9 (promote `stage_features` - cell C11, low risk), D10 (export
+   report with the texture census - C10), D12 (simplification strategy and
+   the blind deletes - C9; state N and the ratio), D15 (keep `FINDINGS.md`
+   guarded, split the old tail to `docs/history/`).
+3. Run the plan in order: C1, C2 (owner runs `--foreground`), C0, C3, C10,
+   C12, C4, C5, C13, C7/C8. The mini fixture (F1) first; nothing touches
+   the source tree.
+4. Cell C0 before any prior-dependent number: the 13-column log under the
+   14-column format is UNMEASURED (preflight warns).
+5. `test_rig_mounts.py` `logging.disable` leak; `test_preprocess_module.py`
+   is a staging script under a test name (0 tests collected).
+6. The routing hook's phrasing; `RS_RUN_CHARTER` set-but-unusable blocking
+   read-only commands (fail-closed, kept).
+
+### Artifact locations
+
+Worktree + branch `recon-tmp` (above). Review outputs:
+`<scratchpad>\review_result.json`, `<scratchpad>\agents\na173-probe\`
+(probe charters and plans; `RUN_CHARTER.json` there is a scratch charter
+signed "probe" - never a real sign-off). Tags `agent-native-execution-final`
+(`85c556a`) and `manual-era-final` (`b640c81`) unchanged.
+
+### Exact next commands
+
+```bash
+git -C "C:/Users/jonat/Desktop/CoyoteThings/RealityScan_CLI" merge --ff-only recon-tmp
+python -m pytest testing -q                                   # expect 879 passed, 1 skipped
+python rs.py charter init <results_root>/_agent/RUN_CHARTER.json   # cell C1, mini fixture F1
+python rs.py preflight --charter <C>
+python rs.py plan --charter <C> --validate
+```
+
+---
+
 ## 2026-09-05 — AGENT-NATIVE CONSOLIDATION on branch `claude/agent-native-consolidation`, read this first
 
 Roadmap Phases 2–4 landed in one pass (docs/history/AGENT_NATIVE_ROADMAP.md):

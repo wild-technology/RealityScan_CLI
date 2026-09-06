@@ -72,7 +72,7 @@ One hop per question. Pick the row whose trigger matches, read that file.
 | 09 | `09-xml-parameter-files.md` | You are writing, editing or debugging a `params.xml`: which commands consume one, which silently ignore one, the `<Configuration>` schema per profile type, `.rsortho` / `.rsbox` / `.rsinfo` / `.rcconfig` — including the `.rsInfo` `<Model>` tag and how to decode `transformToModel`, the only on-disk record of what frame an export landed in — the install-tree format dictionaries, the 34 shipped profiles as worked examples, and an authoring guide. |
 | 10 | `10-reconstruction-texturing-export.md` | You are downstream of a solved alignment: reconstruction region, mesh quality tiers, depth-map controls, model naming and lifecycle, cleaning/filtering/holes/simplify/smooth, classification and DTM, colorization vs texturing, unwrapping and the texture budget, reprojection, every export command and its profile, LoD/3D Tiles, ortho/DSM/DTM/contours, publishing targets, reports. |
 | 11 | `11-automation-patterns.md` | You are building the harness: persistent instances, the canonical `:run` subroutine, the ErrorWriter completion trigger, marker-file ownership, crossing the cmd/`.bat` data boundary, multi-GPU isolation, progress and stall monitoring, checkpoint/rollback, census-based verification, log snapshotting, four end-to-end recipes, and an anti-pattern list. |
-| 12 | `12-failure-modes-and-race-conditions.md` | Something failed, hung, or "succeeded" without doing anything. 88 numbered entries `F-01`…`F-88` (symptom → cause → how detected → mitigation → detection test), the complete exit-code / result-code / `err:NNNN` / process-ID tables, the NA167 `B1`–`B11` map, and an ordered diagnostic playbook keyed by symptom. |
+| 12 | `12-failure-modes-and-race-conditions.md` | Something failed, hung, or "succeeded" without doing anything. 94 numbered entries `F-01`…`F-88` plus `F-101`…`F-106` (symptom → cause → how detected → mitigation → detection test), the complete exit-code / result-code / `err:NNNN` / process-ID tables, the NA167 `B1`–`B11` map, and an ordered diagnostic playbook keyed by symptom. |
 | 13 | `13-camera-rigs-priors-and-orientation.md` | You are telling RealityScan where a camera is and which way it points: the prior model, XMP as the per-image channel, `xcr:Rig` / `RigInstance` / `RigPoseIndex`, calibration vs distortion groups, distortion models and their coefficient vectors, rotation conventions, prior strength/accuracy/composition, every coordinate frame in play and the transforms between them, applied to a four-camera underwater ROV rig. |
 
 **Routing shortcuts.**
@@ -109,6 +109,8 @@ the thing in column 1.
 | Wait for a delegated command | `01-cli-fundamentals.md` §6; `11-automation-patterns.md` §2 | Do not trust a single `-waitCompleted`. Delegated commands are **queued**, and `-waitCompleted` issued before the instance picks the command up **returns immediately**, so the next command runs against a busy instance. Use the `:run` shape: delegate → grace delay → `-waitCompleted` → grace → `-waitCompleted` → check the errors marker | `[CONTRADICTED: NA167 §-waitCompleted]` |
 | Diagnose any ambiguous failure | `12-…` §2 and `F-39`/`F-40` | Do not boot another instance first. `%LOCALAPPDATA%\Temp\RealityScan.log` is **global and truncated on every instance boot**, and it is the only place the real reason behind the generic `0x8000FFFF` exists. Snapshot it inside the driver, immediately after the failing call returns — and validate the snapshot, because a snapshot taken while two instances ran spliced two runs together | `[VERIFIED: NA167 B6; FINDINGS 2026-07-27]` |
 | Export anything (XMP, components, models) | `04-image-input-and-handling.md` §4; `02-command-reference.md` `-exportXMP` | Three silent-zero traps in one step: (a) `appIncSubdirs` defaults **false**, so `-addFolder` over a per-camera tree adds **0 images** and the whole zone "succeeds" in 25 s; (b) `-setMinComponentSize` defaults **5**, silently excluding smaller components from export *and* selection — set it to `1`; (c) exports are **selection-driven** and `-importFlightLog` leaves images actively selected, so under `-silent` an export finishes in 0.057 s having written nothing — `-deselectAllImages` first | `[VERIFIED: FINDINGS 2026-07-23; HANDOFF 2026-07-21]` |
+| Delete an intermediate model by name | `12-…` `F-102`; `02-command-reference.md` A1 | Never `-selectModel <name>` then `-deleteSelectedModel` unverified. Inside a populated component a bogus name is a **silent no-op** (`lastError:0`) and the delete lands on whatever was selected — the working model. Prove the select via `-exportReport SelectedModel.html` first (`run_decimate.py`); `ModelToFinal.bat` still carries the blind pattern (D12, owner's call) | [VERIFIED: FINDINGS 2026-09-03] |
+| Unwrap or export a textured model | `10-…` A5; `12-…` `F-103`; `11-…` §2.3 | Do not read a clean exit as "textured". `AdaptiveTexelSize` can reject a mesh in 3 s with `rev` unchanged, `-reprojectTexture` then fails, and `-exportSelectedModel` writes a geometry-only OBJ and reports success. Census `Textured` and the texture count; the `:try_unwrap` fallback covers only the reported-error case | [VERIFIED: FINDINGS 2026-09-03] |
 
 ---
 
@@ -150,6 +152,10 @@ accordingly.
   date; a claim the new fact supersedes is corrected in place with a `[VERIFIED: FINDINGS <date>]`
   or `[SUPERSEDED]` note, never silently rewritten. Numbered failure modes added later start at
   `F-101`.
+- **Campaign-driver citations.** `testing/<driver>.py` paths dated before 2026-08-07
+  (`probe_d7.py`, `run_h2024_v2.py`, `ab_orientation_priors.py`) resolve to
+  `archive/campaign_drivers/<driver>.py`; `testing/run_on2026_{run3,union,wreck}.py` moved there
+  on 2026-09-05 (`docs/history/README.md`).
 
 ## Sources
 
@@ -160,7 +166,7 @@ accordingly.
 | Dated fact log | `FINDINGS.md` (repo root) |
 | Revised docs + numbered bugs B1–B11 | `testing/NA167_SESSION_NOTES.md` |
 | Test matrices | `testing/MERGE_TEST_PLAN.md`, `testing/ALIGN_MERGE_HARDENING_PLAN.md`, `testing/PRIORS_DISTORTION_TEST_PLAN.md`, `testing/FINDINGS.md`, `testing/MERGE_STRATEGY_REPORT.md` |
-| Decision records | `docs/settings-evaluation-2026-07.md`, `docs/merge-growth-strategy-2026-07.md`, `docs/history/MERGE_REWORK_RECOMMENDATIONS.md`, `docs/WORKFLOW_WALKTHROUGH.md`, `docs/history/code-review-2026-07.md` |
+| Decision records | `docs/settings-evaluation-2026-07.md`, `docs/merge-growth-strategy-2026-07.md`, `docs/history/MERGE_REWORK_RECOMMENDATIONS.md`, `docs/history/WORKFLOW_WALKTHROUGH.md`, `docs/history/code-review-2026-07.md` |
 | Working code | `modules/realityscan_interface/realityscan_cli.py`, `modules/realityscan_interface/RS_CLI/Scripts/*.bat`, `RS_CLI/Metadata/*.xml`, `modules/camera_registry.py`, `modules/flight_logs.py`, `merge_zones.py`, `geoall.py`, `poses2flightlog.py` |
 | Current state and ranked open questions | `HANDOFF.md`, `CLAUDE.md` |
 
@@ -173,7 +179,7 @@ accordingly.
 | Product | RealityScan 2.2 (Epic Games) |
 | Build measured | `RealityScan.exe` FileVersion `2.2.0.119430.RS`, ProductVersion `2.2.0.119430`, installed at `C:\Program Files\Epic Games\RealityScan_2.2\` |
 | Help build | The offline Help shipped with that install — `Help\en-US\`, 408 files, newest file dated 2026-07-21. 153 topics were converted to plain text and read for this reference |
-| Empirical record | This repository (`RealityScan_CLI`, continuation of `wild-technology/RC_Main`) at commit **`8d3ac43`** (2026-07-29), **reconciled with `FINDINGS.md` through 2026-09-03 on 2026-09-05** (per-file "Addenda" sections; in-place corrections where a claim was superseded) |
+| Empirical record | This repository (`RealityScan_CLI`, continuation of `wild-technology/RC_Main`) at commit **`8d3ac43`** (2026-07-29), **reconciled with `FINDINGS.md` through 2026-09-05 on 2026-09-06** (per-file "Addenda" sections; in-place corrections where a claim was superseded) |
 | Platform | Windows 11, native (no WSL), multi-GPU CUDA, cmd/`.bat`/PowerShell substrate |
 | Written | 2026-08-04 |
 

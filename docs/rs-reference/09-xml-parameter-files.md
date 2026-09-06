@@ -338,9 +338,12 @@ one settings panel, so a single `Texturing_*.xml` can be passed to either comman
 does exactly that: `GenerateModel.bat` passes `Texturing_AdaptiveTexel_4k.xml` to
 `-calculateTexture` and `Unwrapping_AdaptiveTexel_4k.xml` — same GUID, same key family — to
 `-unwrap` (the `MaxTextureCount4_16k` / `Simplified_4x16k` pair it used until 2026-07-31 and the
-`4_8k` / `Simplified_4x8k` pair until 2026-09-05 are retired, decision D13). The only structural difference between the two file groups is that the unwrap files add
-`unwrapMinTexResolution` and `unwrapMethod` and the texturing files add
-`unwrapCheckerBoardCellSize`. [VERIFIED-by-inspection + production use, 2026-07-29]
+`4_8k` / `Simplified_4x8k` pair until 2026-09-05 are retired, decision D13). For the live adaptive
+pair the two files are key-identical and differ only in `unwrapFillTextures` (`0x1` vs `0x0`)
+and `unwrapLargeTriangleRemovalThr` (`1000` vs `10`); the retired `MaxTexturesCount` files split
+differently (their unwrap files added `unwrapMinTexResolution` and `unwrapMethod`, their
+texturing files `unwrapCheckerBoardCellSize`). [VERIFIED-by-inspection 2026-09-06; production
+use 2026-07-29]
 
 Each GUID also names a registry subkey,
 `HKCU\Software\EpicGames.RealityScan\RealityScan\Workspace\SP-{GUID}`, which is where the
@@ -427,7 +430,9 @@ pass the variable:
 :: Model tools - profile is the SOLE argument
 call :run -simplify         "%MetadataDir%\SimplifyNoise_Params.xml"
 call :run -calculateTexture "%MetadataDir%\Texturing_AdaptiveTexel_4k.xml"
-call :try_unwrap                     :: -unwrap Unwrapping_AdaptiveTexel_4k.xml, fallback Unwrapping_MaxCount4_4k.xml
+:: :try_unwrap = -unwrap Unwrapping_AdaptiveTexel_4k.xml, fallback Unwrapping_MaxCount4_4k.xml
+:: (a `::` after a command on the SAME line is not a comment - cmd passes it as arguments)
+call :try_unwrap || goto :fail
 
 :: Reprojection - profile is the THIRD argument, after two model names
 call :run -reprojectTexture "%model_tag%_HighPoly_Textured" "%model_tag%_Simplified" ^
@@ -2007,8 +2012,9 @@ Rules:
 
 1. **Back up the original file first**, outside `Program Files`, and record its byte size and hash
    in the run's environment snapshot.
-2. **Keep a copy in the repository.** This repo keeps `flightlogs.xml` and `sensorsdb.xml` at its
-   root for exactly this reason. Diff repo copy vs installed copy at session start.
+2. **Keep a copy in the repository.** This repo keeps `flightlogs.xml` and `calibration.xml` at
+   its root for exactly this reason (`sensorsdb.xml` is a never-installed reference copy under
+   `archive/reference_data/` since 2026-09-05). Diff repo copy vs installed copy at session start.
 3. **Never renumber or reuse an existing `id` GUID.** A profile that names it will bind to the
    wrong parser. Generate a fresh GUID for a new format.
 4. **Copy an adjacent `<format>` block wholesale and edit it.** Reusing an existing `reader` is
@@ -2031,7 +2037,7 @@ and is listed below.
 | File | Type | Consumed by | What it sets / changes | Status |
 |---|---|---|---|---|
 | `AlignmentParams.xml` | alignment | `AlignZone.bat`, `GrowZone.bat`, `AlignImagesFromFolder.bat`, 3 probe scripts (parsed → `-set`, never passed as an argument) | the full 39-entry production alignment config, §2.1 | **Production** |
-| `FlightLogParams.xml` | trajectory import | `-importFlightLog` at 6 `.bat` call sites — `AlignZone.bat`:77, `GrowZone.bat`:182, `AlignImagesFromFolder.bat`:137, `AlignImageList.bat`:47, `SequentialAlignGrow.bat`:64, `MergeZoneComponents.bat`:154; path supplied by `modules/flight_logs.py`, `merge_zones.py`, `realityscan_interface.py` | 13-column format GUID + per-cruise UTM CRS | **Production, generated** |
+| `FlightLogParams.xml` | trajectory import | `-importFlightLog` at 4 live `.bat` call sites — `AlignZone.bat`, `GrowZone.bat`, `MergeZoneComponents.bat`, the deprecated `AlignImagesFromFolder.bat` (plus `AlignImageList.bat` and `SequentialAlignGrow.bat`, archived to `archive/legacy_scripts/` 2026-09-05); path supplied by `modules/flight_logs.py`, `merge_zones.py`, `realityscan_interface.py` | 14-column format GUID `{D1F2A3B4}` (13 + `FocalLength`) + per-cruise UTM CRS, both coordinate entries regenerated per run by `write_flight_log_params` | **Production, generated** |
 | `XMPExportParams.xml` | XMP export | **nothing** | would enable merge / GPS / flags / calib-groups / rig, `xmpCamera=3` | **Unreferenced** |
 | `SimplifyNoise_Params.xml` | simplify | `GenerateModel.bat` step [6/8] | relative 70 %, `simplPreserveParts=2`, `simplEqualizeDensity=true` | **Production** — but a documented placeholder derived from the 50 % template |
 | `SimplifySmooth_80per_Params.xml` | simplify | `GenerateModel.bat` step [7/8], run 4× | relative 80 %, otherwise identical | **Production** — same placeholder caveat |
@@ -2061,6 +2067,7 @@ and is listed below.
 | `ModelExportParamsPLY_DensePoints.xml` | model export | `ExportDeliverables.bat` | PLY, **vertex colours on, textures off**, scale 1.0 | **Production** |
 | `ModelExportParams.xml` | model export | `SetVariables.bat` + declared in `ExportDeliverables.bat` | generic v13, scale 100, jpg | Unused as an argument |
 | `ModelExportParamsObj.xml` | model export | **nothing** (`SetVariables.bat` refers to `ModelExportParamsOBJ.xml`, which resolves only because NTFS is case-insensitive — and the variable is never consumed) | OBJ, scale 100, `Unreal` preset, jpg, a `_Normal_0` layer | Unreferenced |
+| `ModelExportParamsObj_Metric.xml` | model export | `run_decimate.py` (every decimated export), `ModelToFinal.bat` format `objmetric` | OBJ v0 at TRUE scale 1.0, CRS type 0, no parts, `.rsInfo` on, jpg + `_Normal_0` layer — the stock OBJ preset's scale 100 put an ON2026 vertex at -179.90 1101.54 43.67 in a metre frame | **Production** |
 | `ModelExportParamsGLB.xml` | model export | `SetVariables.bat` only | GLB, scale 10, rotation X `-90.0`, **embedded jpeg** | Unused |
 | `ModelExportParamsFBX_U1V1.xml` | model export | `SetVariables.bat` only | FBX, tile `_u1_v1`, no materials, 24bppBGR | Unused |
 | `ModelExportParamsFBX_U1V1_material.xml` | model export | `SetVariables.bat` only | same + materials + normal layer | Unused |
@@ -2069,14 +2076,18 @@ and is listed below.
 | `ModelExportParamsFBX_UDIM_material.xml` | model export | `SetVariables.bat` only | FBX, UDIM tiles + materials + normal layer | Unused |
 
 [VERIFIED-by-probe: repo-wide reference scan excluding `Metadata/` itself, plus per-file reads and
-MD5 comparison, 2026-08-04]
+MD5 comparison, 2026-08-04; recounted against the live directory 2026-09-06]
 
-Summary: of 34 profiles, **10 are in the production path** (`AlignmentParams`, `FlightLogParams`,
-`SimplifyNoise`, `SimplifySmooth_80per`, `Texturing_MaxTextureCount4_16k`,
-`Unwrapping_Simplified_4x16k`, `ReprojectionParams`, and the three `ExportDeliverables` model-export
-profiles), **4 belong to the deprecated `AlignImagesFromFolder.bat`** (`SimplifyAutomationParams`,
-`Texturing_HighPolyTexture`, `Texturing_SimplifiedTexture`, `Unwrapping_Simplified`), and the
-remaining **20 are declared-but-unconsumed or entirely unreferenced**.
+Summary (recounted 2026-09-06, after D13): **32 live profiles** under `RS_CLI/Metadata/` plus
+**9 retired** under `archive/metadata_retired/`. **In the production path: 14** —
+`AlignmentParams`, `FlightLogParams`, `FlightLogParamsLocal`, `RegistrationExportParams`,
+`SimplifyNoise`, `SimplifySmooth_80per`, `Texturing_AdaptiveTexel_4k`,
+`Unwrapping_AdaptiveTexel_4k`, `Unwrapping_MaxCount4_4k` (the `:try_unwrap` fallback),
+`ReprojectionParams`, the three `ExportDeliverables` model-export profiles, and
+`ModelExportParamsObj_Metric` (`run_decimate.py`, `ModelToFinal.bat` `objmetric`). The
+deprecated `AlignImagesFromFolder.bat` uses the adaptive pair too (only
+`SimplifyAutomationParams` is its own). `ModelToFinal.bat` offers the two `FixedTexelSize`
+presets by argument; the rest are declared-but-unconsumed (`SetVariables.bat`) or unreferenced.
 
 ### 4.2 Which profile to pick when
 
@@ -2085,13 +2096,13 @@ remaining **20 are declared-but-unconsumed or entirely unreferenced**.
 | Align a zone reproducibly | `AlignmentParams.xml` — replayed as `-set` | never align on instance defaults; settings persist across restarts |
 | Georeference a scene | `FlightLogParams.xml` **regenerated for this cruise** | a hand-carried zone from another project imports silently and misplaces everything |
 | Knock noise off a high model before texturing | `SimplifyNoise_Params.xml` (70 % rel) | the recipe's step [6/8]; keeps enough density for texture projection |
-| Reduce to a deliverable-sized mesh | `SimplifySmooth_80per_Params.xml` ×N with `-cleanModel` between | gentle passes beat one aggressive one; each is followed by a clean because simplification can reintroduce non-manifold edges. **N is measured, not fixed** — `DecimateComponent.bat` takes a pass count computed as `ceil(log(budget/N₀)/log(0.8))` from `-exportReport`'s `modelTriangleCount`. A fixed ×4 is only 0.8⁴ = 41 %, which left the H2060 components at 2.8–42 M triangles |
+| Reduce to a deliverable-sized mesh | `SimplifySmooth_80per_Params.xml` ×N with `-cleanModel` between | gentle passes beat one aggressive one; each is followed by a clean because simplification can reintroduce non-manifold edges. **N is measured, not fixed** — `run_decimate.py` takes a pass count computed as `ceil(log(budget/N₀)/log(0.8))` from `-exportReport`'s `modelTriangleCount`. A fixed ×4 is only 0.8⁴ = 41 %, which left the H2060 components at 2.8–42 M triangles |
 | Hit an exact triangle budget | `Simplify500k_Params.xml` (absolute 500 k) | absolute is Epic's recommended type |
 | Texture a high-poly model | `Texturing_AdaptiveTexel_4k.xml` | `AdaptiveTexelSize` clamps an estimated texel into a range — fine near the subject, coarse elsewhere. **Do not use `Texturing_MaxTextureCount4_16k.xml`**: it is not the adaptive style, and 16K breaches the output cap |
 | Deliver a declared texel precision (e.g. 1 cm for an ortho) | `Texturing_FixedTexelSize*.xml` | count follows from the precision, not the other way round |
-| Unwrap a simplified model before reprojection | `Unwrapping_AdaptiveTexel_4k.xml` | must match the texture budget of the source, or reprojection quality is wasted; `-reprojectTexture` **requires** the result model to be unwrapped. The `_4x16k` variant is retained only for reading old projects |
+| Unwrap a simplified model before reprojection | `Unwrapping_AdaptiveTexel_4k.xml` | must match the texture budget of the source, or reprojection quality is wasted; `-reprojectTexture` **requires** the result model to be unwrapped. The `Unwrapping_Simplified*` variants are retired to `archive/metadata_retired/` (D13); `Unwrapping_MaxCount4_4k.xml` is the `:try_unwrap` fallback when adaptive rejects a mesh |
 | Carry a high-poly texture onto a simplified mesh | `ReprojectionParams.xml` | Epic's default has `allowColor=false` and would silently reproject **no colour** |
-| Deliver to Nira | `ModelExportParamsOBJ_NiraParts.xml` | by parts + png + no vertex colours + decimal-6 is Nira's documented expectation; **Nira does not accept PLY point clouds** |
+| Deliver to Nira | `ModelExportParamsOBJ_NiraParts.xml` | by parts + no vertex colours + decimal-6 is Nira's documented expectation (Nira names no texture format; the preset writes `jpg` since D13); **Nira does not accept PLY point clouds** |
 | Deliver an editable FBX | `ModelExportParamsFBX_Parts.xml` | parts preserved, materials written |
 | Deliver dense coloured geometry for local use | `ModelExportParamsPLY_DensePoints.xml` | run `-calculateVertexColors` first — it colours in memory only, and the workflow deliberately quits without saving |
 | Deliver a single self-contained web asset | `ModelExportParamsGLB.xml` | embedded jpeg textures, Y-up rotation |
@@ -2112,7 +2123,9 @@ trusting a filename.
    semantic that has never been verified. [VERIFIED-by-probe]
 3. **`Texturing_SimplifiedTexture.xml` is byte-identical to `Texturing_HighPolyTexture.xml`**
    (MD5 `d97f57c353d62570a3fe6ba51c834112`) — both 2 × 16K. The deprecated workflow that uses them
-   therefore textures the simplified model at high-poly settings. [VERIFIED-by-probe]
+   therefore textured the simplified model at high-poly settings. [VERIFIED-by-probe] Both
+   retired to `archive/metadata_retired/` on 2026-09-05 (D13); `AlignImagesFromFolder.bat` now
+   uses the adaptive pair.
 4. **`SimplifyNoise_Params.xml` (70 % rel) and `SimplifySmooth_80per_Params.xml` (80 % rel) are
    placeholders** derived from the 50 % template, not GUI exports of owner-chosen presets. They are
    nonetheless in the production model recipe. If owner presets exist they should be exported over
@@ -2132,7 +2145,7 @@ trusting a filename.
    `AlignmentParams.xml`, `ModelExportParamsFBX_Parts.xml`, `ModelExportParamsOBJ_NiraParts.xml`,
    `ModelExportParamsPLY_DensePoints.xml`, `SimplifyNoise_Params.xml`,
    `SimplifySmooth_80per_Params.xml`, `Texturing_MaxTextureCount4_16k.xml`,
-   `Unwrapping_Simplified_4x16k.xml` — exactly the eight files whose provenance is documented as
+   `Unwrapping_Simplified_4x16k.xml` (the last two under `archive/metadata_retired/` since D13) — exactly the eight files whose provenance is documented as
    hand-derived. **All eight are in the production path and all work**, so LF is harmless in a
    profile (unlike in a `.bat`, where LF intermittently breaks cmd's label search).
    [VERIFIED-by-probe: line-ending census + production use, 2026-08-04]

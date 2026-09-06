@@ -173,6 +173,14 @@ class RunCharter:
             out["RS_INSTANCE"] = self.rs_instance
         if self.rs_cache_dir:
             out["RS_CACHE_DIR"] = self.rs_cache_dir
+        xml = str((self.science or {}).get("align_settings_xml") or "").strip()
+        if xml and not (xml.startswith("<") and xml.endswith(">")):
+            # The ONE override AlignZone.bat / GrowZone.bat honour
+            # (`if defined RS_ALIGN_PARAMS`), recorded by align_fingerprint.
+            # Until 2026-09-06 preflight validated this file and nothing
+            # applied it, so a signed variant ran on the canonical XML
+            # (review finding bugs-surface F1).
+            out["RS_ALIGN_PARAMS"] = xml
         return {k: v for k, v in out.items() if v}
 
 
@@ -335,7 +343,7 @@ TEMPLATE: dict = {
         "originals": ["<path to the imagery - READ ONLY from this moment>"],
         "nav": ["<path to the flight log / datatables - READ ONLY>"],
         "results_root": "<path where every output goes>",
-        "agent_workspace": "<results_root>/_agent",
+        "agent_workspace": "",
         "protected": [
             {"path": "<path>", "why": "<why it must never be touched>"}
         ],

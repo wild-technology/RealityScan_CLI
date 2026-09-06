@@ -49,8 +49,7 @@ measured to be false (rs-lookup, README tag census).
 
 ## Do not
 
-- Do not read `FINDINGS.md` cover to cover (CLAUDE.md "Starting a
-  session"). If the routed reference file points at a FINDINGS date, grep
+- Do not read `FINDINGS.md` cover to cover (CLAUDE.md "Session start"). If the routed reference file points at a FINDINGS date, grep
   that date and quote the entry; that is provenance, not a second source.
 - Do not consult `testing/NA167_SESSION_NOTES.md` for current behaviour -
   it is FROZEN, a citation target for `NA167 B*`/`#*` references only.

@@ -57,6 +57,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -141,6 +142,11 @@ RS_STAGES = ("align", "merge", "model", "export")
 
 #: Disk floor every driver honours (run_models.MIN_FREE_GB).
 MIN_FREE_GB = 50.0
+#: What one modelled component adds to the RealityScan cache (FINDINGS
+#: 2026-09-02: ~72 GB, and -clearCache does not reliably reclaim it).
+CACHE_GB_PER_COMPONENT = 72.0
+#: RealityScan flight-log field separator (csvFLSep=1 in FlightLogParams).
+_LOG_SEPARATOR = ";"
 
 #: Charter answers that name the imagery, most specific first.
 _IMAGERY_KEYS = ("g_input", "p_input", "b_input", "r_input")
@@ -159,8 +165,12 @@ def _placeholder(value: Any) -> bool:
 class Preflight:
     """Accumulates the report; one instance per charter."""
 
-    def __init__(self, charter: RunCharter):
+    def __init__(self, charter: RunCharter, stages: Optional[list[str]] = None):
         self.charter = charter
+        # A subset (rs run/launch --stages) is preflighted AS the subset:
+        # the verdict must describe the run that will execute, not the
+        # charter's full list (review finding bugs-surface F2).
+        self._stages = [str(s) for s in stages] if stages else None
         self.missing: list[dict] = []
         self.blocking: list[str] = []
         self.warnings: list[str] = []
@@ -181,6 +191,8 @@ class Preflight:
 
     @property
     def stages(self) -> list[str]:
+        if self._stages is not None:
+            return list(self._stages)
         pipeline = self.charter.raw.get("pipeline") or {}
         return [str(s) for s in (pipeline.get("stages") or [])]
 
@@ -202,6 +214,11 @@ class Preflight:
         else:
             self.ok(f"signed off by {c.signed_off.get('by')} on "
                     f"{c.signed_off.get('date')}")
+        for key in ("campaign", "dive"):
+            if _placeholder(getattr(c, key)):
+                self.ask(key, f"What is the {key}? It names every dated "
+                              "project copy and the merge --project_label.",
+                         "the template placeholder would flow into file names")
         for label, paths in (("originals", c.originals), ("nav", c.nav)):
             if not paths:
                 self.ask(f"locations.{label}",
@@ -228,6 +245,13 @@ class Preflight:
             self.ask("locations.results_root",
                      "Where should OUTPUTS go (the results root)?",
                      "everything the run produces lives under it (mandate 4)")
+        elif not os.path.isabs(root):
+            self.ask("locations.results_root",
+                     f"results_root {root!r} is a RELATIVE path - what is the "
+                     "full path? (the launcher, RUN_STATE.json and Task "
+                     "Scheduler record and resolve it absolutely)",
+                     "a relative root resolves against whatever directory "
+                     "happens to be current (review finding H5)")
         else:
             anchor = Path(root)
             while not anchor.exists() and anchor.parent != anchor:
@@ -237,13 +261,22 @@ class Preflight:
                            "volume is not mounted")
             else:
                 self.ok(f"results_root: {root} (nearest existing: {anchor})")
+        real_protected = [e for e in c.protected
+                          if not _placeholder(e.get("path"))]
         if not c.protected:
             self.warn("no PROTECTED paths declared - confirm with the owner "
                       "that nothing on this machine must be kept off-limits "
                       "(in-progress transfers, other campaigns, GUI project "
                       "dirs, prior deliverables)")
+        elif not real_protected:
+            self.ask("locations.protected",
+                     "Which paths must never be touched (in-progress "
+                     "transfers, other campaigns, GUI project dirs, prior "
+                     "deliverables)? Each with a WHY; an empty list means "
+                     "the owner confirmed there are none.",
+                     "the template placeholder is not an answer (mandate 3)")
         else:
-            self.ok(f"{len(c.protected)} protected path(s) declared")
+            self.ok(f"{len(real_protected)} protected path(s) declared")
 
     def check_ownership(self) -> None:
         c = self.charter
@@ -313,7 +346,7 @@ class Preflight:
                      "settings are science; a missing file must not fall "
                      "back silently")
         else:
-            self.ok(f"alignment settings {xml}")
+            self.ok(f"alignment settings {xml} (applied through RS_ALIGN_PARAMS)")
 
     def check_pipeline(self) -> tuple[Optional[Session], bool]:
         stages = self.stages
@@ -329,7 +362,11 @@ class Preflight:
                      f"Unknown stage(s) {unknown}. Valid: {', '.join(ALL_STAGES)}.",
                      "the plan cannot be built")
             return None, False
-        session = session_from_charter(self.charter)
+        try:
+            session = session_from_charter(self.charter, self._stages)
+        except ValueError as exc:
+            self.block(f"charter answers: {exc}")
+            return None, False
         chain = [s for s in CHAIN_STAGES if s in stages]
         if not chain:
             self.ok("no chain stages - no pipeline answers required")
@@ -339,6 +376,11 @@ class Preflight:
         # No RawDataScan: a directory listing is not an answer (ask, never
         # infer). The questions come from the modules' own Parameters.
         for q in build_questions(session, RawDataScan()):
+            if q.arg.startswith("cam_"):
+                # Camera identity is check_cameras' question, asked once
+                # under ONE key; the planner's cam_* records are how the
+                # owner answers it (review finding bugs-surface F6).
+                continue
             value = answers.get(q.arg, "").strip()
             if not value:
                 if q.required or q.kind in ("path", "file"):
@@ -378,7 +420,18 @@ class Preflight:
                       "directory among the answers/originals")
             return
         scan = scan_cameras(root)
+        answers = self.answers
         for prefix, (count, example) in sorted(scan.unknown.items()):
+            recorded = {k: v for k, v in answers.items()
+                        if k.startswith(f"cam_{prefix}_") and str(v).strip()}
+            if recorded:
+                self.warn(f"camera prefix {prefix!r} ({count:,} sampled, e.g. "
+                          f"{example}) is RECORDED in the charter "
+                          f"({', '.join(sorted(recorded))}) but not in "
+                          "modules/cameras.json / MOUNTS: its images get NO "
+                          "pitch prior until the registry carries it - "
+                          "nothing is invented")
+                continue
             self.ask(f"cameras.{prefix}",
                      f"Unrecognised camera filename prefix {prefix!r} "
                      f"({count:,} sampled images, e.g. {example}). Which "
@@ -386,7 +439,9 @@ class Preflight:
                      "is its mount MEASURED (lever arm fwd/lat/down in m, "
                      "pitch in deg)? If unknown, say so - nothing is invented.",
                      "unknown camera = unknown priors; a mount is never "
-                     "assumed silently (PRODUCT_READINESS 17)")
+                     "assumed silently (PRODUCT_READINESS 17). Record the "
+                     f"answer as pipeline.answers cam_{prefix}_name / "
+                     f"cam_{prefix}_lens / cam_{prefix}_lever / cam_{prefix}_tilt")
         if scan.known:
             try:
                 from .georeference.georeference_images import MOUNTS  # noqa: PLC0415
@@ -416,24 +471,79 @@ class Preflight:
             self.warn(f"frame check skipped ({type(exc).__name__})")
             return
         frame = str((self.charter.science or {}).get("frame") or "").lower()
+        declared = re.fullmatch(r"utm:\s*(\d{1,2})\s*([c-hj-np-x])", frame)
         logs = [self.answers.get(k, "").strip() for k in _NAV_KEYS]
         logs = [p for p in logs if p and os.path.isfile(p)]
         for p in logs:
+            name = os.path.basename(p)
             tag = utm_zone_from_flight_log_name(p)
             if tag and frame.startswith("local"):
-                self.block(f"flight log {os.path.basename(p)} carries UTM zone "
+                self.block(f"flight log {name} carries UTM zone "
                            f"tag {tag[0]}{tag[1]} but science.frame says "
                            f"{frame!r} - frames disagree (mandate 7)")
             elif not tag and frame.startswith("utm"):
                 self.ask("science.frame",
                          f"science.frame says {frame!r} but the flight log "
-                         f"{os.path.basename(p)} carries no UTM zone tag (the "
+                         f"{name} carries no UTM zone tag (the "
                          "pipeline reads the zone from the filename). Which is "
                          "right - is this a local-frame campaign?",
                          "a wrong frame imports silently (2026-08-07 incident)")
+            elif tag and frame.startswith("utm") and declared is None:
+                self.ask("science.frame",
+                         f"science.frame says {frame!r} but names no zone; the "
+                         f"flight log {name} carries {tag[0]}{tag[1]}. Write "
+                         f"the frame as utm:{tag[0]}{tag[1]} if that is right.",
+                         "the zone is the frame (mandate 7)")
+            elif tag and frame.startswith("utm") and (
+                    int(declared.group(1)), declared.group(2).upper()
+            ) != (int(tag[0]), str(tag[1]).upper()):
+                # Until 2026-09-06 this compared utm-vs-local only, so a
+                # charter declaring 54N against a 57L log was vouched for
+                # (review finding na173-probe F2).
+                self.block(f"flight log {name} carries UTM zone "
+                           f"{tag[0]}{tag[1]} but science.frame says {frame!r} "
+                           "- zones disagree (mandate 7)")
             else:
-                self.ok(f"flight log {os.path.basename(p)} agrees with frame "
+                self.ok(f"flight log {name} agrees with frame "
                         f"{frame or 'unspecified'}")
+            self._check_log_width(p)
+
+    def _check_log_width(self, log_path: str) -> None:
+        """Warn when the log's column count is not the pinned format's.
+
+        What RealityScan.Import.CSVFlightLog does with a row that lacks the
+        format's last column(s) is UNMEASURED (testing/NA173_TEST_PLAN.md
+        cell C0): the NA173 log is 13 columns while FlightLogParams.xml pins
+        the 14-column format. The rows will import; whether the trailing
+        accuracy columns land is the experiment. Say so before the run.
+        """
+        try:
+            from . import flightlog_format  # noqa: PLC0415
+            with open(log_path, encoding="utf-8-sig", errors="replace") as fh:
+                header = fh.readline().rstrip("\r\n")
+            width = len(header.split(_LOG_SEPARATOR)) if _LOG_SEPARATOR in header \
+                else len(header.split(","))
+            params = Path(METADATA_DIR) / "FlightLogParams.xml"
+            guid = flightlog_format.configured_guid(str(params))
+            expected = flightlog_format.column_count(
+                str(REPO_ROOT / "flightlogs.xml"), guid) if guid else None
+        except Exception as exc:  # noqa: BLE001 - a failed check is reported
+            self.warn(f"flight-log width check failed for "
+                      f"{os.path.basename(log_path)}: {type(exc).__name__}: {exc}")
+            return
+        if expected is None:
+            self.warn(f"flight-log width check: format {guid!r} not found in "
+                      "the repo's flightlogs.xml")
+        elif width != expected:
+            self.warn(f"flight log {os.path.basename(log_path)} has {width} "
+                      f"columns but FlightLogParams.xml pins format {guid} "
+                      f"with {expected} - what RealityScan does with the "
+                      "missing/extra column(s) is UNMEASURED (cell C0 of "
+                      "testing/NA173_TEST_PLAN.md): settle it on the mini "
+                      "fixture before the first align")
+        else:
+            self.ok(f"flight log {os.path.basename(log_path)}: {width} columns "
+                    f"= the pinned format's {expected}")
 
     def check_machine(self) -> None:
         if os.name != "nt":
@@ -460,25 +570,39 @@ class Preflight:
                                    "verified (columns would drop silently)")
                 except Exception as exc:  # noqa: BLE001
                     self.warn(f"flight-log format check failed: {exc}")
-        root = Path(self.charter.results_root) if not _placeholder(
-            self.charter.results_root) else None
-        if root is not None:
-            anchor = root
-            while not anchor.exists() and anchor.parent != anchor:
-                anchor = anchor.parent
-            if anchor.exists():
-                try:
-                    free = shutil.disk_usage(anchor).free / 1024 ** 3
-                except OSError:
-                    free = None
-                delta = (self.charter.budget or {}).get("disk_delta_gb")
-                if free is not None:
-                    if _number(delta) and free < float(delta) + MIN_FREE_GB:
-                        self.block(f"{free:.0f} GB free on {anchor} but the "
-                                   f"charter expects a {float(delta):.0f} GB "
-                                   f"delta plus the {MIN_FREE_GB:.0f} GB floor")
-                    else:
-                        self.ok(f"{free:.0f} GB free on {anchor}")
+        delta = (self.charter.budget or {}).get("disk_delta_gb")
+        results_drive = None
+        root = self.charter.results_root
+        if not _placeholder(root):
+            anchor, free = _free_gb(root)
+            if anchor is not None:
+                results_drive = os.path.splitdrive(str(anchor))[0].lower()
+            if free is not None:
+                if _number(delta) and free < float(delta) + MIN_FREE_GB:
+                    self.block(f"{free:.0f} GB free on {anchor} but the "
+                               f"charter expects a {float(delta):.0f} GB "
+                               f"delta plus the {MIN_FREE_GB:.0f} GB floor")
+                else:
+                    self.ok(f"{free:.0f} GB free on {anchor}")
+        # The cache volume is the one that filled the box (1.2 TB, ~72 GB per
+        # modelled component); until 2026-09-06 only the results volume was
+        # measured (review finding na173-probe F8).
+        cache = self.charter.rs_cache_dir
+        if self.needs_realityscan() and not _placeholder(cache):
+            canchor, cfree = _free_gb(cache)
+            cache_drive = os.path.splitdrive(str(canchor))[0].lower() if canchor else None
+            if cfree is not None and cache_drive != results_drive:
+                need = MIN_FREE_GB + (CACHE_GB_PER_COMPONENT
+                                      if "model" in self.stages else 0.0)
+                if cfree < need:
+                    self.block(f"{cfree:.0f} GB free on the cache volume "
+                               f"({canchor}) but a RealityScan run needs the "
+                               f"{MIN_FREE_GB:.0f} GB floor"
+                               + (f" plus ~{CACHE_GB_PER_COMPONENT:.0f} GB per "
+                                  "modelled component" if "model" in self.stages
+                                  else ""))
+                else:
+                    self.ok(f"{cfree:.0f} GB free on the cache volume ({canchor})")
 
     # ------------------------------------------------- modules and files
     def check_modules(self) -> None:
@@ -556,6 +680,16 @@ class Preflight:
         needed: list[str] = []
         for stage in self.stages:
             needed += [x for x in STAGE_XML.get(stage, ()) if x not in needed]
+        # The texture policy (D13) holds for EVERY live preset a script can
+        # reach, not only the ones the planned stage names by default:
+        # ModelToFinal.bat offers the FixedTexelSize presets by argument.
+        live = sorted(p.name for p in Path(METADATA_DIR).glob("*.xml"))
+        if "model" in self.stages:
+            needed += [n for n in live if n.startswith(("Texturing_", "Unwrapping_"))
+                       and n not in needed]
+        if "export" in self.stages:
+            needed += [n for n in live if n.startswith("ModelExportParams")
+                       and n not in needed]
         science_xml = str((self.charter.science or {}).get("align_settings_xml") or "")
         extra: list[Path] = []
         if "align" in self.stages and science_xml and not _placeholder(science_xml):
@@ -758,8 +892,22 @@ def _number(value: Any) -> bool:
         return False
 
 
-def preflight_charter(charter: RunCharter) -> dict:
-    return Preflight(charter).run()
+def _free_gb(path: str) -> tuple[Optional[Path], Optional[float]]:
+    """(nearest existing ancestor, free GB on its volume), or (None, None)."""
+    anchor = Path(path)
+    while not anchor.exists() and anchor.parent != anchor:
+        anchor = anchor.parent
+    if not anchor.exists():
+        return None, None
+    try:
+        return anchor, shutil.disk_usage(anchor).free / 1024 ** 3
+    except OSError:
+        return anchor, None
+
+
+def preflight_charter(charter: RunCharter,
+                      stages: Optional[list[str]] = None) -> dict:
+    return Preflight(charter, stages).run()
 
 
 def format_text(report: dict) -> str:

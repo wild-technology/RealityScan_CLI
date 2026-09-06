@@ -365,7 +365,7 @@ Commands that take a `params.xml` consume a `<Configuration id="{GUID}">` file o
 </Configuration>
 ```
 
-(`RS_CLI/Metadata/Texturing_MaxTextureCount1_8k.xml`, verbatim.)
+(`archive/metadata_retired/Texturing_MaxTextureCount1_8k.xml`, verbatim — retired 2026-09-05, D13; the live texturing preset is `Texturing_AdaptiveTexel_4k.xml`, §1.9.)
 
 The `{GUID}` identifies the owning settings panel and matches an
 `HKCU\Software\EpicGames.RealityScan\RealityScan\Workspace\SP-{GUID}` registry subkey.
@@ -885,12 +885,12 @@ This repo sets none of these globally; it passes the equivalent values as params
 
 | Key | Type | Default | Allowed values | GUI label / what it controls | Repo params-XML values |
 |---|---|---|---|---|---|
-| `unwrapGutter` | int | `2` | positive int | **Default unwrap parameters → Gutter** (texel padding) | `2` in the MaxTexturesCount presets, `10` in the FixedTexelSize presets |
+| `unwrapGutter` | int | `2` | positive int | **Default unwrap parameters → Gutter** (texel padding) | `2` in the adaptive pair and the `MaxCount4_4k` fallback, `10` in the FixedTexelSize presets |
 | `unwrapMinTexResolution` | enum | `512` | `512` `1024` `2048` `4096` `8192` `16384` | **Minimal texture resolution** | `512` in every unwrap preset |
 | `unwrapMaxTexResolution` | enum | `8192` | `512` `1024` `2048` `4096` `8192` `16384` | **Maximal texture resolution** | `4096` in every live preset since D13 (2026-09-05); `8192` / `16384` only under `archive/metadata_retired/` |
 | `unwrapLargeTriangleRemovalThr` | int | `10` | positive int | **Large triangle removal threshold** | `10` / `400` / `1000` per preset |
 | `unwrapStyle` | enum | `MaxTexturesCount` | `MaxTexturesCount` `FixedTexelSize` `AdaptiveTexelSize` (row order; ordinals accepted but the mapping is **not** established — see §1.4) | **Style** — Epic's own example uses an ordinal: `-set "unwrapStyle=1"` | `AdaptiveTexelSize` (production since D13, 2026-09-05), `MaxTexturesCount` (the fallback unwrap; the retired texturing presets), `FixedTexelSize` (name form, in every repo preset) |
-| `unwrapMaximalTexCount` | int | `1` | positive int | **Maximal textures' count**; relevant when `unwrapStyle=MaxTexturesCount` | `1`, `2` or `4` per preset |
+| `unwrapMaximalTexCount` | int | `1` | positive int | **Maximal textures' count**; relevant when `unwrapStyle=MaxTexturesCount` | `4` (`Unwrapping_MaxCount4_4k.xml`, the only live `MaxTexturesCount` preset); `1`, `2` or `4` in the retired ones |
 | `unwrapFixedTexelSizeType` | enum | `0` | `0` Optimal · `1` 2× optimal (50% quality) · `2` 4× (25%) · `3` 10× (10%) · `4` 100× (1%) · `5` Custom | **Texel size**; relevant when `unwrapStyle=FixedTexelSize` | `0` or `1` |
 | `unwrapFixedTexelSize` | float | `0.01` | > 0 | **Custom texel size**; relevant when `unwrapFixedTexelSizeType=5` | not used |
 | `unwrapMinTexelSize` | enum `0`..`5` **and** float | `0` / `0.01` | see §13.6 | **Minimal required texel size** and **Custom minimal required texel size** — the Help gives one key name for two different controls | not used |

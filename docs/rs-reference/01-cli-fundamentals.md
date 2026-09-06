@@ -577,8 +577,15 @@ Two distinct uses, one documented and one not:
   `RealityScan.exe -getStatus * > D:\statusreport.txt` [OFFICIAL: tutorials/commandline_deleg].
   Note the Help says the result appears "in the console of that specific instance" while also giving
   a redirect example on the *calling* process — the two statements are hard to reconcile.
-  [CONTRADICTED-adjacent] This repository has never parsed `-getStatus` stdout (it is sent to
-  `DEVNULL`), so the redirect behaviour is untested here. [OPEN, §18-Q3]
+  `ModelToFinal.bat` (the attach lane) parses the stdout line since 2026-08-07: `rev:` is a
+  scene-revision counter advanced only by MUTATIONS (a failed `-selectModel` left it 11 → 11);
+  `lastError:` is the last non-zero result code, sticky while the instance is IDLE and cleared
+  the instant the next operation starts. Its gate: a new non-zero code = this command failed;
+  the same code with `rev` moved = conservative failure; the same code with the same `rev` =
+  stale carry-over, warn and continue. Since D13 (2026-09-05) `rev` alone decides whether an
+  `-unwrap` took (`10` A5, `12` F-103). The redirect form is still untested here.
+  [VERIFIED: ModelToFinal.bat live probes 2026-08-07; FINDINGS 2026-08-04, 2026-09-03]
+  [OPEN, §18-Q3: the redirect form]
   **The `id:` field is printed in HEX while the progress file writes the same identifier in
   DECIMAL.** The Help's own example prints `id:0x10001`; `0x10001` = 65537 = `ALIGN_NORMAL`, and
   `65537` is exactly what appears in the first column of a real `progress_<instance>.txt` during an

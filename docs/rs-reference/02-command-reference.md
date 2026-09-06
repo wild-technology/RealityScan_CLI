@@ -1848,7 +1848,8 @@ Do not put it in a workflow until that probe runs.
 
 ```bat
 call :run -calculateTexture "%Metadata%\Texturing_AdaptiveTexel_4k.xml"
-call :try_unwrap    :: -unwrap "%Metadata%\Unwrapping_AdaptiveTexel_4k.xml", fallback Unwrapping_MaxCount4_4k.xml (D13)
+:: :try_unwrap = -unwrap "%Metadata%\Unwrapping_AdaptiveTexel_4k.xml", fallback Unwrapping_MaxCount4_4k.xml (D13)
+call :try_unwrap || goto :fail
 call :run -reprojectTexture "%model_tag%_HighPoly_Textured" "%model_tag%_Simplified" "%Metadata%\ReprojectionParams.xml"
 ```
 
@@ -2092,7 +2093,7 @@ RealityScan.exe -delegateTo RS1 -exportReport "F:\na156_h2024\reports\zone_1_acc
   `SelectedModel.html` renders `$(modelTriangleCount)`, `$(modelVertexCount)`,
   `$(modelTextureCount)` and `$(modelTexelSize)` for whatever `-selectModel`
   last selected, so a script can now *measure* a mesh instead of inferring its
-  size from a `.dat` byte count. `DecimateComponent.bat`'s pass count is derived
+  size from a `.dat` byte count. `run_decimate.py`'s pass count is derived
   this way. Parse it from the HTML by anchoring on the label row — the value is
   in the `<td>` on the **next** line:
 
@@ -2411,9 +2412,10 @@ the RealityScan 2.2 offline Help. The documented name for the operation is
 `-importTrajectory` (§6.2), and both drive process ID `20598 IMPORT_FLIGHT_LOG`
 [UNDOCUMENTED].
 
-It nevertheless works, and it is this repository's **only** georeferencing import path — six
-call sites across `AlignZone.bat`, `AlignImageList.bat`, `GrowZone.bat`,
-`MergeZoneComponents.bat`, `SequentialAlignGrow.bat` and `AlignImagesFromFolder.bat`. Known
+It nevertheless works, and it is this repository's **only** georeferencing import path — four
+live call sites (`AlignZone.bat`, `GrowZone.bat`, `MergeZoneComponents.bat`, the deprecated
+`AlignImagesFromFolder.bat`) plus `AlignImageList.bat` and `SequentialAlignGrow.bat` under
+`archive/legacy_scripts/` since 2026-09-05. Known
 by execution on two independent machines [VERIFIED: FINDINGS 2026-07-21 onward].
 
 **Behavior notes**

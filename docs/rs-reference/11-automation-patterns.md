@@ -194,12 +194,18 @@ def wait_for_instance_shutdown(self, timeout=None):
 
 ### 2.1 The literal text
 
-Reproduced **byte-for-byte identically** in all twelve workflow scripts: `AlignZone.bat`,
-`MergeZoneComponents.bat`, `GenerateModel.bat`, `ExportDeliverables.bat`, `GrowZone.bat`,
-`AlignImageList.bat`, `SequentialAlignGrow.bat`, `SaveProjectCopy.bat`,
-`ProbeLockAlign.bat`, `ProbeSubsetAlign.bat`, `ProbeSubsetAlign2.bat`, and the deprecated
-`AlignImagesFromFolder.bat` (kept only for `testing/run_zone9_tests.py`)
-[VERIFIED-by-inspection: RS_CLI/Scripts/*.bat, 2026-08-04]. Only the leading comment
+Reproduced **byte-for-byte identically** (verified 2026-08-04) in the boot-path workflow
+scripts `AlignZone.bat`, `MergeZoneComponents.bat`, `GenerateModel.bat`,
+`ExportDeliverables.bat`, `GrowZone.bat`, `SaveProjectCopy.bat`, the deprecated
+`AlignImagesFromFolder.bat` (kept only for `testing/run_zone9_tests.py`), and the five
+scripts retired to `archive/legacy_scripts/` on 2026-09-05 (`AlignImageList`,
+`SequentialAlignGrow`, `ProbeLockAlign`, `ProbeSubsetAlign`, `ProbeSubsetAlign2`). The live
+tree also holds `ComputeModel.bat`, `FlushCache.bat` and `GuiWorkbench.bat` (not re-verified
+against this text). **`ModelToFinal.bat` is the deliberate exception**: it attaches to a
+running instance and its `:run` gates on `-getStatus` `lastError` / `rev` instead of the
+marker file (`docs/ARCHITECTURE.md`; `01` §6.4).
+[VERIFIED-by-inspection: RS_CLI/Scripts/*.bat, 2026-08-04; inventory re-checked 2026-09-06].
+Only the leading comment
 differs between files. Copying it into a new workflow is the sanctioned way to add one —
 there is deliberately no shared include, because a `call`ed child `.bat` would add a
 process per operation:
@@ -273,6 +279,7 @@ next `:run` sees a clean marker and the evidence survives.
 | `:run_peelrename` | `MergeZoneComponents.bat` | `2147942487` (`0x80070057`, `E_INVALIDARG`) | `-renameSelectedComponent` on an emptied scene — the **peel-exhaustion signal**, because there is no CLI query for "how many components remain" [VERIFIED: FINDINGS 2026-07-24] [UNDOCUMENTED] | `exit /b 2` = loop terminal; marker → `expected_peelend_<inst>.txt` |
 | `:try_filter` / `:try_remove` | `GenerateModel.bat` | `2147942487`, `2181038335` | empty triangle selection — a clean mesh with no marginal/large triangles must not abort the recipe | sets `step_skipped=1`, continues; marker → `expected_select_<inst>.txt` |
 | `:try_delete_model` | `GenerateModel.bat`, `ExportDeliverables.bat` | any (tolerant delete of an absent intermediate) | missing intermediates from skipped filter steps | continue; marker → `expected_select_<inst>_<name>.txt` / `expected_delete_<inst>_<name>.txt` |
+| `:try_unwrap` | `GenerateModel.bat`, `ModelToFinal.bat` | any reported error (GenerateModel: non-empty errors marker; ModelToFinal: `:run` failed or `rev` unchanged) | `AdaptiveTexelSize` rejected the mesh (`12` F-103, `10` A5) | fallback `-unwrap Unwrapping_MaxCount4_4k.xml` through `:run`; marker → `expected_unwrap_adaptive_<inst>_<tag>.txt` (GenerateModel) / `…_<final name>.txt` (ModelToFinal, own instance only); a second failure aborts. An unwrap that neither errors nor mutates the scene is invisible to the GenerateModel variant — the model report is the proof of `Textured` [VERIFIED-by-inspection: D13, 2026-09-06] |
 
 Two rules learned the hard way here:
 
@@ -1699,9 +1706,9 @@ owner-specified eight-step recipe, with the literal model names:
 | [3/8] | `-selectLargeTrianglesRel 30` + `-removeSelectedTriangles` | `<tag>_Cleanup2` |
 | [4/8] | `-selectLargestModelComponent` + `-invertTrianglesSelection` + `-removeSelectedTriangles` | `<tag>_Cleanup3` |
 | [5/8] | `-closeHoles` → `-cleanModel` | `<tag>_Manifold` |
-| [6/8] | `-simplify SimplifyNoise_Params.xml` → `<tag>_HighPoly` → `-calculateTexture Texturing_MaxTextureCount4_16k.xml` | `<tag>_HighPoly_Textured` |
+| [6/8] | `-simplify SimplifyNoise_Params.xml` → `<tag>_HighPoly` → `-calculateTexture Texturing_AdaptiveTexel_4k.xml` (D13, 2026-09-05; `Texturing_MaxTextureCount4_8k.xml` 2026-07-31..09-05, `…4_16k` before) | `<tag>_HighPoly_Textured` |
 | [7/8] | 4 × (`-simplify SimplifySmooth_80per_Params.xml` + `-cleanModel`) | `<tag>_Simplified` |
-| [8/8] | `-unwrap Unwrapping_Simplified_4x16k.xml` → `-reprojectTexture <tag>_HighPoly_Textured <tag>_Simplified ReprojectionParams.xml` → rename | `<tag>_Simplified_Textured` |
+| [8/8] | `:try_unwrap` (`-unwrap Unwrapping_AdaptiveTexel_4k.xml`; on a reported error the marker becomes `expected_unwrap_adaptive_<inst>_<tag>.txt` and `-unwrap Unwrapping_MaxCount4_4k.xml` runs through `:run`) → `-reprojectTexture <tag>_HighPoly_Textured <tag>_Simplified ReprojectionParams.xml` → rename | `<tag>_Simplified_Textured` |
 
 `%model_tag%` = the component name (or `maximal`). **Every model name is namespaced by the
 component being modelled**, and this is the single most important line in the workflow: it

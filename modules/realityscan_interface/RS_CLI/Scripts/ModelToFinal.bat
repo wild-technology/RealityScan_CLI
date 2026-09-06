@@ -284,14 +284,21 @@ exit /b 1
 
 :: ------------------------------------------------------------------
 :: :try_unwrap - AdaptiveTexelSize first, MaxTexturesCount 4 x 4096 second.
-:: In attach mode the only truth is -getStatus, and "rev" tracks scene
+:: In attach mode the truth is -getStatus, and "rev" tracks scene
 :: MUTATIONS: an unwrap that took advances it, one that did nothing leaves
 :: it where it was (FINDINGS 2026-09-03, c5: lastError 0x83000003, rev
-:: unchanged, three times). So the adaptive attempt succeeds only when :run
-:: passes AND rev moved; otherwise the fallback runs, judged by rev alone -
-:: lastError is sticky and would still carry the adaptive failure's code,
-:: which :run's "same code, rev moved" branch would misread as a new
-:: failure. Both unchanged = the model is not unwrapped = abort.
+:: unchanged, three times). The adaptive attempt succeeds only when :run
+:: passes AND rev moved. Otherwise the fallback runs - through :run, with
+:: all three of its gates: lastError is sticky only while the instance is
+:: IDLE and clears the instant the next operation starts (FINDINGS
+:: 2026-08-04, 2026-08-07, ESTABLISHED), so :run's baseline reads the
+:: adaptive failure's code and a successful fallback lands on lastError 0.
+:: On the pipeline's OWN instance the adaptive failure also sits in
+:: errors_<inst>.txt, which :run's marker gate would otherwise blame on the
+:: fallback (or on the -reprojectTexture after it); it is MOVED to an
+:: evidence file first - the sanctioned tolerant-variant pattern
+:: (rs-reference 11 sec.2.3). Both attempts leaving rev unchanged = the
+:: model is not unwrapped = abort. Single-line exits only.
 :: ------------------------------------------------------------------
 :try_unwrap
 call :readstat
@@ -304,16 +311,11 @@ echo NOTE: adaptive unwrap left the scene revision unchanged at %RS_REV% - it di
 
 :unwrapFallback
 echo NOTE: falling back to MaxTexturesCount 4 x 4096: %UnwrapFallback%
+if "%RS_TARGET%" == "%RS_INSTANCE%" for %%A in ("%ErrorPath%\errors_%RS_INSTANCE%.txt") do if %%~zA GTR 0 move /y "%%~A" "%ErrorPath%\expected_unwrap_adaptive_%RS_INSTANCE%_%final_name%.txt" >nul
 call :readstat
 set "RS_UNWRAP_REV0=%RS_REV%"
-%RealityScan% -delegateTo %RS_TARGET% -unwrap "%UnwrapFallback%"
-if errorlevel 1 goto :runDelegateFailed
-ping -n 3 127.0.0.1 >nul
-%RealityScan% -waitCompleted %RS_TARGET%
-ping -n 2 127.0.0.1 >nul
-%RealityScan% -waitCompleted %RS_TARGET%
+call :run -unwrap "%UnwrapFallback%" || exit /b 1
 call :readstat
-if not defined RS_STATUS goto :runInstanceGone
 if "%RS_REV%" == "%RS_UNWRAP_REV0%" goto :unwrapBothFailed
 exit /b 0
 

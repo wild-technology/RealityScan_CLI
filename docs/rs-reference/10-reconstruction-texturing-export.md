@@ -910,6 +910,11 @@ textures are JPG in every export preset (§13.6).
 NA165/H2060 production bakes), adaptive 4K everywhere (owner 2026-09-05). The unresolved
 `unwrapMinTexelSize`/`unwrapMaxTexelSize` enum-vs-float question (§9.1, OPEN 27) applies to the
 adaptive presets; they have produced the verified 4096-page H2060 exports as written.
+[OPEN: bake quality of the HIGH-POLY at `AdaptiveTexelSize` 4096 vs the retired 4 × 8K is
+unmeasured — the H2060 4096 pages came from `run_decimate.py`'s re-unwrap of decimated meshes,
+not from `GenerateModel.bat` `[6/8]`; oracle = the texture census (`Textured`, texture count,
+page size) plus the owner's glance on the first NA173 component, `testing/NA173_TEST_PLAN.md`
+C7; §22 row 30]
 
 | File | Style | Count | Max res | Gutter | LargeTriRemovalThr | Extra | Used by |
 |---|---|---|---|---|---|---|---|
@@ -1376,6 +1381,7 @@ file with `Texture maximal side` below 32768 silently downsamples
 | `ModelExportParamsFBX_Parts.xml` | 13 | **1** | 0 | `jpg` / `24bppBGR` | false | 1.0 | 3 | `Custom`, `Materials=true`, `Texturing=-1` |
 | `ModelExportParamsPLY_DensePoints.xml` | 13 | 0 | 0 | — | **true** | 1.0 | 0 | `Custom`, `Texturing=0`, `Materials=false` |
 | `ModelExportParamsObj.xml` | 0 | 0 | 0 | `jpg` / `24bppBGR` (+ `_Normal_0` layer) | false | 100.0 | 0 | `Unreal`, `NumberFormat=5` |
+| `ModelExportParamsObj_Metric.xml` | 0 | 0 | 0 | `jpg` / `24bppBGR` (+ `_Normal_0` layer) | false | **1.0** | 0 | `[[Custom]]` — the stock OBJ preset at TRUE scale for survey/GIS (an ON2026 export at scale 100 put a vertex at -179.90 1101.54 43.67 in a metre frame); `run_decimate.py` export and `ModelToFinal.bat` `objmetric` [VERIFIED-by-inspection 2026-09-06] |
 | `ModelExportParams.xml` | 13 | 0 | 0 | `jpg` / `24bppBGR` | false | 100.0 | 3 | `Maya + Arnold, Unreal` |
 | `ModelExportParamsFBX_U1V1.xml` | 13 | 0 | **0** | `jpg` / `24bppBGR` | false | 100.0 | 0 | `Maya + Arnold, Unreal`, `Materials=false` |
 | `ModelExportParamsFBX_UV.xml` | 13 | 0 | **1** | `jpg` / `24bppBGR` | false | 100.0 | 0 | same |
@@ -1387,9 +1393,10 @@ file with `Texture maximal side` below 32768 silently downsamples
 re-verified 2026-09-05 — every preset now `jpg` / `24bppBGR` (D13; the FBX presets were
 `png` / `32bppBGRA`, OBJ_NiraParts and FBX_Parts `png` / `24bppBGR`)]
 
-Eleven files; only three have a production call site — `…OBJ_NiraParts.xml`,
-`…FBX_Parts.xml`, and `…PLY_DensePoints.xml` (whose call site is defective,
-§13.7). The other eight are unreferenced by any `.bat`
+Twelve files; four have a production call site — `…OBJ_NiraParts.xml`,
+`…FBX_Parts.xml` and `…PLY_DensePoints.xml` in `ExportDeliverables.bat` (the PLY
+call site was defective until 2026-09-01, §13.7) and `…Obj_Metric.xml` in
+`run_decimate.py` / `ModelToFinal.bat` `objmetric`. The other eight are unreferenced by any `.bat`
 [VERIFIED-by-inspection: `RS_CLI/Scripts/*.bat`, 2026-08-04], though
 `SetVariables.bat` defines convenience variables for several of them.
 `MvsMeshExportInfoFile=true` in **all eleven**.
@@ -2369,6 +2376,7 @@ Each with the cheapest probe that answers it.
 | 27 | `unwrapMinTexelSize` / `unwrapMaxTexelSize` are each documented **twice** with different types (0–5 enum for `AdaptiveTexelSize`, float for custom `FixedTexelSize`) — are they one setting whose parse depends on `unwrapStyle`, or two binary settings the Help's table merged? Writing metres where ordinals are expected would silently produce a wrong texel budget. | Set `unwrapStyle=AdaptiveTexelSize` in the GUI Unwrap tool, export the params, read what is written for both keys; repeat with `FixedTexelSize` + type `5`. Minutes. |
 | 28 | `mvsFltUnwrapTexSide` is one key, but the GUI Simplify tool exposes **custom minimal *and* maximal** texture resolution. Which key carries the second? (`mvsFltUnwrapMinTexSideCustom` / `mvsFltUnwrapMaxTexSideCustom` are binary strings.) | Set a custom resolution range in the Simplify tool, export params, diff against `Simplify50Per_Params.xml`. Minutes. |
 | 29 | Would `MvsGeometryMarginStyle=true` (drop marginal triangles at mesh time) beat the post-hoc `[2/8]` filter on runtime or quality? Never compared; the key appears in no repo file and in no settings evaluation. | One `-set "MvsGeometryMarginStyle=true"` + `-calculateHighModel` on the 133-camera component against its 40.1 min baseline, then compare against a `[2/8]`-filtered run. ~80 min. |
+| 30 | Is a fresh `AdaptiveTexelSize` 4096 bake of a HIGH-POLY (`GenerateModel.bat` `[6/8]` since D13) comparable, in page count, texel and look, to the retired 4 × 8K bake it replaced? Never compared — the verified H2060 4096-page exports were re-unwraps of decimated meshes. | `testing/NA173_TEST_PLAN.md` C7: model one component both ways (the retired preset from `archive/metadata_retired/` in an owner-run variant script), texture census + owner glance. |
 
 ## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
 

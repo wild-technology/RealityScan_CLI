@@ -60,7 +60,7 @@ hash. Every fix ships with a test or an empirical verification transcript.
 ## MUST-FIX
 
 ### Blocks run2 (ON2026 per-feature delivery)
-1. **run_on2026_wreck.py is the retired plan** — monolith terminal stage,
+1. **`archive/campaign_drivers/run_on2026_wreck.py` is the retired plan** — monolith terminal stage,
    old campaign paths, nav-blind `zone_done()` (any .rsalign+.json =
    skip). Replace per the run2 architecture spec (re-audit `run2-arch`):
    folder-copy Z-aware zones from `M:\ON2026_run2\nav\flight_log_run2.txt`
@@ -121,11 +121,8 @@ hash. Every fix ships with a test or an empirical verification transcript.
     accuracies vs campaign, detector/texture budgets, instance+cache,
     disk headroom vs stage estimate, resume state) with explicit
     confirm; `--yes` for unattended.
-13. **StatusScreen unreachable without launching a run** (wildscan) and
-    failure UX offers only skip-forward — no retry-current-stage.
-14. **Wizard prefill precedence inverted** — previous survey's persisted
-    answers override fresh auto-detection for a NEW dive
-    (wrong-provenance risk, verified app.py:275).
+13-14. Moved to DONE 2026-09-05: the TUI is archived, `rs status` replaces the
+    StatusScreen and the charter replaces the wizard prefill.
 
 ## MUST-FIX — added from the goal-verification decisions (2026-08-08)
 
@@ -139,7 +136,7 @@ hash. Every fix ships with a test or an empirical verification transcript.
     rectilinear, Port/Starboard/Upper/Mid 15 mm fisheye, Cinema 17 mm
     rectilinear — replaces the 2026-07-23 values (23/14 mm) in
     cameras.json, camera_registry XMP content, CLAUDE.md, geoall
-    constants, wildscan OFFICIAL_CAMERAS, and the rig-mount tests, in
+    constants, `modules/run_plan.py` OFFICIAL_CAMERAS, and the rig-mount tests, in
     ONE change set.
 17. **Unknown-camera intake flow**: ask the user for what is known
     (never require invented numbers — supersedes the wizard
@@ -186,9 +183,9 @@ hash. Every fix ships with a test or an empirical verification transcript.
   the message changes.
 - Progress UX during multi-hour ops: unlabeled raw tuples; zone-count
   granularity bar.
-- README: no quickstart; leads with the developer orchestrator while
-  WildScan is the de-facto product entry; RS_ALIGN_PARAMS/RS_CACHE_DIR
-  (science- and survival-critical) documented only in source comments;
+- README: quickstart DONE 2026-09-05 (the Claude-guided lane leads);
+  `RS_ALIGN_PARAMS` / `RS_CACHE_DIR` flow from the charter since 2026-09-06
+  (`science.align_settings_xml`, `ownership.rs_cache_dir`). Remaining:
   raw-.bat workflows taught where hardened drivers exist; branding
   three-way incoherent (RealityScan_CLI / WildScan / drivers).
 - Campaign-level retry organization: sibling roots hand-minted per merge

@@ -5717,3 +5717,137 @@ Two things this does NOT settle, stated so nobody credits them:
 `unwrapMinTexelSize=0` / `unwrapMaxTexelSize=4` in the adaptive presets remain
 the OPEN enum-vs-float question (rs-reference 03 OPEN 17, 10 OPEN 27); the
 presets have produced the verified 4096-page H2060 exports as written.
+
+## [HARNESS] 2026-09-06 - review workflow over the reconciled tree: 78 findings, 33 fixed, what stands
+
+A seven-lens review workflow (rs-reference hygiene, in-line docs, agent-lane
+correctness, hooks/Windows boundary, adversarial review of the D13 commit,
+test triage, an NA173 integration probe) ran over `recon-tmp` at `eca8aba`,
+then two adversarial verifiers per must/should finding. The owner's usage
+limit cut the verification short: 18 findings confirmed, 4 contested, 31
+must/should left unverified, 25 nits. Every unverified must/should was then
+verified by hand (reading the code, running the hooks with synthetic stdin,
+`rs.py` against scratch charters) before being fixed or dismissed. Suite
+after the fixes: 879 passed, 1 skipped.
+
+Defects that would have bitten the first NA173 run (all fixed, each pinned
+in `testing/test_review_fixes.py`):
+
+- **`science.align_settings_xml` never reached the run.** Preflight validated
+  the file and reported ok; `RunCharter.env()` exported no `RS_ALIGN_PARAMS`,
+  so `AlignZone.bat` applied the canonical XML while the signed charter said
+  otherwise. Now exported; the D3 hardness A/B (cell C4) depends on it.
+- **`rs run/launch --stages` preflighted the charter's FULL stage list**, so
+  the READY verdict described a different run than the one executed; the
+  drive-run split (`run` batch, `launch` align) could not pass. Preflight now
+  judges the subset.
+- **A charter answer colliding with a pinned flag was emitted twice**;
+  argparse kept the last, so `r_model_generate: true` was silently forced
+  false and an `output_dir` answer redirected the run. Now refused by name.
+- **`check_frame` compared utm-vs-local only**: `utm:54N` against
+  `flight_log_57L_UTM.txt` was READY. Zone and band are compared now.
+- **`b_zone_layout=pool` never set `RS_ALIGN_POOL_DIR`** on the charter lane
+  (only the archived campaign drivers did), so every pool zone would have been
+  skipped as "no images found" - the 2026-08-09 union-wave failure again.
+- **`ModelToFinal.bat`'s new `:try_unwrap` (D13) left the adaptive failure's
+  own `errors_<inst>.txt` in place** on a pipeline-booted instance, so the
+  `-reprojectTexture` after the fallback would have aborted on the stale
+  marker. The fallback now moves the marker to
+  `expected_unwrap_adaptive_<inst>_<name>.txt` and runs through `:run`.
+- **The printed `schtasks` line could not be run from either agent tool**:
+  Git Bash turns `/Create` into `C:/Program Files/Git/Create`, PowerShell
+  does not honour `\"`. `rs launch` prints one form per shell (cmd.exe,
+  PowerShell, Git Bash with doubled slashes).
+- **`python rs.py run --foreground` was allow-listed and ungated** from an
+  agent shell - RealityScan under the harness job object with no ask. Refused
+  while `CLAUDECODE` is set; the owner runs it from their own terminal.
+- JSON `null` answers reached `main.py` as the token `None`;
+  `science.min_component_size` was decorative (now `--r_min_component_size`
+  and merge `--min_size`); a stage that never started left RUN_STATE
+  `running` forever (now `failed` with the error); a direct `rs run` reported
+  an earlier launch's `.rc`/task beside its own state; the launcher pair was
+  written UTF-8 (cmd reads OEM: an accented path silently does not exist -
+  non-ASCII is refused) and could record a relative path; the free-disk
+  check ignored the CACHE volume (the one that filled the box); the template
+  charter did not parse as scaffolded and its placeholder `protected` entry
+  counted as an answer; an unknown camera prefix could never be answered
+  (charter `cam_<prefix>_*` records now count); `rs status` claimed to
+  compare the budget and did not (it prints expected vs elapsed hours and
+  free disk on both volumes now, and flags a `running` state whose pid is
+  gone).
+- Hooks: `guard_rs_launch` refused any heredoc line naming a workflow script
+  and missed `&`-chained, `$(...)`, PATHEXT-resolved (`cmd /c AlignZone`) and
+  extension-less (`Start-Process '...\RealityScan'`) launches;
+  `guard_charter_writes` stopped a quoted target at its first space, so a
+  results root with a space was "outside every writable root";
+  `guard_schtasks` ignored `/Change ... /TR`. All three fixed with liveness
+  tests.
+
+Corrected in the documentation of record (rs-reference 01/02/03/04/05/06/09/
+10/11/12/13/README, CLAUDE.md, README, skills, rules, PRODUCT_READINESS):
+retired presets still listed as production or as `AlignImagesFromFolder`'s;
+`DecimateComponent.bat` (never existed - it is `run_decimate.py`); six
+`-importFlightLog` call sites where two are archived; the `:run` "twelve
+scripts" inventory; `-getStatus` "never parsed" (ModelToFinal parses `rev` /
+`lastError`); the missing `:try_unwrap` row in 11 sec.2.3 and the missing
+F-102/F-103 rows in the README's silent-failure table; `Obj_Metric` absent
+from 10 sec.13.6 and the 09 registry; the 13 sec.10.3 sentence that still
+put 45 deg on Cinema; `sensorsdb.xml` "at the repo root"; hard rule 0 stated
+as an absolute the default path breaks; `/charter` and `/drive-run` are
+owner-invoked, which the routing hook now says; `WORKFLOW_WALKTHROUGH.md`
+moved to `docs/history/` (its D7 collided with DECISIONS D7).
+
+Left standing, on purpose: the routing hook's phrasing (tune on real
+prompts); `RS_RUN_CHARTER` set-but-unusable blocking read-only commands
+(fail-closed is the safer default; the message names the fix);
+`decimator.py`'s EOF-only gates; `testing/test_preprocess_module.py` holds no
+tests (a manual staging script under a test name); `test_rig_mounts.py`'s
+`logging.disable` leak. Not measured by anything here: every claim about a
+live RealityScan run - the cells in `testing/NA173_TEST_PLAN.md`.
+
+## [TEXTURE] 2026-09-06 - correction to 2026-09-05: lastError clears when the next operation starts; the ModelToFinal fallback runs through :run
+
+The 2026-09-05 rationale for `ModelToFinal.bat`'s fallback bypassing `:run`
+("lastError is sticky and would misattribute the adaptive failure to the
+fallback") is SUPERSEDED. FINDINGS 2026-08-04 and 2026-08-07 (both
+ESTABLISHED) already held the measurement: `lastError` is sticky only while
+the instance is IDLE and clears the instant the next operation starts; the
+C5 sticky code did NOT false-abort the 4b battery. The review's D13 lens
+caught the contradiction. Consequence: the fallback is now `call :run
+-unwrap "%UnwrapFallback%" || exit /b 1` (all three gates), preceded on the
+pipeline's own instance by the errors-marker move, with the `rev` comparison
+kept as the "did it take" oracle. [VERIFIED-by-inspection against the two
+ESTABLISHED entries; the fallback path itself is still unexercised live -
+cell C8]
+
+## [NA173] 2026-09-06 - the H2014g test dataset as the tools see it
+
+Read-only census, 2026-09-05/06, by the integration probe and by hand:
+
+- 3,154 JPGs (camlower 920, cammid 1,018, zeuss 1,216; 3840x2160; no EXIF)
+  and 3,154 log rows, 0 disk-only, 0 log-only. Every family recognised
+  (`camera_registry.family`, `run_plan.scan_cameras`): the HERC frames
+  (`20250709T200515Z_0001_HERC_H.264_H2104_NA173_prob4_frame0.jpg`) match
+  the delimiter-bounded `herc` token; preflight asks nothing about cameras.
+- `flight_log_57L_UTM.txt` -> zone (57, 'L') -> `EPSG:32757` (southern
+  hemisphere, correct); 13 columns, no `FocalLength`; the pinned
+  `FlightLogParams.xml` names the 14-column `{D1F2A3B4}`. What the import
+  does with a row one column short is UNMEASURED (cell C0); preflight warns.
+- The log's pitch columns already carry the PRE-D3 Zeuss mount (30 deg,
+  accuracy 15) and there is no raw ROV nav table, so the georeference stage
+  cannot run here and D3's mount half cannot be replicated by changing
+  `cameras.json` - only by a derived log (cell C5). The hardness half
+  (`sfmCameraPriorWeightOrientation` 2.0 vs 10.0) is testable as-is (C4).
+- Each camera folder holds an `rsmeta.db` (RealityScan wrote into this tree
+  in an earlier GUI session); the batcher's index sees them as its only two
+  basename collisions and ignores them.
+- The folder says `H2014g`; every zeuss frame says `H2104`. Nothing in the
+  pipeline reads the label; the owner confirms the dive before publishing.
+- With the batcher defaults the dataset splits into TWO zones of ~1,577
+  (initial_k = max(2, ...)), so the copy-layout merge path runs; `b_min_zone`
+  is an owner answer.
+- A probe charter (batch + align, `b_input` = the dataset root,
+  `b_flight_log_path` = the log, frame `utm:57L`, copy layout) was READY with
+  no missing line and planned ONE `main.py` command; the full-stage variant
+  planned four. [VERIFIED: `scratchpad/agents/na173-probe/` outputs,
+  2026-09-05 - a scratch charter signed "probe", never a real sign-off]

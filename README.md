@@ -24,14 +24,14 @@ Open Claude Code in this repo. The session hook prints the current state.
 /charter                          intake: six questions to the owner, then sign-off
 python rs.py preflight --charter <C>   what is still MISSING - questions, never guesses
 python rs.py plan --charter <C> --validate
-python rs.py run --charter <C>         short stages (extract, georeference, preprocess, batch)
+python rs.py run --charter <C> --stages extract,georeference,preprocess,batch
 python rs.py launch --charter <C>      RealityScan stages: writes a launcher, prints schtasks
 python rs.py status --charter <C>      read-only: census verdict, RUN_STATE, markers, logs
 python rs.py verify --workspace <ws> --json
 ```
 
-Skills `/drive-run`, `/merge-zones`, `/finish-model`, `/publish-cesium`,
-`/status`, `/handoff` walk each protocol; `rs-lookup` routes any RealityScan
+Skills `/charter` and `/drive-run` (owner-invoked), `/merge-zones`,
+`/finish-model`, `/publish-cesium`, `/status`, `/handoff` walk each protocol; `rs-lookup` routes any RealityScan
 question into `docs/rs-reference/`. Rules: `CLAUDE.md`; contract:
 `docs/AGENT_OPERATIONS.md`; open decisions: `docs/DECISIONS.md`; per-box
 setup and owner prompt habits: `docs/OPERATOR_SETUP.md`.

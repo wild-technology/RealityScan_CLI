@@ -18,8 +18,6 @@ disable-model-invocation: true
   ```
   On the charter lane: `python rs.py launch --charter <C> --stages model`
   (scheduler-owned; `rs run` refuses RealityScan stages from an agent shell).
-  ```bash
-  ```
 - **The mesh ALREADY exists in a running instance** (a GUI or
   Epic-Launcher session) -> `ModelToFinal` via `finish_model.py`:
   ```bash

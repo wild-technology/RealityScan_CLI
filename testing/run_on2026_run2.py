@@ -466,7 +466,8 @@ def stage_models(merge_results):
         # mesh needs ~1.4+ TB of depth-map cache and exhausted M:
         # (0x80070070, the historical hull-model killer; no volume on
         # this box fits full res). ds2 ~= quarter footprint; texture
-        # stays 4x8k from full-res images. A full-res re-mesh later is
+        # is adaptive 4K (D13, 2026-09-05; was 4x8k) from full-res images.
+        # A full-res re-mesh later is
         # purely additive - the merged component persists.
         mesh_env = {"RS_MESH_DETAIL": "normal"} if feat == "hull" else None
         run_cmd(f"mesh {feat}", [
@@ -476,7 +477,7 @@ def stage_models(merge_results):
         run_cmd(f"finish {feat}", [
             sys.executable, os.path.join(REPO, "finish_model.py"),
             "--instance", "RS1", "--outdir", outdir, "--name", final_name,
-            "--preset", "4x8k", "--simplify", "true",
+            "--preset", "adaptive", "--simplify", "true",
             "--format", "objmetric", "--source-model", model_name,
             "--save-path", scene,
         ], os.path.join(LOGS, f"finish_{feat}.log"))

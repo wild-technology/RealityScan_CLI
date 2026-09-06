@@ -107,8 +107,9 @@ importTrajectory | flFileName | params.xml
 
 This repository has driven `-importFlightLog <log> <params.xml>` in production since
 2026-07-21 across thousands of aligns; it works and is the name baked into every workflow
-`.bat` here — **six call sites**: `AlignZone.bat`, `AlignImageList.bat`, `GrowZone.bat`,
-`MergeZoneComponents.bat`, `SequentialAlignGrow.bat`, `AlignImagesFromFolder.bat`. The
+`.bat` here — **four live call sites**: `AlignZone.bat`, `GrowZone.bat`,
+`MergeZoneComponents.bat`, the deprecated `AlignImagesFromFolder.bat` (plus `AlignImageList.bat`
+and `SequentialAlignGrow.bat` under `archive/legacy_scripts/` since 2026-09-05). The
 string `importFlightLog` does not appear anywhere in the 2.2 Help.
 [UNDOCUMENTED / VERIFIED: those six scripts; FINDINGS 2026-07-21; SURVEY_commands.md]
 

@@ -10,10 +10,13 @@ run. This makes the contract mechanical: `schtasks /Create` is allowed only
 when its /TR names an existing .vbs or .cmd that the sibling RUN_STATE.json
 declares as this run's launcher.
 
-REFUSED: `schtasks /Create` without a .vbs/.cmd path; with a path that does
-not exist; or with a path RUN_STATE.json does not name.
-ALLOWED: every other schtasks verb (/Run, /Query, /End, /Delete stay behind
-the settings.json ask-list), and every command that is not schtasks.
+REFUSED: `schtasks /Create` (or `/Change ... /TR`, which re-points an
+existing task - review finding H8) without a .vbs/.cmd path; with a path
+that does not exist; or with a path RUN_STATE.json does not name.
+ALLOWED: every other schtasks verb (/Run, /Query, /End, /Delete and a
+/Change that carries no /TR stay behind the settings.json ask-list), and
+every command that is not schtasks. Git Bash's doubled-slash spelling
+(`//Create`) is the same command.
 
 Contract: PreToolUse hook. Tool call as JSON on stdin; exit 0 allows, exit 2
 blocks and shows stderr to Claude. stdlib only.
@@ -25,7 +28,10 @@ import os
 import re
 import sys
 
-_CREATE = re.compile(r"\bschtasks(?:\.exe)?\b.*?/create\b", re.IGNORECASE | re.DOTALL)
+_CREATE = re.compile(r"\bschtasks(?:\.exe)?\b.*?/+(?:create|change)\b",
+                     re.IGNORECASE | re.DOTALL)
+_CHANGE = re.compile(r"/+change\b", re.IGNORECASE)
+_TR = re.compile(r"/+tr\b", re.IGNORECASE)
 #: A .vbs or .cmd path: quoted (plain or \"escaped\") or a bare token.
 _LAUNCHER = re.compile(
     r"""(?:\\?"|')?([A-Za-z]:[\\/][^"'<>|\n]*?\.(?:vbs|cmd)|[^\s"'<>|]+\.(?:vbs|cmd))(?:\\?"|')?""",
@@ -47,6 +53,8 @@ def run_state_for(launcher: str) -> str:
 def offence(command: str, cwd: str) -> str | None:
     if not _CREATE.search(command):
         return None
+    if _CHANGE.search(command) and not _TR.search(command):
+        return None          # /Change of a trigger or a flag, not of the command line
     launcher = launcher_path(command)
     if not launcher:
         return ("registers a scheduled task whose /TR names no .vbs or .cmd "

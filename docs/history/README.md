@@ -12,6 +12,7 @@ rules are `CLAUDE.md`, the current design is `docs/ARCHITECTURE.md`.
 | `GOAL_VERIFICATION_SESSION.md` | 2026-08-08 goal re-assessment Q&A. | `docs/` |
 | `MERGE_REWORK_RECOMMENDATIONS.md` | The Q1-Q10 merge-stage rework proposal (implemented in `merge_zones.py`). | `docs/` |
 | `HANDOFF_2026-07_to_2026-09.md` | Every HANDOFF section older than the current one. | `HANDOFF.md` |
+| `WORKFLOW_WALKTHROUGH.md` | Plain-language H2023 walkthrough, snapshot 2026-07-24 (its D-numbers are NA167 test cells, not `docs/DECISIONS.md` rows). Moved 2026-09-06. | `docs/` |
 
 Other relocations on 2026-09-05 (a stale path in an older FINDINGS/HANDOFF
 entry resolves through this table):

@@ -23,7 +23,7 @@ The per-operation error gate lives in ModelToFinal.bat's :run subroutine
 never writes errors_<instance>.txt.
 
 Usage:
-    py -3.13 finish_model.py --outdir "M:/.../final" [--instance RS1]
+    python finish_model.py --outdir "M:/.../final" [--instance RS1]
         [--name Final] [--preset adaptive] [--simplify true]
         [--format objmetric] [--save-path "M:/.../final/scene.rsproj"]
 

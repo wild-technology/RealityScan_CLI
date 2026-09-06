@@ -42,12 +42,14 @@ _PHRASE = re.compile("|".join(_PHRASES), re.IGNORECASE)
 MESSAGE = (
     "ROUTING (hook .claude/hooks/route_driving_prompts.py): this reads as a "
     "request to DRIVE the pipeline. Protocol, in order, before any write: "
-    "(1) /charter - six answers from the owner, then `python rs.py preflight "
-    "--charter <C>` until READY, then owner sign-off; (2) /drive-run - "
+    "(1) the OWNER types /charter (owner-invoked; you cannot run it - ask "
+    "for it): six answers from the owner, then `python rs.py preflight "
+    "--charter <C>` until READY, then owner sign-off; until it is signed, "
+    "read only. (2) the OWNER types /drive-run (owner-invoked) - "
     "`python rs.py plan --charter <C> --validate`, then `rs.py run` for "
     "prep stages or `rs.py launch` for RealityScan stages. Never hand-write a "
     "command line; never fill a charter answer from a directory listing. If "
-    "the owner only wants a status, use /status instead."
+    "the owner only wants a status, /status is auto-invocable."
 )
 
 

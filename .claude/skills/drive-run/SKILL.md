@@ -36,7 +36,9 @@ python rs.py launch --charter <C> --stages align            # also merge, model,
 `run` executes headless with `RUN_STATE.json` under `<ws>/_agent/` and stops
 at the first failure. It REFUSES RealityScan stages from this shell (mandate
 6: a harness job object killed a 14.4 h run). `launch` writes the CRLF
-launcher pair and PRINTS three `schtasks` commands: run them exactly (the
+launcher pair and PRINTS the three `schtasks` commands in one form per shell (cmd.exe /
+PowerShell / Git Bash - the Bash tool mangles a single leading slash): run
+the form for your shell, exactly (the
 permission ask-gate fires - that is intended; `guard_schtasks.py` refuses
 any launcher `rs launch` did not write).
 
@@ -52,7 +54,9 @@ for a summary, not for logs. Stop the loop and tell the owner on `failed`,
 python rs.py status --charter <C>
 ```
 
-The budget lives in the charter; `status` compares against it.
+The budget lives in the charter; `status --charter` prints it beside the
+elapsed hours and the free disk on the results and cache volumes and flags
+an overrun. The RAM line is yours to read (`/status` sec.3).
 
 ## 3. Verify by census, never by exit status
 

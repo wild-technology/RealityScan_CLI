@@ -25,8 +25,7 @@ paths:
   hook failures. Use `run_hook()` in `testing/test_agent_hooks.py`
   (`subprocess.run([sys.executable, script], input=json.dumps(payload))`).
   Every guard hook keeps a liveness test: inject a known violation, prove
-  exit 2. [FINDINGS `[HARNESS]` 2026-08-31; CLAUDE.md "Agent-facing entry
-  points"]
+  exit 2. [FINDINGS `[HARNESS]` 2026-08-31; docs/ARCHITECTURE.md]
 - **The baseline statement lives in `CLAUDE.md` ("Session start") and the
   platform-bound failure set in `testing/conftest.py`'s docstring, nowhere
   else.** Windows: fully green. macOS/Linux: 11 alignment tests (RealityScan

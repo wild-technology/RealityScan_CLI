@@ -22,8 +22,8 @@ Do not re-read what it printed. Then, saying in one line what you will do:
 
 ## Session end
 
-`/handoff`: findings flushed to `FINDINGS.md`, new `HANDOFF.md` top section,
-suite count updated here, every changed file committed or named. Never push
+`/handoff`: findings flushed to `FINDINGS.md`, new `HANDOFF.md` top section
+(with the suite count), every changed file committed or named. Never push
 without the owner's word in this session.
 
 ## Operating model - one command surface
@@ -45,8 +45,9 @@ lane; skills call only these.
   owns long runs; the agent runs the printed command and the ask-gate fires).
 - `status` / `verify` - the verdict is a census from disk, never an exit code.
 
-Skills: `/charter`, `/drive-run`, `/status`, `/handoff`, `/merge-zones`,
-`/finish-model`, `/publish-cesium`, `rs-lookup`. Read-only agents:
+Skills: `/charter` and `/drive-run` (owner-invoked - ask the owner to type
+them), `/status`, `/handoff`, `/merge-zones`, `/finish-model`,
+`/publish-cesium`, `rs-lookup`. Read-only agents:
 `run-monitor`, `rs-reference`. Hooks enforce hard rule 1, the charter's touch
 rules and CRLF; `.claude/rules/` load only when their paths are touched.
 
@@ -66,9 +67,11 @@ rules and CRLF; `.claude/rules/` load only when their paths are touched.
 
 Each traces to an incident (`docs/AGENT_OPERATIONS.md`, rs-reference 12).
 
-0. **No XMP sidecars written into image trees; input trees are read-only.**
-   The `RS_LEGACY_XMP_IDENTITY` switch is open decision D1: flip no default,
-   delete no branch, until `FINDINGS.md` `[RECON]` settles it.
+0. **Source image trees are read-only; the DEFAULT align path
+   (`RS_LEGACY_XMP_IDENTITY` unset/1) writes XMP sidecars into the folder it
+   is given, so align only from trees the pipeline created.** `=0` selects
+   the non-destructive capture. Which default survives is open decision D1:
+   flip no default, delete no branch, until `FINDINGS.md` `[RECON]` settles it.
 1. **One launcher**: `RealityScanCLI` + the `:run` pattern. Never a second
    subprocess path to RealityScan or a `.bat`.
 2. Never infer completion from process names or results-log growth.

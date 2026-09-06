@@ -26,8 +26,8 @@ dated-copy saves; workspace mode still defers dated copies to its single
 end-of-run copy.
 
 Usage:
-    py -3.13 run_models.py --workspace F:/na156_h2024_v2 [--force]
-    py -3.13 run_models.py --project D:/scene/Assembly.rsproj \
+    python run_models.py --workspace F:/na156_h2024_v2 [--force]
+    python run_models.py --project D:/scene/Assembly.rsproj \
                            [--component zone_1_c0] [--large_tri_threshold 30]
 """
 from __future__ import annotations

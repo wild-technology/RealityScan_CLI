@@ -30,12 +30,16 @@ sys.path.insert(0, str(REPO))
 #: understand every command reliably misreads some of them, and a guard
 #: that cries wolf gets switched off. The Write/Edit path below is the
 #: precise one; this catches the obvious shell equivalents.
+#: A target path: double-quoted, single-quoted, or a bare token. The bare
+#: form alone stopped at the first space, so a results root with a space
+#: was refused as "outside every writable root" (review finding H6).
+_TARGET = r"""(?:"([^"]+)"|'([^']+)'|([^\s|&;<>]+))"""
 _SHELL_WRITES = (
-    re.compile(r">>?\s*([^\s|&;<>]+)"),
+    re.compile(r">>?\s*" + _TARGET),
     re.compile(r"\b(?:rm|del|mv|move|cp|copy|touch|mkdir|rmdir)\s+"
-               r"(?:-[a-zA-Z]+\s+)*([^\s|&;<>]+)", re.IGNORECASE),
+               r"(?:-[a-zA-Z]+\s+)*" + _TARGET, re.IGNORECASE),
     re.compile(r"\b(?:tee|Out-File|Set-Content|Add-Content)\s+"
-               r"(?:-\w+\s+)*([^\s|&;<>]+)", re.IGNORECASE),
+               r"(?:-\w+\s+)*" + _TARGET, re.IGNORECASE),
 )
 
 _WRITE_TOOLS = {"Write", "Edit", "NotebookEdit", "MultiEdit"}
@@ -55,7 +59,7 @@ def _targets(tool_name: str, tool_input: dict) -> list[str]:
         found: list[str] = []
         for pattern in _SHELL_WRITES:
             for match in pattern.finditer(command):
-                target = match.group(1).strip().strip("'\"")
+                target = next((g for g in match.groups() if g), "").strip()
                 # Redirections to a device or a descriptor are not writes.
                 if target and not target.startswith(("/dev/", "&", "$", "%")):
                     found.append(target)

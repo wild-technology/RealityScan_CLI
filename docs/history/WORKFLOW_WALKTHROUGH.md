@@ -1,3 +1,8 @@
+> **Frozen snapshot, 2026-07-24.** Moved to `docs/history/` on 2026-09-06. `D7` below is the
+> NA167 `testing/MERGE_TEST_PLAN.md` cell (resolved 2026-07-24: fusion is content-driven), not
+> `docs/DECISIONS.md` D7; the `[QUEUED]` pool layout landed 2026-08-08 (`b_zone_layout=pool`);
+> the HANDOFF workflow-evaluation queue no longer exists.
+
 # Workflow walkthrough — raw images to final project (H2023 example)
 
 Plain-language end-to-end path, written 2026-07-24 for the owner using

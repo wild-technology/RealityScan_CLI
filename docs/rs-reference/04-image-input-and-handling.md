@@ -1228,7 +1228,7 @@ the repo root — these ROV entries are *not* in the shipped database:
 <camera model="ZCAM F7 16-35mm III Lower"    ccdWidth="37.09"><lens type="division" focal="16" c1="0"/></camera>
 <camera model="Zeus Plus" ccdWidth="11.0"/>
 ```
-[VERIFIED-by-inspection: `RealityScan_CLI/sensorsdb.xml` lines 2–12, 2026-08-04.
+[VERIFIED-by-inspection: `RealityScan_CLI/sensorsdb.xml` (repo root until 2026-09-05, now `archive/reference_data/sensorsdb.xml`) lines 2–12, 2026-08-04.
 `grep -i zcam` over the shipped `C:\Program Files\Epic Games\RealityScan_2.2\sensorsdb.xml`
 returns **nothing** — an earlier draft of this document wrongly attributed these entries to
 the shipped file.]
@@ -1261,7 +1261,7 @@ them are the product's:
 |---|---|---|
 | `C:\ProgramData\Epic\RealityScan\sensorsdb.xml` | `8d426fc47b0643f388b3ac4d782e7428` | the documented one |
 | `C:\Program Files\Epic Games\RealityScan_2.2\sensorsdb.xml` | `8d426fc47b0643f388b3ac4d782e7428` | **byte-identical**, undocumented |
-| `RealityScan_CLI\sensorsdb.xml` (repo root) | `21c71b2ef839fce3760e3ac31d53e74b` | **different file** — repo reference copy, not installed, never read |
+| `RealityScan_CLI\archive\reference_data\sensorsdb.xml` (repo root until 2026-09-05) | `21c71b2ef839fce3760e3ac31d53e74b` | **different file** — repo reference copy, not installed, never read |
 
 [VERIFIED-by-inspection, 2026-08-04] [OPEN] Which of the two product copies the running app
 reads is untested, and invisible while they stay identical. Cheapest probe: add a

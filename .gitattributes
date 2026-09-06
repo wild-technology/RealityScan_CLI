@@ -5,3 +5,6 @@
 *.bat text eol=crlf
 # The VBS hook shim is edited by tooling too - same CRLF discipline
 *.vbs text eol=crlf
+# rs launch writes .cmd launchers under the results root; if one is ever tracked
+# it must be CRLF for the same reason (normalize_crlf.py already repairs .cmd).
+*.cmd text eol=crlf

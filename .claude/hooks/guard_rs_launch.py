@@ -27,19 +27,34 @@ import json
 import re
 import sys
 
-#: Executable names that must never be invoked from a shell here.
+#: Executable names that must never be invoked from a shell here - with or
+#: without the extension (`Start-Process '...\RealityScan' -ArgumentList`
+#: passed the old substring test; review finding H3). RealityScan.log and
+#: RealityScan_2.2 (a word character or a dot follows) do not match.
 _EXECUTABLES = ("realityscan.exe", "realitycapture.exe")
+_EXE_RE = re.compile(r"\b(?:realityscan|realitycapture)(?:\.exe)?(?![\w.])")
+
+_WORKFLOW_NAMES = (
+    r"startrealityscan|alignzone|mergezonecomponents|generatemodel|"
+    r"exportdeliverables|saveprojectcopy|modeltofinal|growzone|nightgrow|"
+    r"computemodel|calibcellalign|flushcache|guiworkbench|"
+    r"alignimagesfromfolder|probecalibgroups\d*|probeflightlog\d*|"
+    r"probeexportsettings")
+#: A workflow name in COMMAND position without its extension: cmd resolves
+#: `cmd /c AlignZone` through PATHEXT, and `call`/`start`/`&`/Start-Process
+#: run it just the same.
+_WORKFLOW_CMDPOS = re.compile(
+    r"(?:^|\bcmd(?:\.exe)?\s+/+[ck]\s+|\bcall\s+|\bstart\s+(?:\"[^\"]*\"\s+)?|"
+    r"\bstart-process\s+|\binvoke-expression\s+['\"]?(?:cmd\s+/+[ck]\s+)?|&\s*)"
+    r"\s*['\"]?(?:[^\s'\"]*[\\/])?(" + _WORKFLOW_NAMES + r")(?:\.bat)?\b",
+    re.IGNORECASE)
 
 #: Workflow scripts that must be launched through RealityScanCLI.
 #: run_batch_script gives them a log file, an instance lock and marker
 #: hygiene; a bare `cmd /c AlignZone.bat` gets none of it and lets the
 #: booted GUI inherit the caller's stdout pipe (Windows trap 2026-08-07).
 _WORKFLOW_BAT = re.compile(
-    r"\b(startrealityscan|alignzone|mergezonecomponents|generatemodel|"
-    r"exportdeliverables|saveprojectcopy|modeltofinal|growzone|nightgrow|"
-    r"computemodel|calibcellalign|flushcache|guiworkbench|"
-    r"alignimagesfromfolder|probecalibgroups\d*|probeflightlog\d*|"
-    r"probeexportsettings)\.bat\b"
+    r"\b(" + _WORKFLOW_NAMES + r")\.bat\b"
     # Anything else under RS_CLI/Scripts is a workflow too, whatever it is
     # called - a new script must not slip past the guard by being new; the
     # archived probes and legacy workflows are boot-capable as well.
@@ -51,9 +66,29 @@ _WORKFLOW_BAT = re.compile(
 #: segment) so `grep AlignZone.bat` passes and `AlignZone.bat` does not.
 _READ_ONLY = re.compile(
     r"^\s*(sudo\s+)?(grep|rg|cat|bat|head|tail|less|more|type|ls|dir|find|"
-    r"fd|wc|diff|git|sed|awk|echo|printf|py|python|python3|pytest|"
-    r"select-string|get-content|get-childitem|test-path)\b",
+    r"fd|wc|diff|git|sed|awk|echo|printf|py|python|python3|pytest|file|stat|"
+    r"sha256sum|md5sum|xxd|od|hexdump|strings|cut|sort|uniq|tr|nl|jq|cd|pushd|"
+    r"test|select-string|get-content|get-childitem|get-item|get-filehash|"
+    r"test-path|measure-object|compare-object|select-object|where-object|"
+    r"format-list|format-table|write-output|write-host)\b",
     re.IGNORECASE)
+#: `NAME=value` prefixes before the verb (`PYTHONIOENCODING=utf-8 python ...`,
+#: the idiom CLAUDE.md prescribes) are not the command.
+_ENV_PREFIX = re.compile(r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+")
+#: A heredoc: `<<EOF ... EOF` (quoted or dashed terminator).
+_HEREDOC = re.compile(
+    r"(?P<lead>[^\n]*<<-?\s*['\"]?(?P<tag>\w+)['\"]?[^\n]*)\n"
+    r"(?P<body>.*?)\n[ \t]*(?P=tag)[ \t]*(?=\n|$)", re.DOTALL)
+#: Command substitutions execute their contents.
+_SUBSHELL = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
+#: Segment separators: ||, &&, an unescaped |, ;, newline, and a single &
+#: (cmd's separator, bash's background operator) that is not part of a
+#: redirection (`2>&1`, `&>`).
+_SPLIT = re.compile(r"\|\||&&|(?<!\\)\||;|\n|(?<![>\d])&(?![&>])")
+
+
+def _verb(segment: str) -> str:
+    return _ENV_PREFIX.sub("", segment, count=1)
 
 
 def segments(command: str) -> list[str]:
@@ -61,25 +96,44 @@ def segments(command: str) -> list[str]:
 
     A backslash-escaped pipe (``grep "a\\|b"``) is a regex alternation
     inside one argument, not a shell pipe, so it does not start a new
-    segment - otherwise a read-only grep whose pattern mentions a .bat
-    name is refused.
+    segment. A heredoc body fed to a READ-ONLY verb (``python - <<EOF``,
+    ``cat > note <<EOF``) is data and is dropped - a line inside it that
+    merely names a workflow script used to be refused (review finding H2);
+    a heredoc fed to anything else (``bash <<EOF``) stays checked. The
+    contents of ``$(...)`` and backticks are segments of their own.
     """
-    return [s for s in re.split(r"\|\||&&|(?<!\\)\||;|\n", command)
-            if s.strip()]
+    subshells: list[str] = []
+
+    def _heredoc(match: re.Match) -> str:
+        lead = match.group("lead")
+        if _READ_ONLY.match(_verb(lead)):
+            return lead + "\n<heredoc>\n" + match.group("tag")
+        return match.group(0)
+
+    text = _HEREDOC.sub(_heredoc, command)
+    for match in _SUBSHELL.finditer(text):
+        subshells.append(match.group(1) or match.group(2) or "")
+    text = _SUBSHELL.sub(" ", text)
+    return [s for s in _SPLIT.split(text) if s.strip()] + \
+           [s for s in subshells if s.strip()]
 
 
 def offence(command: str) -> str | None:
     """The reason this command is refused, or None."""
     for segment in segments(command):
-        low = segment.lower()
-        if _READ_ONLY.match(segment):
+        verb = _verb(segment)
+        low = verb.lower()
+        if _READ_ONLY.match(verb):
             continue
-        for exe in _EXECUTABLES:
-            if exe in low:
-                return (f"invokes {exe} directly")
+        hit = _EXE_RE.search(low)
+        if hit:
+            return f"invokes {hit.group(0)} directly"
         hit = _WORKFLOW_BAT.search(low)
         if hit:
             return f"invokes the workflow script {hit.group(0)} directly"
+        hit = _WORKFLOW_CMDPOS.search(low)
+        if hit:
+            return f"invokes the workflow script {hit.group(1)} directly"
     return None
 
 

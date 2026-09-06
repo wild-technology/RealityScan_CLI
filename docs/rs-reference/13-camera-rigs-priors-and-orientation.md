@@ -1872,6 +1872,10 @@ _LEGACY_FAMILY = (('camupper', 'legacy_camupper'),
                   ('camlower', 'legacy_camlower'))
 ```
 
+(The 2026-07 code. Since 2026-08 the registry is DATA: `modules/cameras.json` `families[]`
+carries every pattern, and `^u\d+c` (`wca_upper`), `na168upper`, `na168still` and
+`sonystill` were added there — `camera_registry.py` loads them.) [VERIFIED-by-inspection 2026-09-06]
+
 | Family key | Matches | Physical camera |
 |---|---|---|
 | `wca_port` | `P<digits>C…` | port |
@@ -1881,6 +1885,8 @@ _LEGACY_FAMILY = (('camupper', 'legacy_camupper'),
 | `legacy_camlower` | `camlower*` | cinema |
 | `legacy_camupper` | `camupper*` | starboard |
 | `zeuss` | delimiter-bounded `zeuss` or `herc` | zeuss |
+| `wca_upper` | `U<digits>C…` | upper (A2, 2026-08-14) |
+| `na168_upper` / `na168_stillcam` / `sony_stillcam` | delimiter-bounded `na168upper` / `na168still` / `sonystill` | upper / the Cinema body under NA168 names / the Sony stillcam (2026-08-31) |
 
 Two regression-pinned traps [VERIFIED: `testing/test_rig_mounts.py`]:
 
@@ -1893,9 +1899,11 @@ Two regression-pinned traps [VERIFIED: `testing/test_rig_mounts.py`]:
 
 ### 10.3 Mount geometry is keyed by FILENAME FAMILY, not by camera
 
-The same Cinema unit sits **10° down** under legacy `camlower` names and **45° down** under
-WCA `C###C` names. Keying geometry off the physical camera would silently rewrite every
-legacy dataset by tens of degrees. `MOUNTS` in
+The same Cinema unit sits **10° down** under legacy `camlower` names and **0°** (straight
+ahead) under WCA `C###C` names since the 2026-08-14 owner correction (A2) — before it the
+row said 45°, which belongs to the UPPER camera (`U###C`, `na168upper`); legacy `camlower`
+10° vs `wca_upper` 45° is the same lesson. Keying geometry off the physical camera would
+silently rewrite every legacy dataset by tens of degrees. `MOUNTS` in
 `modules/georeference/georeference_images.py`, imported unchanged by `geoall.py`:
 
 | Family | fwd (m) | lat (m) | down (m) | pitch (° down from vehicle forward axis) | pitch accuracy (°) |
@@ -1910,7 +1918,9 @@ legacy dataset by tens of degrees. `MOUNTS` in
 | `na168_upper` | 1.0 | 0.0 | 0.0 | 45.0 | 15.0 |
 | `wca_starboard` | **`None`** — never measured | | | | |
 
-[VERIFIED-by-inspection + pinned by `testing/test_rig_mounts.py`, values in force 2026-07-26]
+[VERIFIED-by-inspection + pinned by `testing/test_rig_mounts.py`; values in force 2026-07-26,
+`wca_cinema` 0° / `wca_upper` 45° since 2026-08-14 (A2), `zeuss` 25/45 since 2026-09-01
+(D3, adopted 2026-09-05)]
 
 **Zeuss is on a TILTING HEAD, and its row is not a mount constant.**
 Owner-stated 2026-09-01: the head sits around **20° down** for most survey

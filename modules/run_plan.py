@@ -5,7 +5,6 @@ parser before anything runs.
     python -m modules.run_plan --charter RUN_CHARTER.json --validate
     python -m modules.run_plan --charter RUN_CHARTER.json --json
     python -m modules.run_plan --workspace <root> --stages merge,model
-    python -m modules.run_plan --questions --stages georeference,batch
 
 Consumers (add a consumer, never a second planner): ``rs.py``
 (``rs plan`` / ``rs run`` / ``rs launch``), ``modules.preflight`` (which
@@ -335,6 +334,9 @@ class Session:
     continue_automatically: bool = False
     enabled: list[str] = field(default_factory=list)
     answers: dict[str, str] = field(default_factory=dict)   # cli_long -> value
+    #: charter science.min_component_size - the merge's --min_size and, for
+    #: the align chain, --r_min_component_size (None = the drivers' 50).
+    min_component_size: Optional[int] = None
 
     @property
     def label(self) -> str:
@@ -638,6 +640,22 @@ def build_commands(session: Session) -> list[StageCommand]:
     rs_env = realityscan_env(_settings())
 
     if chain:
+        # Answers that collide with a flag this planner PINS would be emitted
+        # twice and argparse keeps the last one: an owner's r_model_generate
+        # true was silently forced false, an output_dir answer silently
+        # redirected the run (review finding bugs-surface F3). Refuse.
+        pinned = {"output_dir", "continue_automatically"}
+        if "align" in chain:
+            pinned |= set(_FORCED_ANSWERS)
+        clash = sorted(k for k, v in session.answers.items()
+                       if k in pinned and str(v).strip())
+        if clash:
+            raise ValueError(
+                f"answer(s) {clash} collide with flags the planner pins "
+                "(output_dir = the results root, continue_automatically = "
+                "true, r_model_* / r_display_output = false because per-zone "
+                "models are a separate gated stage) - remove them from "
+                "pipeline.answers")
         argv = [sys.executable, str(REPO / "main.py"),
                 "--output_dir", session.results_root,
                 "--continue_automatically", "true"]
@@ -668,6 +686,24 @@ def build_commands(session: Session) -> list[StageCommand]:
         needs_rs = "align" in chain
         if needs_rs:
             env.update(rs_env)
+            layout = session.answers.get("b_zone_layout", "").strip().lower()
+            if layout == "pool":
+                # Pool zones hold an .imagelist, not images; the align stage
+                # gates them on RS_ALIGN_POOL_DIR (the canonical pool root)
+                # and skips every zone as "no images found" without it -
+                # only the archived campaign drivers ever set it (review
+                # finding na173-probe F7; the 2026-08-09 union wave died
+                # exactly there).
+                if "preprocess" in chain:
+                    pool_root = str(ws.root / "preprocessed_images")
+                elif "extract" in chain:
+                    pool_root = str(ws.root / "raw_images")
+                else:
+                    pool_root = session.answers.get("b_input", "").strip()
+                if not pool_root:
+                    raise ValueError("b_zone_layout=pool needs the pool root: "
+                                     "answer b_input, or enable extract/preprocess")
+                env["RS_ALIGN_POOL_DIR"] = pool_root
         commands.append(StageCommand(
             stage=" + ".join(MODULE_DISPLAY[k] for k in chain),
             argv=argv, env=env, needs_realityscan=needs_rs))
@@ -679,7 +715,8 @@ def build_commands(session: Session) -> list[StageCommand]:
                 "--output", str(ws.root / "merged"),
                 "--name", f"{session.label or ws.root.name}_Assembly",
                 "--project_label", session.label,
-                "--min_size", "50", "--target", "0.95",
+                "--min_size", str(session.min_component_size or 50),
+                "--target", "0.95",
                 "--visible", "true", "--auto_model", "false",
                 "--ladder", "merge_first", "--merge_scope", "neighbour",
                 "--pair_gate", "overlap", "--assemble_only", "false",
@@ -924,9 +961,30 @@ def session_from_charter(charter, stages: Optional[list[str]] = None
     rs_settings.json, which is the point.
     """
     pipeline = charter.raw.get("pipeline", {}) or {}
-    answers = {str(k): str(v) for k, v in
-               (pipeline.get("answers", {}) or {}).items()}
+    answers: dict[str, str] = {}
+    for k, v in (pipeline.get("answers", {}) or {}).items():
+        if v is None:
+            # A JSON null is "not answered": preflight asks if it is
+            # required. str(None) used to reach main.py as the literal
+            # token "None" (review finding bugs-surface F4).
+            continue
+        answers[str(k)] = ("true" if v is True else "false" if v is False
+                           else str(v))
     enabled = list(stages or pipeline.get("stages", []) or [])
+    raw_min = (charter.science or {}).get("min_component_size")
+    min_size: Optional[int] = None
+    if raw_min not in (None, ""):
+        try:
+            min_size = int(raw_min)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"science.min_component_size must be an integer, got "
+                f"{raw_min!r}") from exc
+    if (min_size is not None and "align" in enabled
+            and not answers.get("r_min_component_size", "").strip()):
+        # The charter's science value is the align stage's minimum too;
+        # until 2026-09-06 nothing read it (review finding bugs-surface F12).
+        answers["r_min_component_size"] = str(min_size)
     return Session(
         expedition=charter.campaign,
         dive=charter.dive,
@@ -934,6 +992,7 @@ def session_from_charter(charter, stages: Optional[list[str]] = None
         continue_automatically=True,
         enabled=enabled,
         answers=answers,
+        min_component_size=min_size,
     )
 
 
@@ -948,13 +1007,41 @@ def unreached_answers(session: Session, commands: list[dict]) -> list[str]:
     """
     used: set[str] = set()
     for cmd in commands:
-        for token in cmd["argv"]:
+        argv = cmd["argv"]
+        # Only the chain command (main.py) consumes charter answers; a flag
+        # the planner pins on merge/model/export (--min_size, --target ...)
+        # must not make a same-named answer look consumed (review finding
+        # bugs-surface F5).
+        if len(argv) < 2 or not str(argv[1]).endswith("main.py"):
+            continue
+        for token in argv:
             if isinstance(token, str) and token.startswith("--"):
                 used.add(token[2:])
     return sorted(key for key, value in session.answers.items()
                   if str(value).strip()
                   and not key.startswith(("cam_", "_"))
                   and key not in used)
+
+
+def _dropped_reason(key: str, chain: list[str]) -> str:
+    """' (disabled while X is enabled)' when a chain module disables it."""
+    enabled_displays = {MODULE_DISPLAY[k] for k in chain if k in MODULE_DISPLAY}
+    for stage in chain:
+        module = _module_registry().get(stage)
+        if module is None:
+            continue
+        for p in module.get_parameters().values():
+            if p.cli_long != key:
+                continue
+            disabled_by = getattr(p, "disable_when_module_active", None) or []
+            if isinstance(disabled_by, str):
+                disabled_by = [disabled_by]
+            hit = [d for d in disabled_by if d in enabled_displays]
+            if hit:
+                return (f" (accepted by {stage} but DISABLED while "
+                        f"{', '.join(hit)} is enabled - that module hands the "
+                        "value over in-process; drop the answer or the module)")
+    return ""
 
 
 def build_plan(session: Session, charter=None,
@@ -1008,10 +1095,13 @@ def build_plan(session: Session, charter=None,
         # charter: an argument the owner wrote down and signed off must
         # never be dropped in silence. Naming it here is the difference
         # between "the run used my settings" and "the run used the
-        # defaults and said nothing".
+        # defaults and said nothing". When the cause is a module that
+        # DISABLES the flag, say that instead of sending the owner to look
+        # for a typo that is not there (review finding na173-probe F13).
+        explained = [f"{key}{_dropped_reason(key, chain)}" for key in dropped]
         warnings.append(
             "answers reached NO command and were silently dropped: "
-            + ", ".join(dropped)
+            + ", ".join(explained)
             + " - check the flag names against `python main.py --help`")
 
     return {
@@ -1113,7 +1203,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     rejected = [c for c in plan["commands"] if c.get("parses") is False]
     if rejected:
         return 1
-    if args.validate and plan["warnings"]:
+    # The sign-off warning is preflight's question, not a plan defect
+    # (drive-run: non-zero = a rejected command or a dropped answer).
+    if args.validate and [w for w in plan["warnings"] if "NOT SIGNED" not in w]:
         return 1
     return 0
 

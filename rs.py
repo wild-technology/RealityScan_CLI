@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -67,6 +68,9 @@ RUN_STATE_NAME = "RUN_STATE.json"
 #: Set by Claude Code in every Bash tool shell. Its presence means "this
 #: process tree dies with the session" - the job-object kill class.
 HARNESS_ENV = "CLAUDECODE"
+#: Set by the .cmd launcher rs launch writes: this run IS the scheduled
+#: task's run, so RUN_STATE keeps the task/.rc fields.
+LAUNCHER_ENV = "RS_LAUNCHER_RC"
 #: Stages whose commands boot RealityScan (run_plan marks them).
 #: Status-poll cadence for scheduler-owned runs (owner: every 30 minutes).
 POLL_INTERVAL_MIN = 30
@@ -123,13 +127,14 @@ def _plan_for(charter: RunCharter, stages: Optional[list[str]]) -> dict:
     return build_plan(session, charter), session
 
 
-def _gate(charter: RunCharter, allow_unsigned: bool = False) -> Optional[int]:
-    """Signed + preflight READY, else print why and return an exit code."""
+def _gate(charter: RunCharter, stages: Optional[list[str]] = None,
+          allow_unsigned: bool = False) -> Optional[int]:
+    """Signed + preflight READY for THESE stages, else print why + exit code."""
     if not charter.is_signed() and not allow_unsigned:
         print("REFUSED: the charter is not signed off (signed_off.by / .date). "
               "No run before the owner signs.", file=sys.stderr)
         return EXIT_NOT_READY
-    report = preflight_charter(charter)
+    report = preflight_charter(charter, stages=stages)
     if report["verdict"] != "ready":
         print(_preflight_text(report))
         print("\nREFUSED: preflight is not READY. Every 'ASK THE OWNER' line "
@@ -155,6 +160,13 @@ def execute_commands(commands: list[dict], agent_ws: Path, charter_path: str,
     state_path = agent_ws / RUN_STATE_NAME
     state = _read_json(state_path)
     history = list(state.get("history") or [])
+    if not os.environ.get(LAUNCHER_ENV, "").strip():
+        # A direct `rs run` is not the launcher's run: an earlier launch's
+        # task name and .rc file must not be reported beside this run's
+        # state (review finding bugs-surface F8 - two monitors disagreeing).
+        for key in ("task", "rc_file", "launcher_cmd", "launcher_vbs",
+                    "prepared", "stages", "launcher_exit"):
+            state.pop(key, None)
     state.update({"schema": 1, "charter": charter_path, "label": label,
                   "status": "running", "resume": resume_cmd,
                   "history": history})
@@ -174,13 +186,26 @@ def execute_commands(commands: list[dict], agent_ws: Path, charter_path: str,
         print(f"== {record['stage']}\n   log: {log_path}")
         env = dict(os.environ)
         env.update({k: str(v) for k, v in (record.get("env") or {}).items()})
-        with open(log_path, "w", encoding="utf-8", errors="replace") as log:
-            proc = subprocess.Popen(argv, cwd=record.get("cwd") or str(REPO),
-                                    env=env, stdin=subprocess.DEVNULL,
-                                    stdout=log, stderr=subprocess.STDOUT)
-            state["pid"] = proc.pid
-            _write_json(state_path, state)
-            rc = proc.wait()
+        try:
+            with open(log_path, "w", encoding="utf-8", errors="replace") as log:
+                proc = subprocess.Popen(argv, cwd=record.get("cwd") or str(REPO),
+                                        env=env, stdin=subprocess.DEVNULL,
+                                        stdout=log, stderr=subprocess.STDOUT)
+                state["pid"] = proc.pid
+                _write_json(state_path, state)
+                rc = proc.wait()
+        except KeyboardInterrupt:
+            _record_abort(state, history, record, log_path, "aborted",
+                          "KeyboardInterrupt", state_path)
+            raise
+        except OSError as exc:
+            # The stage never started (bad interpreter path, ...). Until
+            # 2026-09-06 RUN_STATE stayed 'running' with no pid forever
+            # (review finding bugs-surface F7).
+            _record_abort(state, history, record, log_path, "failed",
+                          f"{type(exc).__name__}: {exc}", state_path)
+            print(f"   FAILED to start: {exc}")
+            return 1
         finished = time.strftime("%Y-%m-%d %H:%M:%S")
         entry = {"stage": record["stage"], "started": started,
                  "finished": finished, "returncode": rc, "log": str(log_path)}
@@ -195,13 +220,24 @@ def execute_commands(commands: list[dict], agent_ws: Path, charter_path: str,
     return 0
 
 
+def _record_abort(state: dict, history: list, record: dict, log_path: Path,
+                  status: str, error: str, state_path: Path) -> None:
+    finished = time.strftime("%Y-%m-%d %H:%M:%S")
+    history.append({"stage": record["stage"], "started": state.get("started"),
+                    "finished": finished, "returncode": None, "error": error,
+                    "log": str(log_path)})
+    state.update({"returncode": None, "finished": finished, "status": status,
+                  "error": error, "history": history})
+    _write_json(state_path, state)
+
+
 def cmd_run(args) -> int:
     charter, rc = _load(args.charter)
     if charter is None:
         return rc
     stages = _stages_arg(args.stages)
     if not args.dry_run:
-        refused = _gate(charter)
+        refused = _gate(charter, stages)
         if refused:
             return refused
     try:
@@ -222,18 +258,31 @@ def cmd_run(args) -> int:
         print("DRY RUN: nothing executed, nothing written.")
         return 0
     needs_rs = [c["stage"] for c in plan["commands"] if c.get("needs_realityscan")]
+    if needs_rs and args.foreground and os.environ.get(HARNESS_ENV):
+        # --foreground is the OWNER's override for a terminal THEY own. An
+        # agent shell always carries CLAUDECODE, and `Bash(python rs.py *)`
+        # is allow-listed, so the flag typed by an agent would boot
+        # RealityScan under the harness job object with no gate at all
+        # (review finding H9). The owner's own terminal has no CLAUDECODE.
+        print("REFUSED: --foreground from an agent harness shell "
+              f"({HARNESS_ENV} is set). The owner runs this in a terminal they "
+              "own; the agent uses\n"
+              f"    python rs.py launch --charter \"{charter.path}\""
+              + (f" --stages {args.stages}" if args.stages else ""),
+              file=sys.stderr)
+        return EXIT_HARNESS_REFUSED
     if needs_rs and os.environ.get(HARNESS_ENV) and not args.foreground:
         print("REFUSED: this shell belongs to an agent harness "
               f"({HARNESS_ENV} is set) and the plan boots RealityScan for: "
               f"{', '.join(needs_rs)}. Long runs are SCHEDULER-OWNED "
               "(docs/AGENT_OPERATIONS.md mandate 6): use\n"
-              f"    python rs.py launch --charter {args.charter}"
+              f"    python rs.py launch --charter \"{charter.path}\""
               + (f" --stages {args.stages}" if args.stages else "")
               + "\nand run the printed schtasks commands. --foreground is the "
                 "owner's override for a terminal they own.", file=sys.stderr)
         return EXIT_HARNESS_REFUSED
     agent_ws = _agent_ws(charter)
-    resume = (f"python rs.py run --charter {args.charter}"
+    resume = (f'python rs.py run --charter "{charter.path}"'
               + (f" --stages {args.stages}" if args.stages else "")
               + (" --foreground" if args.foreground else ""))
     return execute_commands(plan["commands"], agent_ws, str(charter.path),
@@ -251,13 +300,25 @@ def _assert_cmd_safe(*values: str) -> None:
                 f"{value!r} contains cmd metacharacter(s) {bad}; cmd would "
                 "split, eat or execute them silently (CLAUDE.md hard rule 8). "
                 "Rename the path or move the charter.")
+        outside = sorted({ch for ch in str(value) if not 32 <= ord(ch) <= 126})
+        if outside:
+            # cmd reads a batch file in the OEM code page and WSH reads a
+            # .vbs as ANSI; a UTF-8 launcher naming an e-acute path simply
+            # does not find it (demonstrated 2026-09-05, review finding H4).
+            # Refuse, never escape.
+            raise ValueError(
+                f"{value!r} contains non-ASCII character(s) {outside}; the "
+                "CRLF launcher pair is read in the OEM/ANSI code pages and "
+                "would silently miss the path. Use an ASCII path and task name.")
 
 
 def write_launcher(charter: RunCharter, charter_path: str,
                    stages: Optional[list[str]], task_name: str,
                    python: str = sys.executable) -> dict:
     """The CRLF .cmd/.vbs pair + RUN_STATE (prepared). Returns their paths."""
-    agent_ws = _agent_ws(charter)
+    # Absolute, always: Task Scheduler resolves /TR against ITS working
+    # directory, and RUN_STATE.json is read from anywhere (review finding H5).
+    agent_ws = _agent_ws(charter).resolve()
     launch_dir = agent_ws / "launch"
     logs = agent_ws / "logs"
     launch_dir.mkdir(parents=True, exist_ok=True)
@@ -268,7 +329,8 @@ def write_launcher(charter: RunCharter, charter_path: str,
     rc_path = launch_dir / f"{_slug(task_name)}_{stamp}.rc"
     log_path = logs / f"launch_{_slug(task_name)}_{stamp}.log"
     stage_arg = ",".join(stages) if stages else ""
-    _assert_cmd_safe(str(REPO), charter_path, str(agent_ws), python, stage_arg)
+    _assert_cmd_safe(str(REPO), charter_path, str(agent_ws), python, stage_arg,
+                     task_name)
     run_line = (f'"{python}" "{REPO / "rs.py"}" run --charter "{charter_path}"'
                 + (f' --stages "{stage_arg}"' if stage_arg else "")
                 + f' --foreground > "{log_path}" 2>&1')
@@ -280,6 +342,7 @@ def write_launcher(charter: RunCharter, charter_path: str,
         f'set "RS_RUN_CHARTER={charter_path}"',
         'set "RS_NO_SETTINGS_INHERITANCE=1"',
         'set "PYTHONIOENCODING=utf-8"',
+        f'set "{LAUNCHER_ENV}={rc_path}"',
         run_line,
         f'echo %errorlevel% > "{rc_path}"',
         "",
@@ -338,12 +401,27 @@ def cmd_launch(args) -> int:
     print(f"run log  : {paths['log']}")
     print(f"exit code: {paths['rc']}  (written when the run ends)")
     print(f"RUN_STATE: {paths['state']}  (status prepared -> running -> done|failed)")
+    vbs = paths["vbs"]
     print("\nNOT executed by rs.py - registering a task is an owner-approved "
-          "action. Run these, in order (Windows, the box that owns the data):")
-    print(f'  schtasks /Create /TN "{task}" /TR "wscript.exe //B \\"{paths["vbs"]}\\"" '
+          "action. Run the three lines for YOUR shell, in order (Windows, the "
+          "box that owns the data). The same line does not survive every shell "
+          "(review finding H1): Git Bash turns a single leading slash into a "
+          "path, PowerShell does not honour backslash-quote.")
+    print("  cmd.exe:")
+    print(f'    schtasks /Create /TN "{task}" /TR "wscript.exe //B \\"{vbs}\\"" '
           f'/SC ONCE /ST {start} /F')
-    print(f'  schtasks /Run /TN "{task}"')
-    print(f'  schtasks /Query /TN "{task}" /FO LIST /V')
+    print(f'    schtasks /Run /TN "{task}"')
+    print(f'    schtasks /Query /TN "{task}" /FO LIST /V')
+    print("  PowerShell tool:")
+    print(f"    schtasks /Create /TN \"{task}\" /TR 'wscript.exe //B \"{vbs}\"' "
+          f"/SC ONCE /ST {start} /F")
+    print(f'    schtasks /Run /TN "{task}"')
+    print(f'    schtasks /Query /TN "{task}" /FO LIST /V')
+    print("  Bash tool (Git Bash; a doubled slash survives as one):")
+    print(f'    schtasks //Create //TN "{task}" //TR "wscript.exe //B \\"{vbs}\\"" '
+          f'//SC ONCE //ST {start} //F')
+    print(f'    schtasks //Run //TN "{task}"')
+    print(f'    schtasks //Query //TN "{task}" //FO LIST //V')
     print("\nThen start the 30-minute monitor (a small read-only worker; it "
           "reports, never acts) - paste as one line:")
     print(f'  /loop 30m Poll the run with the run-monitor agent (instance '
@@ -351,7 +429,7 @@ def cmd_launch(args) -> int:
           f'{charter.results_root}, charter {args.charter}); report only its '
           f'verdict block; if the verdict is failed or stalled, or a budget '
           f'line appears, stop the loop and tell the owner.')
-    print(f"Manual poll:  python rs.py status --charter {args.charter}")
+    print(f'Manual poll:  python rs.py status --charter "{charter.path}"')
     return 0
 
 
@@ -374,8 +452,72 @@ def _age(path: Path) -> str:
     return f"{secs // 3600}:{(secs % 3600) // 60:02d}"
 
 
+def _pid_alive(pid) -> bool:
+    """True when a process with this id is still running (Windows-aware)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    import ctypes  # noqa: PLC0415
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x1000, False, pid)   # QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        return bool(ok) and code.value == 259                 # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _budget_block(charter: RunCharter, workspace: str, state: Optional[dict]) -> dict:
+    """The charter's budget beside what can be read now: elapsed hours and
+    free disk on the results and cache volumes. The RAM line is the
+    monitor's to read; this block only states the number to compare against."""
+    b = charter.budget or {}
+    started = (state or {}).get("started") or (state or {}).get("prepared")
+    elapsed = None
+    if started:
+        try:
+            elapsed = (time.time() - time.mktime(
+                time.strptime(str(started), "%Y-%m-%d %H:%M:%S"))) / 3600.0
+        except (ValueError, OverflowError):
+            elapsed = None
+    free: dict[str, Optional[float]] = {}
+    for label, path in (("results", workspace), ("cache", charter.rs_cache_dir)):
+        if not path:
+            continue
+        anchor = Path(path)
+        while not anchor.exists() and anchor.parent != anchor:
+            anchor = anchor.parent
+        try:
+            free[label] = round(shutil.disk_usage(anchor).free / 1024 ** 3, 1) \
+                if anchor.exists() else None
+        except OSError:
+            free[label] = None
+    try:
+        expected = float(b.get("expected_hours") or 0)
+    except (TypeError, ValueError):
+        expected = 0.0
+    return {"expected_hours": b.get("expected_hours"),
+            "elapsed_hours": round(elapsed, 2) if elapsed is not None else None,
+            "over_hours": bool(elapsed is not None and expected > 0 and elapsed > expected),
+            "memory_peak_gb": b.get("memory_peak_gb"),
+            "disk_delta_gb": b.get("disk_delta_gb"),
+            "free_gb": free,
+            "abort_criteria": b.get("abort_criteria")}
+
+
 def status_report(workspace: str, agent_ws: Optional[Path],
-                  instance: Optional[str]) -> dict:
+                  instance: Optional[str],
+                  charter: Optional[RunCharter] = None) -> dict:
     report: dict = {"schema": 1, "workspace": workspace}
     verify = _verify_mod.verify_workspace(workspace)
     report["verify"] = {k: verify.get(k) for k in
@@ -389,8 +531,17 @@ def status_report(workspace: str, agent_ws: Optional[Path],
             rc_text = _tail(Path(state["rc_file"]))
             if rc_text:
                 state["launcher_exit"] = rc_text[0]
+        if state and state.get("status") == "running":
+            alive = _pid_alive(state.get("pid"))
+            state["pid_alive"] = alive
+            if not alive:
+                state["status_note"] = ("STALE: RUN_STATE says running but the "
+                                        "pid is gone - rs.py was killed or the "
+                                        "stage never got a pid; nothing is running")
         report["run_state"] = state
         report["run_state_path"] = str(state_path)
+        if charter is not None:
+            report["budget"] = _budget_block(charter, workspace, state)
     if instance:
         errors_dir = Path(ERRORS_DIR)
         progress = errors_dir / f"progress_{instance}.txt"
@@ -434,6 +585,18 @@ def format_status(report: dict) -> str:
         lines.append(f"            log={state.get('log')}")
         if state.get("launcher_exit") is not None:
             lines.append(f"            launcher exit code file says: {state['launcher_exit']}")
+        if state.get("status_note"):
+            lines.append(f"            ! {state['status_note']}")
+    budget = report.get("budget")
+    if budget:
+        free = budget.get("free_gb") or {}
+        lines.append(
+            f"budget    : expected {budget.get('expected_hours')} h, elapsed "
+            f"{budget.get('elapsed_hours') if budget.get('elapsed_hours') is not None else '?'} h"
+            + ("  ! OVER the declared hours" if budget.get("over_hours") else "")
+            + f"; free results {free.get('results', '?')} GB, cache {free.get('cache', '?')} GB;"
+            f" memory line {budget.get('memory_peak_gb')} GB (read the RAM yourself)")
+        lines.append(f"            abort: {budget.get('abort_criteria')}")
     inst = report.get("instance")
     if inst:
         lines.append(f"instance  : {inst['name']}  progress: {inst['progress'] or '<no progress file>'}"
@@ -462,7 +625,8 @@ def cmd_status(args) -> int:
         workspace = args.workspace
         agent_ws = Path(workspace) / "_agent"
         instance = instance or os.environ.get("RS_INSTANCE") or None
-    report = status_report(workspace, agent_ws, instance)
+    report = status_report(workspace, agent_ws, instance,
+                           charter=charter if args.charter else None)
     print(json.dumps(report, indent=2) if args.json else format_status(report))
     return report["verify_exit"]
 
