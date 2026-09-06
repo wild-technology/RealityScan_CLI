@@ -282,7 +282,11 @@ def test_unmeasured_mount_takes_the_house_convention():
     assert module._get_camera_pitch_offset('S231C0001.jpg') == 10.0
     assert module._get_camera_pitch_accuracy('S231C0001.jpg') == 30.0
     # A MEASURED mount always wins over the assumption.
-    assert module._get_camera_pitch_offset('C231C0001.jpg') == 45.0
+    # Owner correction 2026-08-14: cinema points directly forward; the
+    # 45 deg down-look belongs to upper (wca_upper).
+    assert module._get_camera_pitch_offset('C231C0001.jpg') == 0.0
+    assert module._get_camera_pitch_offset('U231C0001.jpg') == 45.0
+    assert module._get_camera_pitch_accuracy('U231C0001.jpg') == 15.0
     assert module._get_camera_pitch_accuracy('C231C0001.jpg') == 15.0
     assert module._get_camera_pitch_offset('P231C0001.jpg') == 0.0
     assert module._get_camera_pitch_accuracy('P231C0001.jpg') == 15.0
@@ -306,7 +310,8 @@ def test_the_assumption_can_be_switched_off(tmp_path):
     assert module._get_camera_pitch_offset('mystery_cam_0001.jpg') is None
     assert module._get_camera_pitch_accuracy('mystery_cam_0001.jpg') is None
     # and a measured mount is STILL untouched by the opt-out
-    assert module._get_camera_pitch_offset('C231C0001.jpg') == 45.0
+    assert module._get_camera_pitch_offset('C231C0001.jpg') == 0.0
+    assert module._get_camera_pitch_offset('U231C0001.jpg') == 45.0
 
 
 def test_unmeasured_mount_rows_carry_the_assumed_pitch(tmp_path):

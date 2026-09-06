@@ -14,8 +14,8 @@ thing being tested: everything here is read from artifacts ON DISK
 (manifests, fingerprints, reports, export trees), never from a driver's
 claim about its own success.
 
-    py -3.13 -m modules.verify --workspace <root> --json
-    py -3.13 -m modules.verify --workspace <root> --require align,merge
+    python -m modules.verify --workspace <root> --json
+    python -m modules.verify --workspace <root> --require align,merge
 
 Exit codes (the JSON is the product; these are for shell gating):
     0  ok         - every required stage is done, no invariant violated
@@ -301,7 +301,7 @@ def format_text(payload: dict) -> str:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="py -3.13 -m modules.verify",
+        prog="python -m modules.verify",
         description="Census and verify a results workspace. Emits JSON.")
     parser.add_argument("--workspace", "-w", required=True,
                         help="results root to census")

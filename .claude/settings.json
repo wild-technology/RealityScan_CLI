@@ -1,4 +1,59 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest *)",
+      "Bash(python -m modules.verify *)",
+      "Bash(python -m modules.run_charter *)",
+      "Bash(python -m modules.run_plan *)",
+      "Bash(python -m py_compile *)",
+      "Bash(python rs.py *)",
+      "Bash(python -m modules.preflight *)",
+      "Bash(py -3.13 -m pytest *)",
+      "Bash(py -3.13 -m modules.verify *)",
+      "Bash(py -3.13 -m modules.run_charter *)",
+      "Bash(py -3.13 -m modules.run_plan *)",
+      "Bash(py -3.13 -m py_compile *)",
+      "Bash(py -3.13 rs.py *)",
+      "Bash(py -3.13 -m modules.preflight *)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git tag*)",
+      "Bash(git fetch*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Get-Item *)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(Select-String *)",
+      "PowerShell(Get-Process *)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(schtasks *)",
+      "Bash(taskkill *)",
+      "Bash(rm -rf *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(Remove-Item *)",
+      "Bash(rm -fr *)",
+      "Bash(rm -r -f *)",
+      "Bash(rm -f -r *)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard*)",
+      "Bash(git reset * --hard*)",
+      "Bash(git clean -fd*)",
+      "Bash(git clean -df*)",
+      "Bash(git clean -xfd*)",
+      "Bash(git clean -fdx*)",
+      "Bash(git clean -xdf*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -6,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "py -3.13 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_rs_launch.py\""
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_rs_launch.py\""
           }
         ]
       },
@@ -15,7 +70,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "py -3.13 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_charter_writes.py\""
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_charter_writes.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_schtasks.py\""
           }
         ]
       }
@@ -26,7 +90,38 @@
         "hooks": [
           {
             "type": "command",
-            "command": "py -3.13 \"$CLAUDE_PROJECT_DIR/.claude/hooks/normalize_crlf.py\""
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/normalize_crlf.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_status.py\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/route_driving_prompts.py\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre_compact.py\""
           }
         ]
       }

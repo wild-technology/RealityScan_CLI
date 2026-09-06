@@ -75,7 +75,7 @@ containment-based deletion is legal [VERIFIED-as-owner-intent: FINDINGS 2026-07-
 
 **Consequence for automation:** rename deterministically *before* every export
 (`<zone>_c<K>`, `<tag>_a<attempt>_c<K>`), and correlate a manifest to a scene component by
-**image set**, never by name [VERIFIED-as-design: docs/MERGE_REWORK_RECOMMENDATIONS Q6].
+**image set**, never by name [VERIFIED-as-design: docs/history/MERGE_REWORK_RECOMMENDATIONS Q6].
 
 ### 1.3 Alignment fragmentation is nondeterministic
 
@@ -980,7 +980,7 @@ RealityScan** — resolves three spatially disjoint UTM clusters:
 maximal component is **3,720/4,600 = 80.9 %**, below both `--target` values ever used (0.85, 0.83):
 a maximal-fraction gate was **unreachable by construction** and would have burned the full
 three-attempt ladder (~1.7 h measured) and exited 1 on a *correct* result
-[VERIFIED: FINDINGS 2026-07-24; docs/MERGE_REWORK_RECOMMENDATIONS].
+[VERIFIED: FINDINGS 2026-07-24; docs/history/MERGE_REWORK_RECOMMENDATIONS].
 
 Consequently `--target` in `merge_zones.py` is **informational only, never a gate**, and
 convergence (a full ladder cycle with no fusion) is the terminal condition.
@@ -1378,3 +1378,11 @@ Every `[OPEN]` in this document, with the cheapest probe that would close it.
 | O-12 | Are the "Small Components" thresholds (*Include smaller than* default 3, *Exclude bigger than*, *As small as a percentage of inputs*) and "Delete all small components" reachable from the CLI at all? | Type likely key prefixes into the GUI console view with TAB completion, or change each control and diff the app config. ~5 min with the GUI. | appbasics/smallcomponents; absent from allcommands |
 | O-13 | Is `-exportSelectedComponentFile <fileName>` a naming-safe alternative to `-exportSelectedComponentDir` (which names the file after the component)? Untested here. | One export of a known component to an explicit filename; check the resulting name. ~2 min. | appbasics/allcommands; unused by this repo |
 | O-14 | Does `-renameSelectedComponent` on an empty scene **fail** `0x80070057` or **silently no-op**? Two in-repo observations disagree (2026-07-23 vs 2026-07-24, §2.3), and the peel terminal depends on it — the workflow currently handles both, but a truncated peel is only detectable if the failure form is guaranteed (see O-5). | `-newScene`, then `-selectMaximalComponent`, then `-renameSelectedComponent x`; read `errors_<instance>.txt`. Repeat once after a delete-to-empty rather than a fresh scene, since those may differ. ~1 min. | FINDINGS 2026-07-23 vs 2026-07-24 |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Deleting a component from the delegated CLI does not survive `-save`
+
+Both the named path (`-selectComponent` + `-deleteSelectedComponent`) and the name-free path (`-selectMaximalComponent` → delete → promote → delete → `-importComponent` → `-save`) exit 0 with an empty errors file and leave the saved scene byte-identical on reload — on the GUI-visible instance (three censuses) and on a headless twin holding a copy, where commit rose 93 → 110 GB during the re-import, so the operations did execute in memory. The census peel "works" only because it peels in memory and discards the result by reloading; a workflow that SAVES the peeled state does not keep it. Production rule: never rely on CLI component deletion as a persistent edit — exclude the component's members at the driver level (baseline and enable lists) and leave the object for a GUI delete. [VERIFIED: FINDINGS 2026-08-12]

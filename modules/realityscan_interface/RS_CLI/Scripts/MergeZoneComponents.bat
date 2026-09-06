@@ -242,6 +242,19 @@ goto :after_export
 :: (maximal-first) then deleted; loop ends on an empty harvest. The
 :: scene was saved above; quit-no-save leaves it intact on disk.
 :harvest
+:: POOL layout: -exportXMPForSelectedComponent writes sidecars BESIDE THE
+:: SOURCE IMAGES, which in pool mode live in RS_ALIGN_POOL_DIR, not under
+:: RS_MERGE_IMAGES_ROOT (a pool zone folder holds only an .imagelist and a
+:: flight log - no images, and therefore no .xmp to find).
+:: Harvesting the wrong directory returns EMPTY, and the driver then aborts
+:: with "peel harvest returned EMPTY but <name>.rsalign exists - the
+:: measurement channel is broken" on a merge that actually FUSED. Cost on
+:: NA165/H2060 (2026-08-31): cluster_0 produced cluster_0_a1_c0..c5.rsalign
+:: in ~8 minutes and was thrown away unscored.
+:: AlignZone.bat:56-57 already does exactly this; this workflow did not.
+set "harvest_dir=%RS_MERGE_IMAGES_ROOT%"
+if defined RS_ALIGN_POOL_DIR if not "%RS_ALIGN_POOL_DIR%" == "" set "harvest_dir=%RS_ALIGN_POOL_DIR%"
+echo Identity harvest directory: %harvest_dir%
 set /a peel_index=0
 :peelLoop
 if %peel_index% GEQ 40 goto :after_export
@@ -259,7 +272,7 @@ call :run -exportXMPForSelectedComponent || goto :fail
 :: failures are NON-TERMINATING, so powershell.exe exited 0 on a
 :: partial harvest (audit 2026-08-07). $ErrorActionPreference=Stop
 :: plus try/catch makes the failure real.
-powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Get-ChildItem -LiteralPath '%RS_MERGE_IMAGES_ROOT%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%peel_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Get-ChildItem -LiteralPath '%harvest_dir%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%peel_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
 if errorlevel 1 ( echo ERROR: harvest move failed & goto :fail )
 call :run -deleteSelectedComponent || goto :fail
 set /a peel_index+=1

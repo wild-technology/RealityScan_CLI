@@ -22,10 +22,10 @@ is the test the old ones were not.
 Also here: the required data-type question, the publish CRS, and the
 camera records the wizard collects as REQUIRED answers and then drops.
 
-No RealityScan and no pipeline work. wildscan.session imports cleanly
+No RealityScan and no pipeline work. modules.run_plan imports cleanly
 without textual (only the TUI needs it), so these run everywhere.
 
-Run:  py -3.13 -m pytest testing/test_wildscan_commands_runnable.py
+Run:  python -m pytest testing/test_run_plan_commands.py
 """
 from __future__ import annotations
 
@@ -42,12 +42,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
 import main as main_mod  # noqa: E402
-import wildscan.session as session_mod  # noqa: E402
-from wildscan.session import (CHAIN_STAGES, MODULE_DISPLAY, Question,  # noqa: E402
+import modules.run_plan as session_mod  # noqa: E402
+from modules.run_plan import (CHAIN_STAGES, MODULE_DISPLAY, Question,  # noqa: E402
                               Session, build_commands, build_questions,
                               chain_arg_names, scan_raw_data,
                               workspace_input_crs, write_camera_records)
-from wildscan.workspace import Workspace  # noqa: E402
+from modules.workspace_census import Workspace  # noqa: E402
 
 
 class FakeStore:
@@ -321,13 +321,14 @@ def test_no_camera_answers_writes_no_file(tmp_path):
 
 
 # ------------------------------------------------- stale export resolution
-# wildscan/app.py is the TUI and needs textual, which is not a test
+# archive/wildscan_tui/wildscan/app.py is the ARCHIVED TUI and needs textual, not a test
 # dependency - so the structural property is pinned by AST, the same
 # no-real-tool philosophy the .bat guards use.
 
 def _app_tree():
     import ast
-    return ast.parse(open(os.path.join(REPO_ROOT, 'wildscan', 'app.py'),
+    return ast.parse(open(os.path.join(REPO_ROOT, 'archive', 'wildscan_tui',
+                                       'wildscan', 'app.py'),
                           encoding='utf-8').read())
 
 

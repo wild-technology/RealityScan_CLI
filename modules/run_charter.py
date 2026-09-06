@@ -11,9 +11,9 @@ This module makes the charter a JSON file the CODE reads, and turns the
 three touch rules into mechanical checks:
 
     RUN_CHARTER.json                                  (schema below)
-    py -3.13 -m modules.run_charter --init  <path>    scaffold one
-    py -3.13 -m modules.run_charter --validate <path> check it
-    py -3.13 -m modules.run_charter --check <path> --path <target>
+    python -m modules.run_charter --init  <path>    scaffold one
+    python -m modules.run_charter --validate <path> check it
+    python -m modules.run_charter --check <path> --path <target>
 
 A driver opts in by calling ``guard_write(target)`` before any mutating
 operation; the charter is located through the ``RS_RUN_CHARTER``
@@ -230,7 +230,7 @@ def parse_charter(data: dict, path: Optional[Path] = None) -> RunCharter:
         raise CharterError(f"{where}: ownership must be an object")
 
     # The pipeline block is what makes "every science argument explicit"
-    # enforceable rather than aspirational: wildscan.plan builds its whole
+    # enforceable rather than aspirational: modules.run_plan builds its whole
     # Session from it and reads NOTHING from rs_settings.json.
     pipeline = data.get("pipeline", {})
     if not isinstance(pipeline, dict):
@@ -360,7 +360,7 @@ TEMPLATE: dict = {
     },
     "pipeline": {
         "_comment": "answers are cli_long -> value, as main.py accepts "
-                    "them. wildscan.plan builds the run plan from THIS, so "
+                    "them. modules.run_plan builds the run plan from THIS, so "
                     "nothing is inherited from rs_settings.json.",
         "stages": ["georeference", "preprocess", "batch", "align"],
         "answers": {},
@@ -371,7 +371,7 @@ TEMPLATE: dict = {
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="py -3.13 -m modules.run_charter",
+        prog="python -m modules.run_charter",
         description="Scaffold, validate and test a run charter.")
     parser.add_argument("--init", metavar="PATH",
                         help="write a charter template to PATH")

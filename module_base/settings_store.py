@@ -50,10 +50,31 @@ NO_INHERIT_ENV = "RS_NO_SETTINGS_INHERITANCE"
 
 _TRUTHY = ("1", "true", "yes", "y", "on")
 
+#: Where the store lives when no explicit path is given. Set by the test
+#: suite (testing/conftest.py) so no test ever writes the repo root, and
+#: usable by an operator who wants a run's answers recorded beside its
+#: results instead of in the checkout.
+SETTINGS_PATH_ENV = "RS_SETTINGS_PATH"
+
+#: Strict-unattended switches. RS_NO_INTERACTIVE is main.py's "never
+#: prompt" contract; RS_RUN_CHARTER marks a charter-driven (agent) run.
+#: Under either, a prompt NEVER blocks on input(): it takes the value it is
+#: allowed to take and SAYS so, or fails by name (PRODUCT_READINESS 11).
+NO_INTERACTIVE_ENV = "RS_NO_INTERACTIVE"
+CHARTER_ENV = "RS_RUN_CHARTER"
+
 
 def inheritance_refused() -> bool:
     """True when persisted answers must not be reused as defaults."""
     return os.environ.get(NO_INHERIT_ENV, "").strip().lower() in _TRUTHY
+
+
+def unattended() -> bool:
+    """True when no prompt may wait for a human (RS_NO_INTERACTIVE truthy,
+    or a run charter is active). A hidden console reports isatty()=True
+    with an EOF stdin, so this is decided by declaration, never by TTY."""
+    return (os.environ.get(NO_INTERACTIVE_ENV, "").strip().lower() in _TRUTHY
+            or bool(os.environ.get(CHARTER_ENV, "").strip()))
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +163,8 @@ def realityscan_env(store) -> dict:
 
 class SettingsStore:
     def __init__(self, path: str = None):
-        self.path = path or DEFAULT_SETTINGS_PATH
+        self.path = (path or os.environ.get(SETTINGS_PATH_ENV, "").strip()
+                     or DEFAULT_SETTINGS_PATH)
         self._data = self._load()
 
     def _load(self) -> dict:
@@ -196,6 +218,17 @@ class SettingsStore:
         sec = self._data.get(section)
         return sec.get(key, fallback) if isinstance(sec, dict) else fallback
 
+    def default_for(self, section: str, key: str, fallback):
+        """Public name for ``_default_for`` - the value a prompt MAY offer.
+
+        Drivers that build their own prompts (main.parse_arguments, the
+        batcher's _prompt_int) must resolve their defaults through this,
+        never through ``get``: ``get`` bypasses the inheritance refusal,
+        and that bypass is how a charter-driven run could still inherit a
+        previous campaign's ``main``/``batch`` answers (audit 2026-09-05).
+        """
+        return self._default_for(section, key, fallback)
+
     def _default_for(self, section: str, key: str, fallback):
         """The default a PROMPT may offer for this key.
 
@@ -233,6 +266,18 @@ class SettingsStore:
         at all (audit 2026-08-07). Returns ``default`` on EOF; raises a
         NAMED error when there is no default to fall back to.
         """
+        if unattended():
+            # Declared unattended (RS_NO_INTERACTIVE / RS_RUN_CHARTER): never
+            # wait on input(), even on a console that looks interactive -
+            # a scheduled task's console is exactly that. Say what was
+            # taken, so a self-answered prompt is visible in the log.
+            if default is None:
+                raise ValueError(
+                    f'UNATTENDED run ({NO_INTERACTIVE_ENV}/{CHARTER_ENV}) and '
+                    f'no value for this prompt: "{message.strip()}". Supply '
+                    f'it on the command line or in the run charter.')
+            print(f'UNATTENDED: taking {default!r} for "{message.strip()}"')
+            return ''
         try:
             return input(message).strip()
         except EOFError:
@@ -293,6 +338,19 @@ class SettingsStore:
                 f'for "{section}.{key}". Pass it on the command line (or in '
                 f'the run charter) - stored answers from previous runs are '
                 f'refused on this lane.')
+        if unattended():
+            # Declared unattended: never input(). Nothing to take is a
+            # named failure, not a None handed downstream; a value taken
+            # is announced (PRODUCT_READINESS 11: no silent self-answer).
+            if stored is None:
+                raise ValueError(
+                    f'UNATTENDED run ({NO_INTERACTIVE_ENV}/{CHARTER_ENV}) and '
+                    f'no explicit value for "{section}.{key}". Pass it on '
+                    f'the command line or in the run charter.')
+            print(f'UNATTENDED: {section}.{key} = {stored!r} '
+                  f'({"code default" if stored == fallback else "stored answer"})')
+            self.set(section, key, stored)
+            return stored
         # sys.stdin is None under pythonw / no-console hosts; isatty()
         # on None would raise AttributeError before the EOFError guard
         # ever gets a chance (clean-sweep 2026-08-07).

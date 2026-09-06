@@ -454,7 +454,7 @@ GCP, a distance constraint or a locked XMP.
 confirmed (through Aug 2025) that RealityScan has **no stereo-rig support**, so a
 fixed-baseline ROV rig cannot get BLK3D-style automatic scale
 [VERIFIED-second-hand: COLMAP fact base F-20260723-27, quoted in
-`docs/COLMAP_CROSSOVER.md` §4 and HANDOFF; recorded 2026-07-24, not reproduced here].
+`archive/colmap/docs/COLMAP_CROSSOVER.md` §4 and HANDOFF; recorded 2026-07-24, not reproduced here].
 But the shipped build plainly *has* rig constructs: the XMP schema carries `xcr:Rig`,
 `xcr:RigInstance` and `xcr:RigPoseIndex` [OFFICIAL: tools/xmpalign], the Selected Input
 panel has a **Rigging** section (Rig ID / Prior / Model) and a **Relative coordinates**
@@ -1331,7 +1331,7 @@ The order-of-magnitude k1 gap is the fisheye declaring itself.
 **Fragmentation effect.** Calibration sidecars present at align time cut zone_1 from
 **9 components to 3** at equal-or-better registration (4,405/4,540 = 97.0 % vs 4,392 =
 96.7 %) on the same imagery and the same box.
-[VERIFIED: FINDINGS 2026-07-24; docs/FRESH_RUN_2026-07-24.md]
+[VERIFIED: FINDINGS 2026-07-24; docs/history/FRESH_RUN_2026-07-24.md]
 
 **But prior *content* can hurt.** An A/B on zone_13 with priors absent (the `.jpg.xmp`
 naming bug) vs promoted went **96.3 % → 89.6 %** on Zeuss. The old writer grouped
@@ -1814,7 +1814,7 @@ subsets, one variant per row, scored on registered cameras:**
 | **`baseline`** (no preprocessing) | **0 / 400** | **failed to form any component** |
 
 [VERIFIED: 2026-07-21 zone_9 A/B, `testing/run_zone9_tests.py` phase 2; table reproduced
-from `docs/code-review-2026-07.md` §"Preprocessing, measured then baked in"; defaults
+from `docs/history/code-review-2026-07.md` §"Preprocessing, measured then baked in"; defaults
 recorded in `modules/preprocess_images/preprocess_images.py`]
 
 Three things the full grid says that the headline does not:
@@ -1999,3 +1999,13 @@ Every `[OPEN]` in this document, with the cheapest probe that closes it. Ordered
 | 26 | **Is `Approximate` or `Unknown` the right lens prior for the two 14 mm fisheyes?** Epic explicitly recommends **Unknown** "for images with significant lens distortion, wide-angle lenses" (§15), while this rig ships `Approximate` on all four cameras. The `Approximate`-works evidence (§15 SUPERSEDED) is from the *rectilinear* Cinema camera only. | A/B on the 665-image bow fixture: `Camera:LensDistortionPrior` = `Approximate` vs `Unknown` on Port/Starboard only, same box, judged on registered count and the solved k1 spread. ~30 min. |
 | 27 | **Is `lisPreferImagesAsFeatureSource` really default `true`?** The Help documents `true` in two places; this repo's GUI-exported `AlignmentParams.xml` carries `false` (§9). Irrelevant while there is no LiDAR, but it means the exported preset may not be a faithful default snapshot — which would put every other value in that file in question. | Export the alignment settings from a clean GUI profile and diff the whole file against `RS_CLI/Metadata/AlignmentParams.xml`. ~5 min, and it audits far more than this one key. |
 | 28 | **Is there a `-set` key for `Maximal depth-map pixel count`?** It is a real reconstruction-settings field with no row in `tutorials/setkeyvaluetable` (§20). | Same probe as #8/#21: set it in the GUI, export the settings, diff for a new key. |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Selection and grouping from the delegated CLI
+
+- `-selectImage <regexp> union` is hazardous: after it, the next delegated command errored `0x8000FFFF`; the mode-less `-selectImage <regexp>` and the full-path+union form (`GrowZone.bat`) behaved. [VERIFIED: FINDINGS 2026-08-08]
+- Whether `-setPriorCalibrationGroup` / `-setPriorLensGroup` take effect from the delegated CLI is an **open contradiction** (measured non-functional 2026-08-08; used unmeasured on two campaigns) — `02-command-reference.md` A5, `docs/DECISIONS.md` D1. Grouping is the only per-camera calibration control the CLI offers; `sfmDistortionModel` is global and no command sets a per-camera distortion model (`02` §, FINDINGS 2026-08-14).
+- `-exportXMP` is silently gated by `-setMinComponentSize`: a 6-image scene that fragmented 3+3 exported nothing until the minimum was lowered to 2 — the same silent-nothing class as the selection-export trap. [VERIFIED: FINDINGS 2026-08-08]

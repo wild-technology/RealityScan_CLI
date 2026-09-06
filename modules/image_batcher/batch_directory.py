@@ -1098,18 +1098,26 @@ class BatchDirectory(RSModule):
         return total_copied, total_missing
 
     def _explicit_param(self, name: str):
-        """A parameter's value when it was EXPLICITLY supplied (differs
-        from the Parameter's declared default), else None.
+        """A parameter's value when it was EXPLICITLY supplied for this
+        run, else None.
 
         The orchestrator sets every parameter from the command line, the
         'main' settings section, or the declared default - only the last
         of those is "unanswered", and only an unanswered parameter should
-        defer to the 'batch' settings section."""
+        defer to the 'batch' settings section.
+
+        WHICH of the three it was is recorded on the Parameter itself
+        (main.parse_arguments), never inferred from `value !=
+        default_value`: a supplied value is allowed to EQUAL the declared
+        default, and the inference then drops it silently. Measured on
+        NA168 - --b_max_zone 4000 against the declared default of 4000
+        read as absent, so the stored batch.max_zone_size=8000 won and a
+        zone came out at 7,842 images against the 6,000 cap."""
         param = (self.params or {}).get(name)
         if param is None:
             return None
         value = param.get_value()
-        return None if value is None or value == param.get_default_value() \
+        return None if value is None or not param.is_explicit() \
             else value
 
     def _stored_default(self, key: str, fallback, cli_value=None):
@@ -1128,7 +1136,11 @@ class BatchDirectory(RSModule):
         """
         if cli_value is not None:
             return cli_value
-        return self.settings.get('batch', key, fallback)
+        # default_for, not get: get bypasses RS_NO_SETTINGS_INHERITANCE, so
+        # a charter-driven run could still zone at a previous campaign's
+        # stored min/max (audit 2026-09-05). Under refusal the fallback -
+        # the Parameter's own value - stands.
+        return self.settings.default_for('batch', key, fallback)
 
     def _prompt_int(self, key: str, message: str, fallback: int,
                     cli_value=None) -> int:
@@ -1251,7 +1263,22 @@ class BatchDirectory(RSModule):
             print(f"Average zone size: {total_in_batches / len(final_zones):.0f} images")
             print("---------------------\n")
 
-            self.__plot_results(gdf_processed, final_zones, output_dir)
+            # The zone plots are DIAGNOSTIC, and this call sits upstream of the
+            # accept prompt and the file copy - so a rendering failure used to
+            # throw away a completed clustering run and leave
+            # batched_images_by_zone empty. Observed on NA165/H2060
+            # (2026-08-31): 13 zones and 34,144 images computed, then
+            # matplotlib 3.11.1 raised "'Path' object has no attribute
+            # 'simplify_thresh'" out of savefig and the whole run died with
+            # nothing written. Nothing downstream reads these PNGs, so a
+            # failure here is logged and the batches still land on disk.
+            try:
+                self.__plot_results(gdf_processed, final_zones, output_dir)
+            except Exception as e:
+                self.logger.warning(
+                    f'Zone diagnostic plots failed ({type(e).__name__}: {e}). '
+                    f'The batches themselves are unaffected and will still be '
+                    f'written; only the PNGs are missing.')
 
             # EOF-safe: an unattended run cannot answer - auto-accept the
             # computed batches (the summary above is in the log for review).

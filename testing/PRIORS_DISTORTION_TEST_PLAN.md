@@ -25,9 +25,21 @@ counts second.
    `flightlogs.xml` (stock 2.2) did not contain it: orientation (YPR)
    and per-image accuracies were silently dropped on every import to
    date ("Global camera prior settings" in the GUI — owner
-   observation confirmed). FIXED: format merged into
+   observation confirmed). ~~FIXED: format merged into
    `C:\Program Files\Epic Games\RealityScan_2.2\flightlogs.xml`;
-   verify it survives app updates.
+   verify it survives app updates.~~
+
+   **IT DID NOT SURVIVE — RECURRED 2026-08-16.** The install was stock
+   again (`grep -c B438A617` = 0) and the accuracies had been dropped on
+   every import since. The hand-merge was a fix with a half-life, and
+   "verify it survives app updates" was a chore nobody could be expected
+   to perform before each run.
+
+   **NOW PERMANENT**: `modules/flightlog_format.py` asserts the
+   configured GUID is registered in the INSTALL before every import and
+   SELF-HEALS by merging the repo formats when it is not. Same mechanism
+   covers `calibration.xml` (registration export). Do not re-solve this
+   by hand-editing the install; if it regresses, the guard is the bug.
 2. **XY/Z accuracies were placeholder-loose** (10/10/1 m) vs the rig's
    real DVL/Paro figures (1/1/0.1 m). FIXED in the georef module
    (regenerate flight logs to take effect).

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- RUMI registration-export formats, merged into RealityScan's own
+     calibration.xml by modules/flightlog_format.py.
+
+     WHY THIS EXISTS. Component MEMBERSHIP - which cameras belong to which
+     component - used to be derived by the destructive XMP harvest:
+     -exportXMP wrote a sidecar for every image INTO THE IMAGE TREE, the
+     pose-bearing ones were moved out to identity_r<K>, the maximal
+     component was deleted, and membership fell out as the successive
+     difference of consecutive harvests. That is why sidecars kept coming
+     back, and why a stale one could silently re-prior a later run:
+     RealityScan READS xmp beside an image on import.
+
+     -exportRegistration runs against the SELECTED component, so
+     $ExportCameras enumerates exactly that component's members in one
+     pass, writes only into the OUTPUT tree, and deletes nothing. The
+     format below is pinned here rather than left to "current settings"
+     so the CSV the parser reads is reproducible instead of inheriting
+     whatever the last GUI session set (AlignZone.bat header).
+
+     requiresGeoref="0" ON PURPOSE: identity must be readable even for a
+     component that failed to georeference. The stock CSV formats set 1,
+     which would silently remove this export as an option exactly when a
+     zone went wrong and the membership record matters most.
+
+     The trailing calibration columns are not decoration - they are the
+     per-camera PRIOR READBACK. cinema and upper carry different focal
+     priors (16.0 vs 23.44 for the 1:1 crop), so if the flight log's
+     FocalLength column and the -setPriorCalibrationGroup commands are
+     really landing, these columns differ per camera family. If they come
+     back identical, the priors did not apply. -->
+<CalibrationExport>
+
+    <format id="{E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A48}" mask="*.csv" descID="2350" desc="RUMI: component membership + per-camera prior readback" writer="cvs" requiresGeoref="0" requires="component">
+        <body EulerFormat="zyx">#cameras $(cameraCount)
+#name,x,y,z,yaw,pitch,roll,focal,k1,k2
+$ExportCameras($(imageName)$(imageExt),$(x),$(y),$(z),$(geoYaw),$(geoPitch),$(geoRoll),$(f*scale),$(k1),$(k2)
+)</body>
+    </format>
+
+    <!-- Membership only, no calibration: the minimal record, used when a
+         component is not georeferenced and the pose columns would be
+         meaningless. Mirrors the stock "Image List" body. -->
+    <format id="{E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A49}" mask="*.csv" descID="2351" desc="RUMI: component membership only" writer="cvs" requiresGeoref="0" requires="component">
+        <body>#cameras $(cameraCount)
+#name
+$ExportCameras($(imageName)$(imageExt)
+)</body>
+    </format>
+
+</CalibrationExport>

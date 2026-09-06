@@ -1,7 +1,14 @@
 <Configuration id="{93DBD041-AE1C-4631-89BC-D9430FCED843}">
   <entry key="ifuuInhEn" value="true"/>
   <entry key="ifCSopt" value="1"/>
-  <entry key="gpsLogFileFormat" value="{B438A617-2434-5A24-C1B7-58980F28345A}"/>
+  <!-- 14-column RUMI format (13 + per-image FocalLength). The GUID is
+       resolved against flightlogs.xml in the RealityScan INSTALL, not the
+       repo copy: when it is missing there the import does NOT fail, it
+       falls back and silently drops the columns the format defined. That
+       happened twice (orientation accuracies lost on every import before
+       2026-08-16), so modules/flightlog_format.assert_format_installed()
+       now gates every import on this GUID being present. -->
+  <entry key="gpsLogFileFormat" value="{D1F2A3B4-5C6D-4E7F-8A9B-0C1D2E3F4A5B}"/>
   <!-- UTM template. The zone below is only the last cruise's placeholder:
        write_flight_log_params() (modules/flight_logs.py) rewrites BOTH
        coordinate-system entries from the flight log's own filename tag

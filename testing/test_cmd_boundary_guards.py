@@ -207,6 +207,32 @@ def test_align_zone_refuses_a_zero_setting_align():
     assert re.search(r'(?m)^:noSettings\s*$', text)
 
 
+def test_align_zone_applies_every_params_entry():
+    """SETTINGS CONTRACT (2026-08-15): the params XML is authoritative for
+    every key it names, and keys it does NOT name are explicitly undefined.
+    The old `findstr /b "sfm" "lis"` filter silently dropped the 7
+    GUI-obfuscated ids (s235l/s236l/s237l/s251l-s254l): 28 of 35 applied,
+    the other 7 inherited from the instance while the header claimed
+    otherwise."""
+    text = _bat('AlignZone.bat')
+    assert '/c:"sfm" /c:"lis"' not in text, 'the sfm/lis filter is back'
+    # Gate on the KEY (token 2), never token 1: token 1 is '  <entry key='
+    # and that '<' is a cmd redirection operator - echoing it sends the
+    # shell hunting for a file named 'entry' and loses all 35 settings.
+    assert 'tokens^=2^,4^' in text
+    assert '/b /r "[a-zA-Z]"' in text
+
+
+def test_align_zone_refuses_app_global_keys():
+    """app* keys are application-wide: they persist into the user's own
+    RealityScan GUI session and need per-instance approval. Silently
+    dropping keys is the bug being fixed, so an app* key in the params
+    file fails closed rather than vanishing."""
+    text = _bat('AlignZone.bat')
+    assert 'goto :appGlobalKey' in text
+    assert re.search(r'(?m)^:appGlobalKey\s*$', text)
+
+
 def test_identity_harvest_move_failures_are_terminating():
     """Move-Item failures are NON-TERMINATING, so powershell.exe exited 0
     on a partial harvest. Membership is a successive difference of these

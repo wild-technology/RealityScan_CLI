@@ -73,6 +73,17 @@ call :run -load "%scene_path%" || goto :fail
 :: One residual per component was observed and names are unique per project,
 :: so a six-component assembly can hold "Model 1".."Model 6"; sweep to 9 for
 :: headroom (absent names are skipped silently).
+:: Re-assert the OUTPUT coordinate system on the project we just loaded.
+:: The export writes globalCoordinateSystem into every .rsInfo, and a project
+:: assembled from imported components inherits a LIST of coordinate systems
+:: without a correct selection - NA165/H2060's master declared 55N for a 2S
+:: dive. Setting it here makes the sidecar say what the deliverable is in,
+:: rather than whichever leftover sorted first.
+if defined RS_PROJECT_CRS if not "%RS_PROJECT_CRS%" == "" (
+    echo Pinning output coordinate system to %RS_PROJECT_CRS%
+    call :run -setOutputCoordinateSystem %RS_PROJECT_CRS% || goto :fail
+)
+
 echo Sweeping default-named residual models
 for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do (
     call :try_delete_model %%M
@@ -80,6 +91,26 @@ for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7
 
 echo Saving project - residuals removed, before any in-memory coloring
 call :run -save "%scene_path%" || goto :fail
+
+:: Output CRS. WITHOUT this the export inherits whatever coordinate system
+:: the application last held, and nothing in the pipeline ever set one:
+:: H2077's first export (a 53N cruise) was stamped
+:: globalCoordinateSystemName="epsg:32757 - WGS 84 / UTM zone 57S" - the
+:: stale FlightLogParams placeholder zone - so a correctly aligned model
+:: carried georeferencing from the wrong hemisphere (2026-08-14).
+:: write_flight_log_params only rewrites the CRS of the flight log being
+:: IMPORTED; it has no bearing on what is EXPORTED.
+:: Merge 2026-09-03: this block came from remove-xmp-sidecars keyed on
+:: RS_OUTPUT_CRS (set by export_deliverables.py --crs / --flight-log). It is
+:: folded onto main's repo-wide RS_PROJECT_CRS - the same variable the block
+:: after -load pins BEFORE the save (persisted output scope). This one adds
+:: the PROJECT scope, in memory only, for the export that follows. One
+:: variable, so a run can never pin two different systems.
+if defined RS_PROJECT_CRS if not "%RS_PROJECT_CRS%" == "" (
+    echo Setting project/output coordinate system to %RS_PROJECT_CRS%
+    call :run -setProjectCoordinateSystem %RS_PROJECT_CRS% || goto :fail
+    call :run -setOutputCoordinateSystem %RS_PROJECT_CRS% || goto :fail
+)
 
 for /f "usebackq delims=" %%N in ("%name_list%") do (
     call :export_component "%%N" || goto :fail
@@ -97,16 +128,52 @@ if not exist "%out_dir%\%comp%\obj" mkdir "%out_dir%\%comp%\obj"
 if not exist "%out_dir%\%comp%\fbx" mkdir "%out_dir%\%comp%\fbx"
 if not exist "%out_dir%\%comp%\ply" mkdir "%out_dir%\%comp%\ply"
 
+:: SELECT THE COMPONENT FIRST. -exportModel resolves a model by name on its
+:: own, which is why OBJ and FBX worked without this, but -selectModel needs
+:: component context and fails without it - with the SAME signature RealityScan
+:: emits for a genuinely missing model ("process 21856 ... result code
+:: 2147942487" = 0x80070057), which is what made this look like a missing
+:: model for so long. GenerateModel.bat:93 selects the component before its own
+:: -selectModel calls; this workflow never did.
+:: Cost of the omission on NA165/H2060 (2026-09-01): every dense PLY refused,
+:: and because :run treats a non-empty errors file as fatal, the FIRST
+:: component's failure killed a 20-component export outright.
+:: Same defect, found independently on NA168/H2080 (remove-xmp-sidecars, 2026-08-31):
+:: Make this component ACTIVE before any model operation. -exportModel
+:: resolves a model name GLOBALLY, but -selectModel resolves it only within
+:: the ACTIVE component: a multi-component list wrote c44's OBJ and FBX
+:: happily and then failed -selectModel "<comp>_HighPoly_Raw" with
+:: 2147942487 for a model verified present, and the same run succeeded on
+:: the first attempt with this line added (NA168/H2080 2026-08-31). The
+:: stock workflow only ever worked because the component GenerateModel left
+:: active happened to be the one exported. Selected here rather than at the
+:: PLY step (where it bites) so all three exports are scoped alike.
+call :run -selectComponent "%comp%" || exit /b 1
+
 echo   OBJ (Nira, by parts)
 call :run -exportModel "%comp%_Simplified_Textured" "%out_dir%\%comp%\obj\%comp%.obj" "%ObjParams%" || exit /b 1
 
 echo   FBX (by parts)
 call :run -exportModel "%comp%_Simplified_Textured" "%out_dir%\%comp%\fbx\%comp%.fbx" "%FbxParams%" || exit /b 1
 
+:: DENSE PLY. Still skippable via RS_EXPORT_SKIP_PLY=1 as an escape hatch,
+:: but it is NOT expected to fail: <comp>_HighPoly_Raw is present for every
+:: component in the master project, and the earlier "missing model" was the
+:: absent -selectComponent above.
+if defined RS_EXPORT_SKIP_PLY (
+    echo   Dense PLY SKIPPED ^(RS_EXPORT_SKIP_PLY set^)
+    exit /b 0
+)
 echo   Dense colored PLY from %comp%_HighPoly_Raw
 call :run -selectModel "%comp%_HighPoly_Raw" || exit /b 1
 call :run -calculateVertexColors || exit /b 1
 call :run -exportModel "%comp%_HighPoly_Raw" "%out_dir%\%comp%\ply\%comp%_dense.ply" "%PlyParams%" || exit /b 1
+exit /b 0
+)
+echo   Dense colored PLY from %comp%_HighPoly_Textured
+call :run -selectModel "%comp%_HighPoly_Textured" || exit /b 1
+call :run -calculateVertexColors || exit /b 1
+call :run -exportModel "%comp%_HighPoly_Textured" "%out_dir%\%comp%\ply\%comp%_dense.ply" "%PlyParams%" || exit /b 1
 exit /b 0
 
 :emptyList

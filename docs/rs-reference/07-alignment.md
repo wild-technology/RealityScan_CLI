@@ -450,7 +450,7 @@ strongly they influence the alignment." [OFFICIAL: appbasics/alignsettings]
 | `sfmCameraPriorAccuracyYaw` | float | `10.0` | `10.0` | yes | "Yaw/Pitch/Roll accuracy … defines the range, in which the calculated orientations are going to be considered as equal to the prior values." [OFFICIAL] |
 | `sfmCameraPriorAccuracyPitch` | float | `10.0` | `10.0` | yes | as above |
 | `sfmCameraPriorAccuracyRoll` | float | `10.0` | `10.0` | yes | as above |
-| `sfmCameraPriorWeightOrientation` | float | `1.0` | `2.0` | yes | "Orientation prior hardness …" [OFFICIAL]. Lowered from `10.0` on 2026-09-01 so a deliberately loose per-image pitch accuracy behaves loosely; locked by `testing/test_camera_orientation_frame.py` |
+| `sfmCameraPriorWeightOrientation` | float | `1.0` | `10.0` | yes | "Orientation prior hardness …" [OFFICIAL] |
 | `sfmCameraDepthmapWeight` | float | — | `0.05` | yes | [UNDOCUMENTED: present in `AlignmentParams.xml` and the 2.2 binary; no Help coverage and no identified GUI control]. What it weights is unknown. [OPEN] |
 
 Note the units asymmetry: position accuracies are in **project CRS units** (metres here);
@@ -679,7 +679,7 @@ from `AlignZone.bat` (lines 80–88) into them verbatim.
 | 9 | `sfmMaxFeaturesPerMpx` | `0x36b0` | yes | = 14000 |
 | 10 | `sfmGPUAcceleration` | `true` | yes | [UNDOCUMENTED key] |
 | 11 | `sfmBackgroundDetectThreadPriority` | `Low` | yes | [UNDOCUMENTED key] |
-| 12 | `sfmCameraPriorWeightOrientation` | `2.0` | yes | lowered from `10.0`, 2026-09-01 |
+| 12 | `sfmCameraPriorWeightOrientation` | `10.0` | yes | |
 | 13 | `s236l` | `5.0` | no | `sfmCameraPriorAccuracyY` slot [INFERRED] |
 | 14 | `sfmEnableCameraPrior` | `true` | yes | |
 | 15 | `lisPreferImagesAsFeatureSource` | `false` | yes | the only `lis*` row |
@@ -1144,7 +1144,7 @@ every A/B driver now calls before each align. [VERIFIED: FINDINGS 2026-07-25]
 | H2024 v2 (5 zones) | 9,835 | 8,781 | — | 14 | — |
 | smoke `mini_a` / `mini_b` | 120 / 120 | 118 / 62 | 98 % / 52 % | 1 / 2 | ~2 min each |
 
-[VERIFIED: FINDINGS, MERGE_TEST_PLAN, docs/FRESH_RUN_2026-07-24.md, HANDOFF, 2026-07-21 …
+[VERIFIED: FINDINGS, MERGE_TEST_PLAN, docs/history/FRESH_RUN_2026-07-24.md, HANDOFF, 2026-07-21 …
 2026-07-28]
 
 ### 7.2 Registration is independent of how images were added
@@ -1855,7 +1855,7 @@ rem  MUST precede -addFolder, or subfolders are silently skipped
 rem  -align takes NO params.xml: push every alignment key first
 "%RS%" -delegateTo %INST% -set "sfmEnableCameraPrior=true"
 "%RS%" -delegateTo %INST% -set "sfmCameraPriorWeight=10.0"
-"%RS%" -delegateTo %INST% -set "sfmCameraPriorWeightOrientation=2.0"
+"%RS%" -delegateTo %INST% -set "sfmCameraPriorWeightOrientation=10.0"
 "%RS%" -delegateTo %INST% -set "sfmCameraPriorAccuracyYaw=10.0"
 "%RS%" -delegateTo %INST% -set "sfmCameraPriorAccuracyPitch=10.0"
 "%RS%" -delegateTo %INST% -set "sfmCameraPriorAccuracyRoll=10.0"
@@ -2102,3 +2102,11 @@ point here.
     declares `componentCameraCount` and then uses `$(componentCamerasCount)` in its own
     example.) *Probe:* a two-line custom template emitting both; free once question 1
     lands.
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Settings contract and import order
+
+Every key the params XML names is applied — including the obfuscated dialog ids `s235l`…`s254l` — and keys it does not name are undefined (`03` A1); `app*` keys fail closed. The flight log is imported AFTER the `sfm*` settings and after pinning the project/output CRS (`06` A1, `11` A2). The "Division registers ZERO on rectilinear imagery" A/B was RETRACTED as confounded (inherited sidecars, thumbnails); owner position: Division universal; no clean A/B exists. `sfmDistortionModel` is global and no CLI command sets a per-camera model. [VERIFIED: FINDINGS 2026-08-14/15]

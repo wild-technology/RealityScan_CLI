@@ -37,7 +37,14 @@ _EXECUTABLES = ("realityscan.exe", "realitycapture.exe")
 _WORKFLOW_BAT = re.compile(
     r"\b(startrealityscan|alignzone|mergezonecomponents|generatemodel|"
     r"exportdeliverables|saveprojectcopy|modeltofinal|growzone|nightgrow|"
-    r"computemodel|calibcellalign|flushcache|guiworkbench)\.bat\b")
+    r"computemodel|calibcellalign|flushcache|guiworkbench|"
+    r"alignimagesfromfolder|probecalibgroups\d*|probeflightlog\d*|"
+    r"probeexportsettings)\.bat\b"
+    # Anything else under RS_CLI/Scripts is a workflow too, whatever it is
+    # called - a new script must not slip past the guard by being new; the
+    # archived probes and legacy workflows are boot-capable as well.
+    r"|rs_cli[\\/]+scripts[\\/]+[^\s\"']+\.bat\b"
+    r"|archive[\\/]+(?:probes|legacy_scripts)[\\/]+[^\s\"']+\.bat\b")
 
 #: Commands that only READ - naming a .bat here is inspection, not
 #: execution. Anchored at the start of the command (or of a pipeline
@@ -50,8 +57,15 @@ _READ_ONLY = re.compile(
 
 
 def segments(command: str) -> list[str]:
-    """The command split into independently-executed segments."""
-    return [s for s in re.split(r"\|\||&&|\||;|\n", command) if s.strip()]
+    """The command split into independently-executed segments.
+
+    A backslash-escaped pipe (``grep "a\\|b"``) is a regex alternation
+    inside one argument, not a shell pipe, so it does not start a new
+    segment - otherwise a read-only grep whose pattern mentions a .bat
+    name is refused.
+    """
+    return [s for s in re.split(r"\|\||&&|(?<!\\)\||;|\n", command)
+            if s.strip()]
 
 
 def offence(command: str) -> str | None:

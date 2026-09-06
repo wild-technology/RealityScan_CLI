@@ -20,7 +20,10 @@ hash. Every fix ships with a test or an empirical verification transcript.
   calibration-prior-free; VOYIS values retained in cameras.json as
   reference data only. Explicit `-addImageWithCalibration` delivery
   validated; `-setPriorCalibrationGroup` proven silently
-  non-functional from the CLI. FINDINGS 2026-08-09.
+  non-functional from the CLI. FINDINGS 2026-08-09. Disputed by
+  remove-xmp-sidecars 2026-08-14 (`modules/prior_groups.py`, run on
+  NA168 H2080 / NA165 H2063 without measuring the effect) — open
+  decision D1, FINDINGS `[RECON] 2026-09-03`.
 - 2026-08-08/09 flight-log-first architecture (owner directive):
   docs/FLIGHTLOG_ARCHITECTURE.md design of record; probes closed
   (path rows match EXACT-PATH; params format GUID decorative on 2.2 —
@@ -42,6 +45,17 @@ hash. Every fix ships with a test or an empirical verification transcript.
   requirements.txt (discovery: textual/rich absent on HONEYBADGER — the
   WildScan portal could not import and 26 of its tests were dormant; 461
   tests now pass, zero skips).
+
+- 2026-09-05 agent-native consolidation: items 11 and 12 closed for the
+  agent lane and for every `RS_NO_INTERACTIVE` run - prompts never
+  self-answer silently (`module_base.settings_store.unattended`, announced
+  values, fail-by-flag), and `modules/preflight.py` + charter sign-off is
+  the pre-flight checklist (`rs run`/`rs launch` refuse until READY). Items
+  13 and 14 moot: the TUI is archived (`archive/wildscan_tui`), its
+  StatusScreen replaced by `rs status`, its prefill by the charter. Item 8
+  partially: `RUN_STATE.json` records every stage's exit code and the
+  launcher writes an `.rc` file; process-group termination remains.
+  FINDINGS `[HARNESS] 2026-09-05`.
 
 ## MUST-FIX
 
@@ -157,8 +171,12 @@ hash. Every fix ships with a test or an empirical verification transcript.
   local-frame decision reads first-in-walk-order log; add unanimity check
   (partially fixed 7a22b51 — verify remaining gap).
 - Wildcard attach bypasses the per-instance lock contract.
-- AlignZone applier silently drops the 7 GUI-obfuscated keys
-  (s235l/s236l/s237l/s251l–s254l) from AlignmentParams.xml.
+- ~~AlignZone applier silently drops the 7 GUI-obfuscated keys
+  (s235l/s236l/s237l/s251l–s254l) from AlignmentParams.xml.~~ **CLOSED
+  2026-08-15.** Settings contract restated: the params XML is
+  authoritative for every key it names (all 35 now applied, verified by
+  parse); keys it does not name are explicitly UNDEFINED and inherit the
+  instance. `app*` keys fail closed rather than being dropped.
 - Direct .bat invocation path: instance-name collision at boot yields a
   raw HRESULT; frame guard not applied.
 - Silent 900 s shutdown-verify wait on cancel/failure; orphaned instance

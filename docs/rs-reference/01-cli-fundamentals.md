@@ -1648,3 +1648,19 @@ is invisible. The expected miss is `2147942487`.
 *Probe:* none needed — this is a code change, not an experiment: add the
 `findstr /c:"2147942487"` guard used by `:run_peelrename`. Left as an open item because changing it
 without a run to validate against would be an untested edit to a production workflow.
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. `-clearCache` is workload-dependent, and the cache location is sticky
+
+- During or right after **modelling** the flush is not reliable: `-clearCache` (retention 0) took the cache from 148 GB to 2.7 GB once and from 148 GB to 90.6 GB the next time, leaving an 87.9 GB residue that survived a second flush. With **no RealityScan process alive**, resetting the cache directory reclaimed 164 GB in one operation. Modelling grows the cache **~72 GB per mid-size component** (~550 MB/min); cache growth, not model output, sizes the disk requirement. Measure free space after a flush; never assume it worked. [VERIFIED: FINDINGS 2026-09-01]
+- For the **texture + simplify** workload with the instance idle between components, `-clearCache` did clear 62 GB to 5.5 MB in ~18 s; that workload costs ~8 GB of cache per component. The two observations scope each other: the flush fails when depth maps are live, not in general. [VERIFIED: FINDINGS 2026-09-03]
+- **`appCacheCustomLocation` persists across instances.** An instance booted with no `RS_CACHE_DIR` and no `-set appCacheLocation` wrote to the custom directory a previous instance had set, not to `%LOCALAPPDATA%\Temp\RealityScan`. Pin the cache on every boot, and measure the drive that is actually being written. [VERIFIED: FINDINGS 2026-09-03]
+- The default cache directory is flat: 1,227 GB across 133,804 files in one folder, so age is the only way to tell live cache from dead. Deleting entries older than 24 h freed 562 GB with zero files in use during a live align; save the project first. [VERIFIED: FINDINGS 2026-08-14]
+- Sanctioned headless flush: boot a throwaway instance bound to the target cache, `-newScene`, `-save` a scratch project, `-clearCache`, `-quit` (`FlushCache.bat`). The cache is small after aligns; depth-map growth arrives at model time, so pre-model is the flush point. [VERIFIED: FINDINGS 2026-08-09]
+
+### A2. Recovery after a hard-killed instance
+
+After a mid-operation instance was hard-killed, the next boot answered `-getStatus` but ignored `-quit`, blocking `run_batch_script`'s own shutdown path for 15 min; a stale `<instance>.lock` with a dead PID then failed the first relaunch outright. Validated recipe: stop ALL `RealityScan.exe` PIDs and any lingering `-waitCompleted` clients, delete `Errors\*.lock` and the `errors_`/`results_` markers for that instance, then relaunch. `schtasks /End` does **not** kill the driver python or its `.bat`/RealityScan children; enumerate them by `Win32_Process CommandLine` and stop them explicitly. [VERIFIED: FINDINGS 2026-08-09]

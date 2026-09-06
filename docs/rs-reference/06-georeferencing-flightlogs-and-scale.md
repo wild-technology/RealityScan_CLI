@@ -451,7 +451,7 @@ The single most important operational fact about `-importFlightLog`.
   reports the process as FAILED** with `err:18002` — "The file contains N images which are
   not in the current scene". The process result code delivered to the completion hook is
   decimal `2181038335` = hex `0x820000FF`, a warning class.
-  [VERIFIED: FINDINGS 2026-07-21; docs/code-review-2026-07 §"False failure on import"]
+  [VERIFIED: FINDINGS 2026-07-21; docs/history/code-review-2026-07 §"False failure on import"]
 - **The errors marker carries only the numeric code**, never the `err:NNNN` text — that
   exists only in `RealityScan.log`, which is truncated on every instance boot. Tolerant
   handlers must match `2181038335`. [VERIFIED: FINDINGS 2026-07-23]
@@ -756,7 +756,7 @@ lines 85–88 against `AlignmentParams.xml`, 2026-08-04]
 or `lis`, so `AlignmentParams.xml`'s **orientation** accuracies *are* applied —
 `sfmCameraPriorAccuracyYaw`, `…Pitch`, `…Roll` all carry `10.0` under their documented names
 and all pass the filter, as do `sfmCameraPriorWeight=10.0`,
-`sfmCameraPriorWeightOrientation=2.0`, `sfmEnableCameraPrior=true` and
+`sfmCameraPriorWeightOrientation=10.0`, `sfmEnableCameraPrior=true` and
 `sfmControPointImageMeasAccuracy=4.0`. Only the **position** accuracies, the control-point
 accuracies and the defined-distance accuracy were exported under `s###l` ids and therefore
 silently dropped. [VERIFIED-by-inspection: `AlignmentParams.xml`, 2026-08-04]
@@ -800,7 +800,7 @@ pos_y_acc = 10.0   # metres
 alt_acc   = 1.0    # metres
 yaw_acc   = 15.0   # degrees
 roll_acc  = 15.0   # degrees
-pitch_acc = MOUNTS[family]['p_acc']   # 45.0 zeuss, 15.0 wca_port/wca_cinema,
+pitch_acc = MOUNTS[family]['p_acc']   # 30.0 zeuss, 15.0 wca_port/wca_cinema,
                                       # 10.0 legacy_camupper/cammid, 5.0 legacy_camlower,
                                       # 10.0 fallback for an unknown mount
 ```
@@ -815,7 +815,7 @@ pitch_acc = MOUNTS[family]['p_acc']   # 45.0 zeuss, 15.0 wca_port/wca_cinema,
 imports silently and misplaces everything.** The template in this repo once said
 `+proj=utm +zone=4` (EPSG:32604) — stale from an earlier project — while the cruise being
 processed, NA173_H2103a, is UTM **57S** (EPSG:32757): wrong zone **and** wrong hemisphere,
-with no error raised. [VERIFIED: NA167 #6; docs/code-review-2026-07 §"Wrong coordinate
+with no error raised. [VERIFIED: NA167 #6; docs/history/code-review-2026-07 §"Wrong coordinate
 system"; FINDINGS 2026-07-21/22]
 
 The fix is to derive the CRS from the flight log's own filename tag, never to hand-edit the
@@ -1014,12 +1014,22 @@ coordinate systems and, in general, it is not possible to convert points with ze
 
 **Order matters for imports.** Both the trajectory and the GCP Help pages open with the same
 instruction: *first* set the project coordinate system to the one the incoming data is in,
-*then* import. [OFFICIAL: tools/flightlogimport, tools/gcpimport] This repo never calls
-`-setProjectCoordinateSystem` — it relies entirely on `CoordinateSystemFlightLog` in the
-params XML, and the resulting components are correctly georeferenced in the GUI. So the
-project CRS is evidently not required for a trajectory import to place cameras correctly.
-[VERIFIED-as-practice: every production run since 2026-07-21]
-[OPEN] whether the unset project CRS degrades reported accuracies or the units of the
+*then* import. [OFFICIAL: tools/flightlogimport, tools/gcpimport] Until 2026-09-02 this repo never called
+`-setProjectCoordinateSystem` — it relied entirely on `CoordinateSystemFlightLog` in the
+params XML, and the resulting components were correctly georeferenced in the GUI: the
+per-object scope is enough to PLACE cameras. [VERIFIED-as-practice: every production run
+2026-07-21 … 2026-09-01]
+**What the unset project CRS does break — RESOLVED 2026-09-02.** A project ACCUMULATES a list
+of coordinate systems across cruises (NA165/H2060's master carried 57S from NA173 and an older
+55N beside its own 2S); the list order is not stable; `projectCoordinates` selected a leftover
+(57S) in both the align and the master project; and the export wrote the list's FIRST entry
+(55N) into the `.rsInfo` `globalCoordinateSystem` while the geometry itself was fine (ECEF, see
+`09` A1). The label was ARBITRARY, which looks authoritative. Fix in force: the align module
+derives `RS_PROJECT_CRS=epsg:<code>` from the flight log's zone tag and `AlignZone.bat` pins BOTH
+scopes with `-setProjectCoordinateSystem` / `-setOutputCoordinateSystem` BEFORE
+`-importFlightLog`; `ExportDeliverables.bat` re-asserts the output scope on the project it
+loads. [VERIFIED: FINDINGS 2026-09-02]
+[OPEN] whether the unset project CRS also degrades reported accuracies or the units of the
 `sfmCameraPriorAccuracy*` keys; cheapest probe: `-exportReport` an
 `$ExportProjectInfo`/`$(coordSystemName)`/`$(units)` template before and after
 `-setProjectCoordinateSystem epsg:32604` on the smoke fixture.
@@ -2209,3 +2219,17 @@ Each item states the question and the cheapest probe that answers it.
     run here, and ground-plane orientation is on the blindness list — the CLI cannot read it
     back. Probe: run each on smoke and check for an error marker; verify the effect via the
     `anchorYaw/anchorPitch/anchorRoll` report variables. (§5.5)
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Flight-log row matching and re-import semantics (probes P3/P4, 6-image fixture)
+
+- **Rows match by EXACT PATH when the Image column holds a path, by basename when it is bare.** A full-path log pointing at same-basename copies in a different folder FAILED the import loudly, per row; the same log with the scene's true paths imported; a bare-basename log imported. There is no silent basename fallback for path rows — the semantics the pool zone layout relies on. [VERIFIED: FINDINGS 2026-08-08]
+- **Re-importing a flight log onto an already-aligned scene, then `-update`, re-places every camera onto the new priors without re-aligning** (rigid update; intra-component geometry untouched). Importing the log at each workflow step genuinely re-pins georeferencing. [VERIFIED: FINDINGS 2026-08-08]
+- Import order: the flight log is imported AFTER the `sfm*` settings, because `sfmEnableCameraPrior`, `sfmCameraPriorWeight` and `sfmCameraPriorAccuracy*` govern how the incoming priors are weighted. `AlignZone.bat` was reordered accordingly. [VERIFIED-as-decision: FINDINGS 2026-08-14]
+
+### A2. Two UTM notations are live, and they disagree on one letter
+
+`epsg_for_utm_zone(2, 'S')` returns **32602 (north)**: MGRS latitude band `S` is NORTHERN, while the hemisphere notation ROVDataConcat writes ("2S") means SOUTH (EPSG:32702). Both notations reach this pipeline; the band-letter parser owns the flight-log filename tag, the hemisphere letter owns the nav tables. Pinned by test. [VERIFIED: FINDINGS 2026-09-02]

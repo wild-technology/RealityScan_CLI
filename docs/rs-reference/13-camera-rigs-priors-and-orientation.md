@@ -1179,7 +1179,7 @@ XMP camera positions and flight-log priors. Orientations are deliberately **not*
 *"Six rotation-convention candidates were tested against the flight-log yaw/pitch/roll; none
 matched (best mean error ~77°)."* Writing orientations in an unverified convention would
 poison future priors, which carry weight 10.
-[VERIFIED: docs/code-review-2026-07 Part 3, "Deliberate non-changes"]
+[VERIFIED: docs/history/code-review-2026-07 Part 3, "Deliberate non-changes"]
 That result is the strongest single reason to treat the export-side rotation convention as
 **unestablished for this pipeline**, not merely undocumented.
 
@@ -1366,7 +1366,7 @@ direction.** [SUPERSEDED-in-scope]
 **Correct calibration priors help structurally.** Calibration XMP sidecars at align time cut
 zone_1 fragmentation from **9 components to 3** at equal-or-better registration (4,405/4,540
 = 97.0 % fresh vs 4,392 = 96.7 % production), same imagery, same box.
-[VERIFIED: FINDINGS 2026-07-24; docs/FRESH_RUN_2026-07-24.md]
+[VERIFIED: FINDINGS 2026-07-24; docs/history/FRESH_RUN_2026-07-24.md]
 
 **Over-tight *position* priors fragment solves and corrupt scale** — the decisive 2×2 on a
 665-image known-good component:
@@ -1467,7 +1467,7 @@ Facts about the frames established here:
 - **`xcr:Position` in exported XMPs is in a GRID-ANCHORED LOCAL frame, not UTM.** Verified
   on zone_9: the values are small and local, the anchor is the grid origin, and the
   lat/long XMP attributes are **garbage** (e.g. `179.98N`). Fit local→UTM with
-  `poses2flightlog.py`. [VERIFIED: NA167 B10-adjacent, 2026-07-23; docs/code-review-2026-07]
+  `poses2flightlog.py`. [VERIFIED: NA167 B10-adjacent, 2026-07-23; docs/history/code-review-2026-07]
   [OPEN: cell U13 — re-verify on an **original** georeferenced zone scene; if positions are
   UTM there, manifests could carry true per-camera positions and better bboxes. Open since
   2026-07-23.]
@@ -1524,13 +1524,13 @@ Two design facts, both deliberate:
 - **Scale is locked at 1.** The alignment already pins scale via the camera priors, and
   fitting scale against noise-dominated nav data collapses it — **0.50 observed on
   zone_9**. `--allow-scale` exists for diagnostics only.
-  [VERIFIED: docs/code-review-2026-07 Part 3]
+  [VERIFIED: docs/history/code-review-2026-07 Part 3]
 - **Orientations are not rewritten** — see §6.6.
 
 Measured output on the zone_9 subset: residual vs prior **4.3 m median, 10 m p95** —
 comfortably inside the 10 m accuracy the log claims for itself, i.e. the residual magnitude
 is a usable estimate of USBL/DVL navigation error.
-[VERIFIED: docs/code-review-2026-07]
+[VERIFIED: docs/history/code-review-2026-07]
 
 ### 8.4 Georeferencing verification is still a blind spot
 
@@ -1900,46 +1900,17 @@ legacy dataset by tens of degrees. `MOUNTS` in
 
 | Family | fwd (m) | lat (m) | down (m) | pitch (° down from vehicle forward axis) | pitch accuracy (°) |
 |---|---:|---:|---:|---:|---:|
-| `zeuss` | 0.5 | 0.0 | 0.5 | **25.0** | **45.0** |
+| `zeuss` | 0.5 | 0.0 | 0.5 | 30.0 | 30.0 |
 | `legacy_camupper` | 1.0 | 0.0 | 0.0 | 70.0 | 10.0 |
 | `legacy_cammid` | 1.0 | 0.0 | 1.0 | 20.0 | 10.0 |
 | `legacy_camlower` | 1.0 | 0.0 | 1.0 | 10.0 | 5.0 |
 | `wca_port` | 1.0 | 0.0 | 1.0 | 0.0 | 15.0 |
-| `wca_cinema` | 1.0 | 0.0 | 0.0 | 45.0 | 15.0 |
+| `wca_cinema` | 1.0 | 0.0 | 0.0 | 0.0 | 15.0 |
+| `wca_upper` (`U###C`) | 1.0 | 0.0 | 0.0 | 45.0 | 15.0 |
+| `na168_upper` | 1.0 | 0.0 | 0.0 | 45.0 | 15.0 |
 | `wca_starboard` | **`None`** — never measured | | | | |
 
 [VERIFIED-by-inspection + pinned by `testing/test_rig_mounts.py`, values in force 2026-07-26]
-
-**Zeuss is on a TILTING HEAD, and its row is not a mount constant.**
-Owner-stated 2026-09-01: the head sits around **20° down** for most survey
-work, **never points up**, and sometimes goes almost fully down. So the true
-distribution is bounded at 0°, right-skewed, with a long tail toward nadir —
-and a single number cannot describe it. The row is a compromise, chosen on
-these grounds:
-
-| choice | value | why |
-|---|---:|---|
-| `pitch` | **25.0** | Just above the ~20° mode and biased into the nadir tail: the least-squares centre of a right-skewed distribution sits above its mode |
-| `p_acc` | **45.0** | Puts the survey mode at **0.11 σ**, near-nadir (~85°) at **1.33 σ**, horizontal at **0.56 σ**. Wide enough that imagery wins wherever the two disagree |
-
-**What cannot be expressed is the most useful thing known.** Priors are
-symmetric Gaussians, so any σ wide enough to reach nadir necessarily permits
-the same excursion *above* horizontal — which this head never does. The
-one-sided bound is simply not representable in the flight-log format, so the
-prior is weaker than the physical knowledge behind it.
-
-**The head tilt is not logged.** The authoritative nav table
-(`*_final_datatable.csv`) carries 38 columns — vehicle heading/pitch/roll,
-position, CTD, event and camera-grab metadata — and **no tilt, pan or
-head-angle channel**, so there is no per-image truth to substitute for the
-constant. If that angle can be recovered from raw vehicle logs it would beat
-any value in this table outright, and a per-image pitch column already exists
-in the flight-log format to carry it. Two cheaper improvements, in order of
-value: tag dives (or segments) by survey mode and write **two** priors — say
-20°/25° oblique and 70°/25° near-nadir — or drop Zeuss's pitch prior entirely
-and keep yaw and roll, which a pitch-only gimbal leaves untouched.
-[VERIFIED: FINDINGS 2026-09-01]
-
 
 **The fallback for a family with no measured mount (2026-08-31, owner-stated).**
 A family that resolves to `None` above no longer writes an empty pitch. It takes
@@ -1947,6 +1918,8 @@ the house convention: **10° down from the vehicle forward axis, claimed at 30°
 accuracy** — which lands at **80° on the nadir scale** for a level vehicle, and
 composes with vehicle pitch like any measured mount. A measured `MOUNTS` entry
 always **wins**; the fallback is reached only where there is none.
+[SUPERSEDED 2026-08-14 for the WCA row: the 45° down-look belongs to the upper (starboard) camera,
+`wca_upper`; `wca_cinema` is 0°. Legacy `camlower` at 10° is unchanged. Addenda A2.]
 
 | | |
 |---|---|
@@ -1999,7 +1972,9 @@ Q7.]
 ### 10.4 The lever-arm retraction chain — four steps, all retained
 
 1. **Original (2026-07-23, owner-stated):** Port 0° pitch, 1 m forward + 1 m down;
-   Cinema 45° down, 1 m forward. [VERIFIED-as-owner-statement]
+   Cinema 45° down, 1 m forward. [VERIFIED-as-owner-statement, 2026-07]
+   [SUPERSEDED 2026-08-14: the 45° down-look is the UPPER camera's (`wca_upper`); Cinema is 0°.
+   The NA156 line was solved with Cinema at 45 — Addenda A2, FINDINGS 2026-08-14]
 2. **Measured from the solve (2,169 near-simultaneous C/P pairs, zone_1 fresh run):** angle
    **47.2°** (IQR 47.0–47.4) confirmed; but |P−C| separation **0.22 m**, vertical component
    **0.00 m** ⇒ "the Port lever arm is wrong by ~1 m". [SUPERSEDED the same session]
@@ -2141,7 +2116,7 @@ RealityScan.exe -delegateTo RS1 -importFlightLog ^
 RealityScan.exe -delegateTo RS1 -set "sfmEnableCameraPrior=true"
 RealityScan.exe -delegateTo RS1 -set "sfmDistortionModel=Division"
 RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorWeight=10.0"
-RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorWeightOrientation=2.0"
+RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorWeightOrientation=10.0"
 RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorAccuracyYaw=10.0"
 RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorAccuracyPitch=10.0"
 RealityScan.exe -delegateTo RS1 -set "sfmCameraPriorAccuracyRoll=10.0"
@@ -2348,3 +2323,15 @@ Every [OPEN] in this document, with the cheapest probe that answers it.
 | **Q24** | **HIGHEST PRIORITY.** `ifUsePosAcc` / `ifUseOriAcc` do not exist in the binary (§9.3), so what actually decided whether the flight log's accuracy columns were consumed — and at what accuracy did every historical align really run? If `ifuuInh=0` means "use the global settings", and the globals were never applied either (§7.2), then every production align used 10/10/20 m + 10/10/10°, not the per-image columns. | Import the 120-image smoke fixture twice with a 13-column log carrying distinctive accuracies (say 0.01 m), once at `ifuuInh=0` and once at `ifuuInh=1`, then read `$(priorErrorX)`/`$(priorErrorY)`/`$(priorErrorZ)` per camera from an `-exportReport` template (§7.2). Whichever run reports 0.01 identifies the "from file" value. ~5 minutes, headless, no GUI. |
 | **Q25** | Does a params-XML entry naming a **non-existent** key fail loudly or silently? Three of this repo's twelve `FlightLogParams.xml` entries name nothing; none of them ever produced an error. | Add `<entry key="thisKeyDoesNotExist" value="1"/>` to a params XML, run the import, and check `RS_CLI/Errors/errors.txt` and `RealityScan.log`. If it is silent — and the historical record says it is — then **no params XML in this repo has ever been validated**, and every one should be re-checked key-by-key against the binary's string table. Seconds. |
 | **Q20** | Do GCPs / control points work through this CLI at all? `controlpoints.xml` / `groundcontrol.xml` have never been driven, and with no stereo-rig support they are the sanctioned route to rig scale. | Import three synthetic GCPs on the smoke fixture with `-importGroundControlPoints` + a GUI-saved params XML, align, and read the residuals. Untouched territory. |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Manufacturer approximate intrinsics as priors COLLAPSE registration (ON2026 ladder)
+
+Clean A/B/C ladder on a zone_1 copy, one variable per rung, explicit `-addImageWithCalibration` delivery, own cache: **A** control 3,528/3,626 = 97.3 % (1 component, residual median 4.54 cm); **B** groups-only XMPs (calibration/distortion groups 5/6, no values) 97.7 %, median 1.80 cm; **C** full manufacturer priors (focal35 24.2345, PPU/PPV, division, zero-pinned distortion, approximate) **45.4 %** — collapse, reproducing the original failed cell almost exactly, solved focal steered to the prior with wild outliers. The prior VALUES, not sidecar hygiene or cache concurrency, caused the 2026-08-08 collapse (2× replicated, two delivery mechanisms; mirrors NA167 #4 at far greater severity). Production stays calibration-prior-free; value-carrying flight-log calibration columns were downgraded for the same reason. Caveat on B: both A and B exported as ONE calibration group, so flight-log import auto-grouping (`ifKGrp`) appears to stomp prior groups and B's mechanism is unclear. [VERIFIED: FINDINGS 2026-08-09]
+
+### A2. The 45° down-look belongs to the UPPER camera, not Cinema (rig correction 2026-08-14)
+
+Owner: "upper is 45 degrees down, cinema and mid are pointed directly forward … how they were loaded on this cruise and NA165." The registry had `wca_cinema` at pitch 45 and the upper (`wca_starboard`) with no mount at all. Corrected: `wca_cinema` pitch 0; new family `wca_upper` (`^u\d+c`, the `U###C` stills) → starboard camera at pitch 45; `wca_port` (mid) 0 as before; lever arms untouched (validated figures). **Blast radius:** the NA156 H2023/H2024 WCA line was solved with cinema at 45 (the 43.11° Cinema median in §5 is that solve); the owner vouched for NA168 and NA165 only — reprocess NA156 under a cruise-scoped family rather than moving the row back. §10's mount table is corrected in place. [VERIFIED: FINDINGS 2026-08-14]

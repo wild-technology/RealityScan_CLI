@@ -1010,7 +1010,7 @@ Two measured results say the sidecars are not inert:
 1. **Fragmentation.** A fresh end-to-end run with calibration sidecars gave zone_1
    **3 components at 4,405/4,540 (97.0 %)** against the pre-sidecar production run's
    **9 components at 4,392 (96.7 %)** on the same imagery and the same box.
-   [VERIFIED: FINDINGS 2026-07-24; docs/FRESH_RUN_2026-07-24.md]
+   [VERIFIED: FINDINGS 2026-07-24; docs/history/FRESH_RUN_2026-07-24.md]
 2. **Sidecar loss is treated as a defect.** When the identity harvest stripped 796 of
    4,540 sidecars (§9.6), the pipeline gained a repair function rather than shrugging.
 
@@ -1960,3 +1960,15 @@ have been run.
 | **Q18** | Precedence between a `sensorsdb.xml` entry and an XMP sidecar for the same image | Add a DB entry for the smoke fixture's camera model with a deliberately wrong `focal`, plus a sidecar with the right one; align and read the solved value. ~5 min plus a ProgramData edit (back the file up first). |
 | **Q19** | Does `-exportUndistortedImages` / `-exportSTMap` work headless, and at what cost — and which spelling of the undistort command does the parser accept (`exportUndistortedImages` per `allcommands` vs `exportUndistoredImages` per `commandline_1`, §14)? | The spelling half is free: issue both at boot on an empty scene and read `RealityScan.log` — an unknown command is reported, a known one is not. The functional half is blocked on Q20 (`-exportSTMap` alone may run with no params at all, since the Help says both of its arguments are optional). |
 | **Q20** | Obtain a valid Export Registration params XML | One GUI session: open any aligned project, Export Registration → "RealityScan XMPs with Image List" → configure → save the params. Unblocks Q7, Q8, Q9, Q19 and makes `-exportRegistration` usable headless at all. **Cheapest single action with the widest unblocking effect in this document.** |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. Same-name sidecar auto-import is reliable enough to poison a run and not reliable enough to deliver a prior
+
+Owner field finding (2026-08-08), matched by this repo's own record (NA167 #3 sidecars never loaded; H2023 harvest gap left 17.5% of a zone sidecar-less; the 2026-08-08 hygiene collision): implicit `<stem>.xmp` pairing depends on add/import-time state (`appGroupCalibrationByExif`, the GUI's "Prefer Exif over XMP") and fails silently. §10 still holds — leftover pose sidecars DO auto-import as priors. Decision: calibration priors, when used, ride explicit commands (`-addImageWithCalibration <image> <xmp>` from a separate directory; groups via `-setPrior*`), never same-name auto-import. [VERIFIED: FINDINGS 2026-08-08]
+
+### A2. Exported XMPs write `CalibrationPrior="exact"` regardless of the input prior
+
+The export field reflects the export mode, not the prior that drove the solve (B7 semantics). Never census prior MODE from exported sidecars; census the group echo and solved-focal equality. [VERIFIED: FINDINGS 2026-08-08]

@@ -1,6 +1,8 @@
 # RealityScan_CLI pipeline dependencies (2026-08-08; versions = the
 # HONEYBADGER box the H2023/H2024/ON2026 deliverables were built on).
 # RealityScan 2.2 itself is a separate Windows install (Epic Games).
+# textual/rich moved to archive/wildscan_tui/wildscan/requirements.txt
+# (2026-09-05): the TUI is archived and the pipeline never imports them.
 # publish_cesium.py needs requests+boto3 (ion REST + its S3 upload)
 # and pyproj for the EGM2008 geoid; all three were missing here and
 # the script could not run at all (2026-08-31).
@@ -15,11 +17,9 @@ Pillow>=12.3
 pyproj>=3.7
 pytest>=9.1
 requests>=2.32
-rich>=15.0
 scikit-learn>=1.9
 scipy>=1.18
 seaborn>=0.13
 shapely>=2.1
-textual>=8.2
 tqdm>=4.69
 utm>=0.8

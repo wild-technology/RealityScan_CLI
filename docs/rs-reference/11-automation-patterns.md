@@ -1415,16 +1415,21 @@ call :run -newScene || goto :fail
 %RS% -delegateTo RS1 -set "appIncSubdirs=true"
 call :run -addFolder "F:\na156_h2024_v2\batched_images_by_zone\zone_1" || goto :fail
 
-:: === trajectory + CRS ===
+:: === alignment settings FIRST: -align takes NO params, so push every key the XML names ===
+:: (settings before the trajectory - the sfmCameraPrior* keys govern how the incoming
+::  priors are weighted; order fixed 2026-08-14. Gate on the KEY token, never token 1:
+::  cmd reads the leading "<" of an entry line as a redirection - FINDINGS 2026-08-15.)
+for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%Metadata%\AlignmentParams.xml") do (
+    echo %%A| %SystemRoot%\System32\findstr.exe /r /b /c:"[a-zA-Z]" >nul
+    if not errorlevel 1 %RS% -delegateTo RS1 -set "%%A=%%B"
+)
+
+:: === trajectory + CRS (project + output scope pinned BEFORE the import, 2026-09-02) ===
+call :run -setProjectCoordinateSystem epsg:32604 || goto :fail
+call :run -setOutputCoordinateSystem epsg:32604 || goto :fail
 call :run -importFlightLog ^
     "F:\na156_h2024_v2\batched_images_by_zone\zone_1\flight_log_4Q_UTM.txt" ^
     "F:\na156_h2024_v2\logs\FlightLogParams_4Q.xml" || goto :fail
-
-:: === alignment settings: -align takes NO params, so push every sfm*/lis* key ===
-for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%Metadata%\AlignmentParams.xml") do (
-    echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"sfm" /c:"lis" >nul
-    if not errorlevel 1 %RS% -delegateTo RS1 -set "%%A=%%B"
-)
 call :run -align || goto :fail
 
 :: === export gates ===
@@ -1937,3 +1942,19 @@ Every [OPEN] item raised in this document, with the cheapest probe that would cl
 | A15 | **Does the hand-merged 13-column flight-log format survive an app update?** `C:\Program Files\Epic Games\RealityScan_2.2\flightlogs.xml` was hand-edited to add `{B438A617-2434-5A24-C1B7-58980F28345A}`; an update that replaces the file silently drops orientation and per-image accuracies from every import. | After any RealityScan update, grep the installed `flightlogs.xml` for the GUID before the first run. Seconds — but it must be in the update checklist, not remembered. |
 | A16 | **Does `-deleteAutosave` do anything when appended to `-newScene`?** It is documented only as an optional parameter of `-load`, and `-newScene` is documented as taking none [OFFICIAL: appbasics/allcommands]. `startRealityScan.bat`'s instance-reuse branch has issued `-newScene -deleteAutosave` in production since 2026-07-21 with no error and no observed stale autosave — but `appAutoSaveMode=false` is also pinned, so the two mitigations are confounded. | Boot an instance with `appAutoSaveMode=true`, force an autosave, then reuse the instance with `-newScene -deleteAutosave` and check whether the autosave file is gone. If not, move the reset to `-load <path> deleteAutosave` or clear the autosave from the driver. Minutes. |
 | A17 | **Is `-selectImage`'s regexp form broken, or does 2.2 expect a different regexp dialect?** Only "silently selects nothing" is established, not why; the Help's `imagePath\|regexp` wording promises more. The forum-mining follow-up is open [FINDINGS 2026-07-23]. | On the smoke fixture, try the same selection as: literal full path (known-good control), bare stem, `.*` -wrapped, ECMAScript `^.*P231C.*$`, and a backslash-escaped Windows path pattern — one `-selectImage` each followed by a selection-visible operation. Under 10 minutes and it either finds a working dialect or converts the [CONTRADICTED] into a hard "regexp is dead in 2.2". |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+### A1. The errors file is STICKY for the whole session
+
+`:run` decides success by testing whether `errors_<instance>.txt` is non-empty after each delegated command. That file persists for the entire instance session and only `RealityScanCLI` clears it, pre-run. Two consequences, both observed on NA165/H2060: (1) **misattribution** — the file holds the last error from ANY source, so `:run` blames whatever it just issued (a failed `-selectModel` was reported against a model NAME for hours); (2) **no tolerated failures** — one optional step that fails poisons every later `:run`, so one missing format killed a 20-component export. The tolerated-failure primitive already exists: `try_delete_model` / `try_filter` / `run_peelrename` MOVE the file to `expected_<reason>_<instance>.txt`, preserving the evidence without deleting it (hard rule 4). It is applied ad hoc per call site; a shared `:try_run <tag> <cmd…>` is the open design note (`HANDOFF` loose end 1). An optional step is a SKIP or an `expected_*` move, never a caught error. [VERIFIED: FINDINGS 2026-09-02]
+
+### A2. Order of operations in the align workflow
+
+Settings (`-set` from the params XML, every key it names) → pin project and output CRS → `-importFlightLog` → `-align`. The flight log goes in AFTER the `sfm*` settings because `sfmEnableCameraPrior`, `sfmCameraPriorWeight` and `sfmCameraPriorAccuracy*` decide how the priors are weighted at import; the CRS goes in BEFORE the import per Epic's own instruction and because an unpinned project CRS leaves the export label arbitrary (`06` §3.2). The §10 recipe above was corrected to this order. [VERIFIED: FINDINGS 2026-08-14, 2026-09-02]
+
+### A3. `schtasks /End` does not kill the run
+
+Ending a scheduled task stops the task's process, not the driver python or its `.bat` / RealityScan children. Enumerate by `Win32_Process CommandLine` and stop them explicitly; a hard-killed instance then needs the recovery recipe in `01` A2. [VERIFIED: FINDINGS 2026-08-09]

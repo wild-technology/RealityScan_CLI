@@ -60,8 +60,8 @@ Three operational rules follow, and they are stated in `CLAUDE.md`, `HANDOFF.md`
 | Rule | Statement | Source |
 |---|---|---|
 | R1 | **Verify every merge and every growth pass by pose-XMP camera census, never by exit status.** | [VERIFIED: NA167 #23] |
-| R2 | **Never infer completion from an event you cannot attribute to your own command** — not process names (`tasklist`), not results-log growth. | [VERIFIED: docs/code-review-2026-07 §3] |
-| R3 | **A metric that reads zero is instrumentation-suspect until the instrument is verified against a known-good and a known-bad case.** | [VERIFIED: docs/code-review-2026-07 §5] |
+| R2 | **Never infer completion from an event you cannot attribute to your own command** — not process names (`tasklist`), not results-log growth. | [VERIFIED: docs/history/code-review-2026-07 §3] |
+| R3 | **A metric that reads zero is instrumentation-suspect until the instrument is verified against a known-good and a known-bad case.** | [VERIFIED: docs/history/code-review-2026-07 §5] |
 
 A corollary that cost this repo two full production runs: **an oracle that cannot see its
 subject must not publish a number under a name that claims it did.** [VERIFIED: FINDINGS
@@ -131,11 +131,14 @@ hex is what appears in `RealityScan.log`.
 | `0` | — | Success | Epic states `processResult == 0` means the process finished correctly | [OFFICIAL: tutorials/commandline_5] |
 | `1` | — | **Also routine success.** Ordinary successful operations (e.g. `-addFolder`) report `1` through the trigger | Epic's own sample `ErrorWriter.bat` whitelists both `0` and `1`; confirmed in production | [OFFICIAL: tutorials/commandline_5] + [VERIFIED: FINDINGS 2026-07-21] |
 | `2181038335` | `0x820000FF` | **Warning class.** Seen for `err:18002` — `-importFlightLog` where the log references images not in the scene. The trajectory still imports for every image that *is* present | Cross-checked against every component manifest: the 102 "not found" images were exactly the unregistered remainder, zero overlap with any component | [VERIFIED: FINDINGS 2026-07-21, 2026-07-25] — Epic's own sample output in the Help prints this exact decimal, but for process `20599` = `IMPORT_GCP`, not the flight-log import [OFFICIAL: tutorials/commandline_5 + tutorials/processids], so the code is a *class*, not a flight-log signature |
-| `2147942487` | `0x80070057` | `E_INVALIDARG`. Empty / no-op selection paths: `err:5605` "no component selected" after `-renameSelectedComponent` on an emptied scene; `err:5601` "model name not found" from `-selectModel`; `-selectModel <tag>_HighPoly` in every model cleanup loop | Marker artifacts `expected_peelend_RS1.txt` (process `21859`, "in 0 seconds") and `expected_select_RS1_*.txt` (process `21856`) | [VERIFIED: FINDINGS 2026-07-24, 2026-07-29; docs/code-review-2026-07] |
+| `2147942487` | `0x80070057` | `E_INVALIDARG`. Empty / no-op selection paths: `err:5605` "no component selected" after `-renameSelectedComponent` on an emptied scene; `err:5601` "model name not found" from `-selectModel`; `-selectModel <tag>_HighPoly` in every model cleanup loop | Marker artifacts `expected_peelend_RS1.txt` (process `21859`, "in 0 seconds") and `expected_select_RS1_*.txt` (process `21856`) | [VERIFIED: FINDINGS 2026-07-24, 2026-07-29; docs/history/code-review-2026-07] |
 | `2147549183` | `0x8000FFFF` | **Generic "unexpected program state".** Ambiguous by design: a broken `-set` argument and the zone_14 alignment solver bug emit the identical code | Two unrelated failures, same code; the discriminating text was only in `RealityScan.log` | [VERIFIED: NA167 #16 / B6] |
 | `2147942512` | `0x80070070` | `ERROR_DISK_FULL` — **RealityScan's cache disk**, not necessarily the project disk | The hull-model retry died with this after 143.5 min; the instance log later said `Processing failed: Out of disk space..` | [VERIFIED: FINDINGS 2026-07-26] |
 | `2181038176` | `0x82000060` | **Unknown / invalid command.** Emitted by `-selectAllComponents`, which does not exist in 2.2 | Command taken from an older repo script; Help lists only `selectComponent` / `selectMaximalComponent` / `selectComponentWithLeastReprojectionError` | [VERIFIED: NA167 #13 / B2] — decimal is the arithmetic conversion of the logged hex, not itself observed in a marker |
 | `2181038103` | `0x82000017` | Warning-class load complaint raised by a stale `<name>.rsproj.new` beside the project. The load still completes | An interrupted GUI save left the temp file; the next headless `-load` warned and the error channel then aborted the workflow | [VERIFIED: FINDINGS 2026-07-29] — decimal is the arithmetic conversion of the logged hex |
+| `2197815299` | `0x83000003` | `-unwrap` failed under `unwrapStyle=AdaptiveTexelSize` on one particular mesh; returns in ~3 s with `rev` unchanged, and the model exports untextured afterwards | F-103; `MaxTexturesCount` 4 × 4096 unwrapped the same mesh | [VERIFIED: FINDINGS 2026-09-03] |
+| `2181038111` | `0x8200001F` | `-reprojectTexture` failed because the preceding unwrap had not produced UVs | F-103 | [VERIFIED: FINDINGS 2026-09-03] |
+| `2147500037` | `0x80004005` | `E_FAIL`: `-exportReport` with a minimal custom template (0-byte output); `-calculateTexture` with no model selected after `-load` | live gate B9 2026-08-07; FINDINGS 2026-09-03 | [VERIFIED] |
 | `3` | — | Crash; minidump `RealityScanCrash-YYYYMMDD-HHMMSS.dmp` in the `-silent` directory | The *code* is Epic's; what this repo observed is the minidump plus a dead instance (F-42). **The value `3` has never been read off a process here**, because the crashing process is the delegated headless instance, not the `.bat` that the orchestrator launches — that `.bat` sees `ERROR: Failed to delegate command` and exits `1` | [OFFICIAL: tutorials/commandline_5] for the code; [VERIFIED: FINDINGS 2026-07-26] for the dump + dead-instance signature only |
 
 Codes that appear only in `RealityScan.log` (channel C), with no distinct marker value:
@@ -145,7 +148,7 @@ Codes that appear only in `RealityScan.log` (channel C), with no distinct marker
 | `err:7155` | `Parsing setting key=value '<key>' failed` — a `-set` argument arrived split across the cmd boundary. The flag was **never applied** | [VERIFIED: NA167 #15 / B5] |
 | `err:18002` | "The file contains N images which are not in the current scene" (flight-log import); surfaces as `0x820000FF` | [VERIFIED: FINDINGS 2026-07-21] |
 | `err:5601` | Model name not found (`-selectModel` on a renamed-away model); surfaces as `0x80070057` | [VERIFIED: FINDINGS 2026-07-29] |
-| `err:5605` | No component selected; surfaces as `0x80070057` | [VERIFIED: docs/code-review-2026-07] |
+| `err:5605` | No component selected; surfaces as `0x80070057` | [VERIFIED: docs/history/code-review-2026-07] |
 | `MSS_STR001` | Internal reconstruction error, printed as `Processing failed: Unexpected program state. [Internal error MSS_STR001]`; surfaces as `0x8000FFFF` | [VERIFIED: NA167 B8; `testing/results/z14_forensic_rslog.txt` line 1491-1493] |
 
 **When a code is ambiguous — and `0x8000FFFF` always is — the only remedy is to snapshot
@@ -250,7 +253,7 @@ Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
   completion-detection bug (F-25) was already fixed.
 - **Mitigation.** Use `-selectMaximalComponent` (no parameters) before the rename; do not
   use `-mergeComponents` as a "select the merged thing" idiom.
-  [VERIFIED: HANDOFF 2026-07-21; docs/code-review-2026-07 §4]
+  [VERIFIED: HANDOFF 2026-07-21; docs/history/code-review-2026-07 §4]
 - **Detection test.** Issue `-selectMaximalComponent` then `-renameSelectedComponent X`;
   if the rename succeeds where it failed before, the selection was the problem.
 
@@ -288,7 +291,7 @@ Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
 - **Blast radius when it bit.** All 28 tuned keys in `AlignmentParams.xml` were being
   discarded — camera-prior enablement and weights, `Ultra` detector sensitivity, the
   `Division` distortion model, feature caps. Zone alignments ran on stock settings.
-  [VERIFIED: docs/code-review-2026-07 §6]
+  [VERIFIED: docs/history/code-review-2026-07 §6]
 - **Detected by.** Code reading during a settings evaluation, cross-checked against
   `appbasics/allcommands` and Epic's online docs.
   [CONTRADICTED: pre-2.x repo scripts and lore passed a params file / observed: the
@@ -431,7 +434,7 @@ Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
   manifest component names never match the in-scene names because the zone scene was saved
   *pre*-rename, so a name-based `-selectComponent` silently no-ops — is a design conclusion
   carried in `HANDOFF` (SHOULD-FIX: "cleanup_stale `selectComponent` silently no-ops") and
-  `docs/MERGE_REWORK_RECOMMENDATIONS.md` §Q6. It has **not** been reproduced as an
+  `docs/history/MERGE_REWORK_RECOMMENDATIONS.md` §Q6. It has **not** been reproduced as an
   observation, and the 2026-07-26 finding explicitly scopes itself away from zone scenes.
   It is plausible because selection commands no-op rather than fail on nothing to act on
   (F-10). [INFERRED — what would settle it: `-selectComponent` a known manifest name in a
@@ -883,7 +886,7 @@ happened".
   documentation and it was wrong, because it depended on an undocumented property of a
   closed-source binary. **Code review cannot validate a contract with a third-party
   executable; only execution can.**
-  [VERIFIED: docs/code-review-2026-07 §3; FINDINGS 2026-07-21]
+  [VERIFIED: docs/history/code-review-2026-07 §3; FINDINGS 2026-07-21]
 
 ### F-26 — The orchestrator reported exit 0 while modules refused or raised
 - **Symptom.** Process exit 0 with real failures inside.
@@ -967,7 +970,7 @@ happened".
   `-renameSelectedComponent` fails `No component selected [err:5605]` — intermittently,
   which is what made it expensive to find.
 - **How it was detected.** Non-deterministic smoke-test failures on the first real-machine
-  run; the same script sometimes succeeded. [VERIFIED: docs/code-review-2026-07 §3;
+  run; the same script sometimes succeeded. [VERIFIED: docs/history/code-review-2026-07 §3;
   HANDOFF 2026-07-21]
 - **Mitigation — the `:run` contract, reproduced literally in every workflow:**
   ```bat
@@ -1781,7 +1784,7 @@ the substrate. Every trap below was hit in practice.
   `cmd /c "path with spaces.bat"` has its quotes stripped by cmd. The `:run` line-count
   also had to be fully qualified as `%SystemRoot%\System32\find.exe`, because a bare `find`
   resolves to **GNU find** when launched from Git Bash and scans the whole disk.
-  [VERIFIED: HANDOFF 2026-07-21; docs/code-review-2026-07 §2]
+  [VERIFIED: HANDOFF 2026-07-21; docs/history/code-review-2026-07 §2]
 
 ### F-65 — cp1252 console crashes on non-ASCII
 - **Symptom.** A `UnicodeEncodeError` kills a stage at a `print`/log call, not at the work.
@@ -2177,3 +2180,29 @@ Every `[OPEN]` in this document, with the cheapest probe that would settle it.
 | O-25 | Do `-pauseInstance` / `-unpauseInstance` / `-abortInstance` leave a loadable scene, and do they emit a marker line? | F-37 | Abort a small align, read `errors_<inst>.txt` / `results_<inst>.log`, then reload the project. Minutes. Documented but never exercised here. |
 | O-26 | Is `startRealityScan.bat`'s reuse-branch `-deleteAutosave` an invalid command? | F-79 | The Help defines `deleteAutosave` only as an optional parameter of `load`. Take the reuse branch once with a live instance and grep `errors_<inst>.txt` for `2181038176` (`0x82000060`). Seconds. |
 | O-27 | Does an instance reused by `startRealityScan.bat` really run without the error hook? | F-30 | The reuse branch `goto :eof`s before the `-set` quartet. Boot an instance by hand with no hook, take the reuse branch, run a known-bad operation and check whether `errors_<inst>.txt` is written at all. Minutes; would confirm a silent-total-blindness path. |
+
+## Addenda — reconciled from `FINDINGS.md`, 2026-09-05
+
+Facts established after this document was written (2026-08-04), carried here so the manual stays the document of record. Each keeps the FINDINGS date as its citation; the raw entry has the full observation.
+
+Numbered from F-101 so the 2026-08-04 numbering stays stable.
+
+### F-101 — The errors file is sticky: one tolerated failure fails every later `:run`, and blames the wrong command
+**Symptom:** a workflow aborts on a step that did not fail, or an optional step's failure kills the whole run. **Cause:** `errors_<instance>.txt` persists for the session and records the last error from ANY source; `:run` tests only "non-empty". **Detected by:** the error text names a process id and code that belong to an earlier step. **Mitigation:** an optional step is a SKIP or an `expected_<reason>_<instance>.txt` MOVE (`try_delete_model` pattern), never a caught error; read the FIRST line of the file, not the last. `11` A1. [VERIFIED: FINDINGS 2026-09-02]
+
+### F-102 — `-selectModel` on a missing name is a silent no-op, so a blind `-deleteSelectedModel` deletes the wrong model
+**Symptom:** a working or high-poly model vanishes; every command reported success. **Cause:** inside a populated component a bogus name leaves the previous selection live with `lastError:0`. **Detected by:** re-reading the selected model's name from `-exportReport SelectedModel.html`. **Mitigation:** never issue a destructive command after an unverified select; treat an absent name as a safe skip. `ModelToFinal.bat` still carries the pattern (owner's call). `02` A1. [VERIFIED: FINDINGS 2026-09-03]
+
+### F-103 — `AdaptiveTexelSize` unwrap fails silently on a particular mesh and an untextured model still exports
+**Symptom:** OBJ exported "OK", passes a geometry census, has no texture (`.mtl` without `map_Kd`). **Cause:** `-unwrap` returned `0x83000003` in 3 s with `rev` unchanged; `-reprojectTexture` then `0x8200001F`; export does not care. **Detected by:** the model report shows no unwrapping style / `Textured False`. **Mitigation:** census `Textured` and texture count; fall back to `MaxTexturesCount` 4 × 4096 (which unwrapped the same mesh). `10` A5. [VERIFIED: FINDINGS 2026-09-03] [OPEN: why]
+
+### F-104 — Delegated component deletion does not persist through `-save`
+**Symptom:** a deleted component is back after reload; exit 0, empty errors file. **Cause:** deletion executes in memory and is discarded by save+reload, on GUI and headless instances alike. **Detected by:** post-save reload census byte-identical to baseline. **Mitigation:** exclude members at the driver level; GUI delete for the object. `08` A1. [VERIFIED: FINDINGS 2026-08-12]
+
+### F-105 — The `.rsInfo` CRS label is arbitrary while the geometry is ECEF
+**Symptom:** a mesh placed by its sidecar's `globalCoordinateSystem` lands ~16,000 km away. **Cause:** `exportCoordinateSystemType=3` writes geocentric geometry with identity transform; the label is the project's accumulated CRS list's first entry. **Detected by:** vertex magnitudes are ECEF (~6.07e6); area-of-use / nav-envelope validation fails. **Mitigation:** pin project + output CRS before import (`06` §3.2); derive the frame from geometry (`cesium_placement`). `10` A1. [VERIFIED: FINDINGS 2026-09-01/02]
+
+### F-106 — `-selectModel` without a selected component reads as "model missing"
+**Symptom:** `0x80070057` on `-selectModel` although the model exists; hours lost re-modelling. **Cause:** `-selectModel` resolves names only within the active component; `-exportModel` does not need one, which hides the omission for OBJ/FBX. **Mitigation:** `-selectComponent` before any `-selectModel`. `02` A3. [VERIFIED: FINDINGS 2026-09-02]
+
+Additional result codes seen since the code tables were written: `0x83000003` (unwrap failed, adaptive style, F-103), `0x8200001F` (`-reprojectTexture` failed after a failed unwrap, F-103), `-2147467259` / `0x80004005` E_FAIL (`-exportReport` with a minimal custom template → 0-byte file; also `-calculateTexture` with no model selected after `-load`, live gate B9 2026-08-07). [VERIFIED: FINDINGS 2026-09-03; HANDOFF 2026-08-07]

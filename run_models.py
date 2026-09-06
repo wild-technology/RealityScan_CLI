@@ -52,11 +52,50 @@ from modules.workspace_census import Workspace, _records  # noqa: E402
 MIN_FREE_GB = 50.0
 
 
+def project_size_gb(project) -> float:
+    """Size of a .rsproj plus its sibling data directory, in GB.
+
+    RealityScan keeps the bulk beside the .rsproj in a folder of the same
+    stem, so the .rsproj alone is ~1 MB and tells you nothing about what a
+    copy costs. Used to decide whether a dated copy can be afforded.
+    """
+    project = Path(project)
+    total = project.stat().st_size if project.is_file() else 0
+    data_dir = project.with_suffix('')
+    if data_dir.is_dir():
+        for f in data_dir.rglob('*'):
+            try:
+                if f.is_file():
+                    total += f.stat().st_size
+            except OSError:
+                pass
+    return total / 1024 ** 3
+
+
+def scale_gate_enabled(report: dict) -> bool:
+    """Whether this workspace's merge report asks for the scale gate to REFUSE.
+
+    merge_zones records the operator's --scale_gate answer as
+    ``{"scale_gate": {"enabled": bool, ...}}``. Workspace modelling used to
+    gate unconditionally and ignore it, so a workspace deliberately assembled
+    with --scale_gate false still had its out-of-band components refused.
+
+    Absent or malformed = True: an old report predating the field must keep
+    gating, because silently MODELLING something a previous run refused is the
+    worse failure of the two.
+    """
+    gate = report.get('scale_gate')
+    if not isinstance(gate, dict):
+        return True
+    value = gate.get('enabled', True)
+    return bool(value) if isinstance(value, bool) else True
+
+
 def make_cli(logger_name: str = 'models') -> RealityScanCLI:
     """Machine constants from the settings store's 'realityscan' section -
     prompt-with-default on a TTY, silent stored/fallback when unattended
     (SettingsStore.ask). Values already in the environment win, exactly
-    as the old setdefault calls allowed: wildscan and other callers pass
+    as the old setdefault calls allowed: rs.py, the planner and other callers pass
     explicit RS_* values, and those are never prompted for or demoted."""
     settings = SettingsStore()
     if not os.environ.get('RS_INSTANCE'):
@@ -244,6 +283,7 @@ def main() -> int:
     os.environ.pop('RS_PROJECTS_DIR', None)   # dated copies deferred
     os.environ.pop('RS_PROJECT_LABEL', None)
     logs_dir = str(ws.root / 'logs')
+    disk_floor_hit = False
 
     for key, comp in finals:
         name = key.split('/')[-1]
@@ -254,7 +294,20 @@ def main() -> int:
                                             union_log, logger)
         entry = {'component': name, 'cameras': comp.get('camera_count'),
                  'scale': median, 'status': status, 'why': why}
-        if status != 'pass':
+        # merge_zones records the operator's --scale_gate answer in the report;
+        # this loop used to ignore it and gate unconditionally, so a workspace
+        # deliberately assembled with --scale_gate false still had its
+        # out-of-band components refused here. The measured scale is kept in
+        # the entry either way - disabling the gate stops it REFUSING, it does
+        # not stop it MEASURING.
+        gate_enabled = scale_gate_enabled(report)
+        if status != 'pass' and not gate_enabled:
+            logger.warning(
+                'scale gate DISABLED for this workspace: modelling %s anyway '
+                '(%s - %s). Its measured scale is recorded, not corrected.',
+                name, status, why)
+            entry['scale_gate_bypassed'] = True
+        elif status != 'pass':
             logger.error('SCALE GATE: %s not modelled (%s - %s)',
                          name, status, why)
             entry['skipped'] = 'scale_gate'
@@ -270,6 +323,7 @@ def main() -> int:
             entry['skipped'] = 'disk_floor'
             out['models'].append(entry)
             flush()
+            disk_floor_hit = True
             break
         logger.info('=== model %s (%s cams, scale %s) ===',
                     name, entry['cameras'], median)
@@ -288,7 +342,46 @@ def main() -> int:
             break
 
     done = [m for m in out['models'] if m.get('success')]
-    if done:
+    # A dated copy duplicates the WHOLE project. Writing one immediately after
+    # aborting for low disk is self-defeating, and it filled the volume for
+    # real on NA165/H2060 (2026-09-01): the loop stopped at 32 GB free, then
+    # SaveProjectCopy tried to write a 31.8 GB duplicate, hit 0 bytes free and
+    # died with 0x80070070 ERROR_DISK_FULL, leaving a partial copy that itself
+    # had to be deleted to recover the machine. The in-place project is
+    # already saved by GenerateModel; the dated copy is a convenience.
+    free_gb_now = shutil.disk_usage(ws.root).free / 1024**3
+    if done and disk_floor_hit:
+        logger.error(
+            'SKIPPING the dated project copy: this run aborted on the %.0f GB '
+            'disk floor (%.1f GB free now). Copying the whole project here is '
+            'what fills the volume. Free space, then rerun to get the copy.',
+            MIN_FREE_GB, free_gb_now)
+        out['dated_copy'] = {'skipped': 'disk_floor', 'free_gb': round(free_gb_now, 1)}
+        flush()
+    elif done and free_gb_now < MIN_FREE_GB * 2:
+        logger.error(
+            'SKIPPING the dated project copy: only %.1f GB free and a copy '
+            'duplicates the entire project. Free space, then rerun.',
+            free_gb_now)
+        out['dated_copy'] = {'skipped': 'low_disk', 'free_gb': round(free_gb_now, 1)}
+        flush()
+    elif done and project_size_gb(project) + MIN_FREE_GB > free_gb_now:
+        # A fixed threshold is not enough: it only asks "is there room to
+        # start", not "is there room to FINISH". On NA165/H2060 the run had
+        # 157 GB free - comfortably past 2x the floor - and wrote a 119.5 GB
+        # duplicate, leaving 43 GB and starving the export that came next.
+        # Size the check on the actual project instead.
+        size_gb = project_size_gb(project)
+        logger.error(
+            'SKIPPING the dated project copy: the project is %.1f GB and only '
+            '%.1f GB is free, which would leave under the %.0f GB floor. A '
+            'copy that fits but strands the next stage is not worth it.',
+            size_gb, free_gb_now, MIN_FREE_GB)
+        out['dated_copy'] = {'skipped': 'would_breach_floor',
+                             'project_gb': round(size_gb, 1),
+                             'free_gb': round(free_gb_now, 1)}
+        flush()
+    elif done:
         import merge_zones
         merge_zones.set_project_save_env(str(ws.batched), ws.root.name.upper())
         dated = os.path.join(

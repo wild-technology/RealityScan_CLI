@@ -1,0 +1,30 @@
+<Configuration>
+  <!-- The registration export's FORMAT selector, and the exact structural
+       analogue of gpsLogFileFormat in FlightLogParams.xml: RealityScan
+       resolves this GUID against calibration.xml IN ITS INSTALL
+       DIRECTORY, not against the copy in this repo. It fails the same way
+       too - an id it cannot resolve does NOT error, it falls back to
+       whatever the instance's current export settings hold and writes a
+       CSV in some other layout with exit code 0. That is how the flight
+       log's orientation-accuracy columns were dropped on every import
+       before 2026-08-16, so this one is gated twice:
+       modules/flightlog_format.assert_calibration_format_installed()
+       checks the GUID is installed before the align, and AlignZone.bat
+       checks the exported CSV opens with "#cameras N" after each export.
+       Only the CONTENT proves which format actually ran.
+
+       {E7C3B1A9...0A48} is defined in the repo's calibration.xml:
+       component membership plus the per-camera prior readback (focal, k1
+       and k2 come back DIFFERENT per camera family iff the priors really
+       landed), with requiresGeoref="0" so identity stays readable for a
+       component that failed to georeference.
+
+       This file names ONE key deliberately. The other ~36 calex* keys are
+       explicitly UNDEFINED and keep whatever the instance holds, which is
+       the settings contract AlignZone.bat's header already states for
+       AlignmentParams.xml. Probing RealityScan.exe as UTF-16LE recovered
+       the key NAMES; it did not recover their values, and hand-authoring
+       guesses for them would claim a reproducibility this file cannot
+       deliver. -->
+  <entry key="calexFileFormatId" value="{E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A48}"/>
+</Configuration>

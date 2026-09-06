@@ -10,7 +10,7 @@ The portal contract under test:
       hand-off preserved - the portal never changes data handling), post
       stages as separate gated commands
 
-Run:  py -3.13 -m pytest testing/test_wildscan.py
+Run:  python -m pytest testing/test_run_plan_session.py
 """
 from __future__ import annotations
 
@@ -24,12 +24,10 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-pytest.importorskip("textual")
-
-import wildscan.session as session_mod  # noqa: E402
-from wildscan.session import (Session, build_commands, build_questions,  # noqa: E402
+import modules.run_plan as session_mod  # noqa: E402
+from modules.run_plan import (Session, build_commands, build_questions,  # noqa: E402
                               default_enabled, scan_raw_data)
-from wildscan.workspace import Workspace  # noqa: E402
+from modules.workspace_census import Workspace  # noqa: E402
 
 
 class FakeStore:
@@ -220,7 +218,7 @@ def test_explicit_lines_beat_the_cruise_scan(tmp_path):
 
 
 def test_camera_parsing_recognises_registry_families(tmp_path):
-    from wildscan.session import scan_cameras
+    from modules.run_plan import scan_cameras
     stills = tmp_path / "stills"
     stills.mkdir()
     (stills / "P231C0001_x.jpg").write_bytes(b"j")   # WCA Port - known
@@ -437,6 +435,13 @@ def test_components_join_scale_models_exports(tmp_path):
 # ------------------------------------------------------------- app smoke
 
 def test_portal_walks_session_to_stage_pick(tmp_path, store):
+    """Smoke test of the ARCHIVED TUI (archive/wildscan_tui): it must still
+    walk its first two screens over the live planner. Skipped without
+    textual - the UI is archived, so it is not a pipeline dependency."""
+    pytest.importorskip("textual")
+    tui_root = os.path.join(REPO_ROOT, "archive", "wildscan_tui")
+    if tui_root not in sys.path:
+        sys.path.insert(0, tui_root)
     from wildscan.app import StagePickScreen, WildScanApp
 
     results = tmp_path / "results"

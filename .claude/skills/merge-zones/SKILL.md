@@ -1,9 +1,13 @@
 ---
 name: merge-zones
 description: Merge aligned per-zone components into larger assemblies, or grow a zone that will not align standalone. Use when asked to merge components, assemble a wreck or feature, fuse zones, fix a merge that "succeeded" without fusing, or when merge_report.json / EVALUATION_READY needs interpreting.
+disable-model-invocation: true
 ---
 
 # Merging components
+
+`python` = the interpreter with the deps (CLAUDE.md "Environment";
+`py -3.13` where the launcher exists).
 
 Merge is the stage with the most silent-success modes in the pipeline. A
 merge that reports success and fuses nothing looks identical to one that
@@ -14,8 +18,11 @@ behaviour - it documents what actually fuses and what does not.
 
 ## Run it through the driver
 
+On the charter lane: `python rs.py launch --charter <C> --stages merge`
+(the plan pins every argument below). By hand, or to inspect the argv:
+
 ```bash
-py -3.13 merge_zones.py --components_root <ws>/aligned_components \
+python merge_zones.py --components_root <ws>/aligned_components \
     --images_root <ws>/batched_images_by_zone \
     --output <ws>/merged --name "<LABEL>_Assembly" --project_label "<LABEL>" \
     --min_size 50 --target 0.95 --ladder merge_first --merge_scope neighbour \
@@ -35,6 +42,11 @@ The numbers above are decisions, not defaults:
 - `scale_min/max 0.9-1.1` - the metric-scale oracle gate, set after two
   align-time scale collapses (0.175, 0.236) shipped with camera-count
   oracles green.
+- `--resume` (default true) reuses CONVERGED clusters from a prior
+  `merge_report.json` whose `run_fingerprint` (ladder, scope, pair gate,
+  loss tolerance, min size, input set) matches; a differently-posed prior
+  run is refused, a mid-ladder cluster is re-merged. Pass `--resume false`
+  to force a clean re-merge.
 
 ## Before launching
 
@@ -44,7 +56,7 @@ The numbers above are decisions, not defaults:
 - **Verify frame and settings unanimity first.** Merging across
   coordinate frames is never recoverable:
   ```bash
-  py -3.13 -m modules.verify --workspace <ws> --require align
+  python rs.py verify --workspace <ws> --require align
   ```
   A `blocked` verdict here means the inputs are not comparable. Stop.
 - **Import components ONLY from their original export location.** A
@@ -60,7 +72,7 @@ the assembly workflow's result was checked, so a failed assembly left a
 document declaring a terminal state for a project that was never saved.
 
 ```bash
-py -3.13 -m modules.verify --workspace <ws> --require merge --json
+python rs.py verify --workspace <ws> --require merge --json
 ```
 
 Then read `merge_report.json` for per-attempt evidence. Each escalation

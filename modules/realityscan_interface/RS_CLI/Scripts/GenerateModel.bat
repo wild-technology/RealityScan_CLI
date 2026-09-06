@@ -43,11 +43,17 @@ echo Reading default variables
 call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
 set "MetadataDir=%Metadata%"
-:: Texture budget (owner 2026-07-29): no more than FOUR large textures,
-:: adaptive. unwrapStyle=MaxTexturesCount IS the adaptive mode - texel size
-:: adapts to fit the count - so 4 x 16K caps the budget while small
-:: components use fewer/smaller. Previously 2 x 16K (high poly) and
-:: 1 x 16K (simplified unwrap).
+:: Texture budget (owner 2026-07-29): no more than FOUR large textures.
+:: unwrapStyle=MaxTexturesCount auto-adapts the TEXEL SIZE to fit the count,
+:: so the budget caps cost while small components use fewer/smaller pages.
+:: Previously 2 x 16K (high poly) and 1 x 16K (simplified unwrap).
+::
+:: NAMING (corrected 2026-09-03): this comment used to call MaxTexturesCount
+:: "the adaptive mode". It is not. AdaptiveTexelSize is a DIFFERENT value of
+:: the same key - it clamps an estimated texel between unwrapMinTexelSize and
+:: unwrapMaxTexelSize and emits however many pages that needs. The nickname
+:: cost real time: asked for "adaptive", this repo would have reached for the
+:: wrong style. See Texturing_AdaptiveTexel_4k.xml for the real one.
 :: 8K cap (owner 2026-07-31): both texture passes limited to 4 x 8K.
 set "HighModelTexture=%MetadataDir%\Texturing_MaxTextureCount4_8k.xml"
 set "SimplifyNoise=%MetadataDir%\SimplifyNoise_Params.xml"

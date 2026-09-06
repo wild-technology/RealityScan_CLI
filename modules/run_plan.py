@@ -1,44 +1,66 @@
-"""Session model for the WildScan portal - RC_Main's interaction, preserved.
+"""The run plan - THE ONE PLANNER (CLAUDE.md invariant): a Session in,
+the exact commands and environment out, proven against main.py's own
+parser before anything runs.
 
-The portal mirrors the flow the pipeline has had since RC_Main:
+    python -m modules.run_plan --charter RUN_CHARTER.json --validate
+    python -m modules.run_plan --charter RUN_CHARTER.json --json
+    python -m modules.run_plan --workspace <root> --stages merge,model
+    python -m modules.run_plan --questions --stages georeference,batch
 
-    1. expedition / dive / data location / results root   (this module)
-    2. checkbox stage selection, everything sensible pre-selected
-    3. ONE question at a time, in module order, each parameter's own
-       DESCRIPTION as the prompt, honouring disable_when_module_active
-    4. parameter summary, then run - with gates between stages
+Consumers (add a consumer, never a second planner): ``rs.py``
+(``rs plan`` / ``rs run`` / ``rs launch``), ``modules.preflight`` (which
+answers are still missing), and the archived WildScan TUI
+(``archive/wildscan_tui``, which imports this module through shims).
 
-This file owns the non-UI halves: raw-data auto-detection, results-root
-structure, last-run persistence, the question list, and command assembly.
-It is a PORTAL ONLY - the pipeline scripts are untouched, and chained
-modules run in a single main.py invocation exactly as they always have
-(the in-process hand-off between Batch Directory and Alignment IS the
-current data handling; splitting them would change behaviour).
+Merged 2026-09-05 from ``wildscan/session.py`` (the session model, raw-data
+detection, the question list, command assembly) and ``wildscan/plan.py``
+(the headless JSON plan + validation). Nothing here launches RealityScan
+or runs a stage; it only decides WHAT would run.
 
-Last-run answers persist via the pipeline's own SettingsStore under the
-'wildscan' section of rs_settings.json, so the next session opens with the
-previous expedition, dive, data location and results root as defaults.
+Charter mode is the agent lane: the charter supplies the results root, the
+RealityScan instance, the stage list and every pipeline answer, and its
+env pins RS_RUN_CHARTER + RS_NO_SETTINGS_INHERITANCE onto every child - so
+no stage can quietly answer itself from a previous campaign's
+rs_settings.json (the wizard-prefill / stale-settings incidents, 2026-08-08).
+Workspace mode (no charter) plans from the results root alone and offers
+the previous run's stored answers ONLY when RS_NO_SETTINGS_INHERITANCE is
+not set.
+
+Re-deriving flags by hand is not a hypothetical cost: main.py builds its
+argparse from the ENABLED modules only and rejects anything else with exit
+2 - before a single stage runs (16 of 31 stage selections were rejected on
+a first session, 29 of 31 on a resumed one, before ``validate_command``).
 """
 from __future__ import annotations
 
+import argparse
+import json
 import logging
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
-from .workspace import Workspace, _find_flight_logs
+from .image_exts import ALL_IMAGE_EXTS
+from .workspace_census import Workspace, _find_flight_logs, _load_json, _records
 
 REPO = Path(__file__).resolve().parent.parent
 
-_quiet = logging.getLogger("wildscan.session")
+SCHEMA = 1
+
+_quiet = logging.getLogger("modules.run_plan")
 _quiet.addHandler(logging.NullHandler())
 _quiet.propagate = False
 
 VIDEO_EXTS = {".mov", ".mp4", ".avi", ".mkv", ".mts"}
 NAV_HINTS = ("datatable", "nav", "flight", "rumi")
 NAV_EXTS = {".csv", ".txt", ".tsv"}
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+#: ONE inventory of survey-image extensions (modules.image_exts). The old
+#: portal copy lacked .heif, so a HEIF dataset was imagery to the census
+#: and invisible to the camera scan.
+IMAGE_EXTS = ALL_IMAGE_EXTS
 
 # Pipeline module chain, in RC_Main's order, plus the post-align stages the
 # portal drives as separate commands.
@@ -66,16 +88,17 @@ RESULTS_LAYOUT = [
     ("exports/", "OBJ/FBX/PLY deliverables per component"),
     ("logs/", "driver + resource logs"),
     ("RC_projects/", "dated project copies"),
+    ("_agent/", "agent working files ONLY: charter, plan, RUN_STATE, launchers, "
+                "logs (docs/AGENT_OPERATIONS.md sec.2)"),
 ]
 
 
 # ----------------------------------------------------------------- cameras
 
-# The owner's official camera table (2026-07-29) - suggestions offered when
-# an unrecognised filename prefix matches a letter. The PIPELINE's camera
-# truth stays in modules/camera_registry.py; the portal only identifies,
-# asks, and records.
-# superseded-by modules/cameras.json cameras/families - pending migration step (c+)
+# The owner's official camera table (2026-07-29) - SUGGESTIONS offered when
+# an unrecognised filename prefix matches a letter, never runtime truth.
+# The pipeline's camera truth is modules/cameras.json via camera_registry;
+# this table only shapes the question asked about an unknown prefix.
 OFFICIAL_CAMERAS = {
     "Z": "Zeuss 24mm rectilinear zoom (Standard Science Camera)",
     "C": "Cinema (fisheye; 16mm) - Widefield Camera Array",
@@ -248,7 +271,7 @@ def scan_raw_data(location: str | Path) -> RawDataScan:
 # -------------------------------------------------------------- persistence
 
 def _settings():
-    from module_base.settings_store import SettingsStore
+    from module_base.settings_store import SettingsStore  # noqa: PLC0415
     return SettingsStore()
 
 
@@ -258,7 +281,15 @@ _PERSISTED_FIELDS = ("expedition", "dive", "cruise_folder", "raw_images_dir",
 
 
 def load_last_run() -> dict:
-    """The previous session's answers - the new defaults (owner directive)."""
+    """The previous session's answers - the new defaults (owner directive,
+    interactive lane). EMPTY under RS_NO_SETTINGS_INHERITANCE: on the
+    strict lane a plan must never carry another campaign's answers, and a
+    refused inheritance is announced rather than silently absent."""
+    from module_base.settings_store import inheritance_refused  # noqa: PLC0415
+    if inheritance_refused():
+        print("REFUSING stored 'wildscan' answers as plan defaults "
+              "(RS_NO_SETTINGS_INHERITANCE is set) - supply them in the charter.")
+        return {}
     store = _settings()
     out = {}
     for key in _PERSISTED_FIELDS:
@@ -658,7 +689,7 @@ def build_commands(session: Session) -> list[StageCommand]:
                 # Pinned HERE deliberately (not rs_settings): drivers that
                 # left merge options unpinned inherited another session's
                 # stored values (final review 2026-07-29, item c), and
-                # test_wildscan pins this flag by test. Scale band 0.90-1.10
+                # test_run_plan_session pins this flag by test. Scale band 0.90-1.10
                 # is the metric-scale oracle gate (2026-07-26), set after two
                 # align-time scale collapses (0.175, 0.236) shipped with
                 # camera-count oracles green; known-good components measure
@@ -814,7 +845,6 @@ def export_names_file(session: Session) -> None:
     merge = ws.latest_merge()
     if not merge:
         return
-    from .workspace import _load_json, _records  # noqa: PLC0415
     rep = _load_json(merge / "merge_report.json")
     names = [c.get("key", "").split("/")[-1]
              for rec in _records(rep, "clusters")
@@ -824,9 +854,269 @@ def export_names_file(session: Session) -> None:
     # when the CURRENT report yields nothing this returns without touching
     # an existing components.names, so a stale list survives. The export
     # stage re-resolves both --project and --names at launch time
-    # (wildscan/app.py _refresh_export_command) for exactly that reason.
+    # (refresh_export_command below; the archived TUI does the same) for
+    # exactly that reason.
     if names:
         ws.exports.mkdir(parents=True, exist_ok=True)
         with open(ws.exports / "components.names", "w",
                   encoding="utf-8", newline="\r\n") as fh:
             fh.write("\n".join(names) + "\n")
+
+
+def refresh_export_command(argv: list[str], session: Session) -> list[str]:
+    """Re-resolve the Export stage's ``--project`` / ``--names`` from a FRESH
+    census immediately before it launches; returns the (possibly updated)
+    argv. Non-export commands are returned unchanged.
+
+    Both values are baked in at plan time, before any stage ran, so a run
+    that included Merge exported the PREVIOUS run's assembly under the new
+    run's name (audit 2026-08-07, fixed in the TUI; ported here 2026-09-05
+    so ``rs run`` has the same protection). Also re-authors
+    ``exports/components.names`` from the current merge report.
+    """
+    if not any(str(a).endswith("export_deliverables.py") for a in argv):
+        return argv
+    export_names_file(session)
+    ws = session.workspace()
+    project = str(ws.assembly_project() or "")
+    out = list(argv)
+    for flag, value in (("--project", project),
+                        ("--names", str(ws.exports / "components.names"))):
+        if flag in out:
+            out[out.index(flag) + 1] = value
+    return out
+
+
+# ==========================================================================
+# The headless plan (formerly wildscan/plan.py)
+# ==========================================================================
+
+
+def validate_command(argv: list[str], chain: list[str]) -> Optional[str]:
+    """None if main.py's own parser accepts this argv, else the reason.
+
+    Feeds the generated arguments to the REAL parser for this RS_MODULES
+    selection - built from main.initialize_parameters over the enabled
+    modules, exactly as the child process builds it - rather than checking
+    against a parallel list of flag names that can drift.
+    """
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    import main as main_mod  # noqa: PLC0415  (repo root script)
+
+    modules = {MODULE_DISPLAY[k]: _module_registry()[k]
+               for k in chain if k in MODULE_DISPLAY}
+    parser = main_mod.build_arg_parser(main_mod.initialize_parameters(modules))
+    try:
+        parser.parse_args(argv[2:])          # drop [python, main.py]
+    except SystemExit as exc:
+        return (f"main.py's own parser REJECTED this command (exit "
+                f"{exc.code}); argv: {' '.join(argv[2:])}")
+    return None
+
+
+def session_from_charter(charter, stages: Optional[list[str]] = None
+                         ) -> Session:
+    """A Session built entirely from a signed charter - no stored answers.
+
+    Every value comes from the charter file: results root, label, stage
+    selection and the pipeline answers. Nothing is read from
+    rs_settings.json, which is the point.
+    """
+    pipeline = charter.raw.get("pipeline", {}) or {}
+    answers = {str(k): str(v) for k, v in
+               (pipeline.get("answers", {}) or {}).items()}
+    enabled = list(stages or pipeline.get("stages", []) or [])
+    return Session(
+        expedition=charter.campaign,
+        dive=charter.dive,
+        results_root=charter.results_root,
+        continue_automatically=True,
+        enabled=enabled,
+        answers=answers,
+    )
+
+
+def unreached_answers(session: Session, commands: list[dict]) -> list[str]:
+    """Answer keys that appear in NO generated command line.
+
+    ``cam_*`` keys are excluded: the portal collects them as camera
+    RECORDS and deliberately never passes them to main.py
+    (session.write_camera_records owns them). Anything else that reaches
+    no command was either misnamed or aimed at a stage that is not in this
+    plan - both silent losses worth naming.
+    """
+    used: set[str] = set()
+    for cmd in commands:
+        for token in cmd["argv"]:
+            if isinstance(token, str) and token.startswith("--"):
+                used.add(token[2:])
+    return sorted(key for key, value in session.answers.items()
+                  if str(value).strip()
+                  and not key.startswith(("cam_", "_"))
+                  and key not in used)
+
+
+def build_plan(session: Session, charter=None,
+               validate: bool = True) -> dict:
+    """The full run plan for a session, as the emitted JSON payload."""
+    warnings: list[str] = []
+    unknown = [s for s in session.enabled if s not in ALL_STAGES]
+    if unknown:
+        raise ValueError(
+            f"unknown stage(s) {unknown}; valid stages: {list(ALL_STAGES)}")
+    if not session.enabled:
+        warnings.append("no stages selected - the plan is empty")
+    if not session.results_root:
+        raise ValueError("no results root: pass --workspace or a charter "
+                         "whose locations.results_root is set")
+
+    charter_env = charter.env() if charter is not None else {}
+    if charter is not None and not charter.is_signed():
+        warnings.append(
+            f"charter {charter.path} is NOT SIGNED OFF (signed_off.by / "
+            ".date) - no writes until the owner signs")
+
+    chain = [k for k in CHAIN_STAGES if k in session.enabled]
+    commands = []
+    for cmd in build_commands(session):
+        # The charter is the authority over the machine constants
+        # build_commands resolved from the settings store, and it adds the
+        # two variables that keep a child on the strict lane.
+        env = {**cmd.env, **charter_env}
+        record = {
+            "stage": cmd.stage,
+            "argv": list(cmd.argv),
+            "env": env,
+            "cwd": str(REPO),
+            "needs_realityscan": cmd.needs_realityscan,
+            "display": cmd.display,
+        }
+        if validate and str(cmd.argv[1]).endswith("main.py"):
+            reason = validate_command(cmd.argv, chain)
+            record["parses"] = reason is None
+            if reason:
+                record["parse_error"] = reason
+                warnings.append(reason)
+        commands.append(record)
+
+    dropped = unreached_answers(session, commands)
+    if dropped:
+        # build_commands filters the answer set against the flags main.py
+        # accepts for THIS chain, which is right for the portal (it
+        # forwards a persisted superset by design) and wrong for a
+        # charter: an argument the owner wrote down and signed off must
+        # never be dropped in silence. Naming it here is the difference
+        # between "the run used my settings" and "the run used the
+        # defaults and said nothing".
+        warnings.append(
+            "answers reached NO command and were silently dropped: "
+            + ", ".join(dropped)
+            + " - check the flag names against `python main.py --help`")
+
+    return {
+        "schema": SCHEMA,
+        "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "label": session.label,
+        "results_root": session.results_root,
+        "charter": str(charter.path) if charter is not None else None,
+        "stages": list(session.enabled),
+        "commands": commands,
+        "warnings": warnings,
+    }
+
+
+def format_text(plan: dict) -> str:
+    """ASCII-only human rendering."""
+    lines = [f"label   : {plan['label'] or '<unnamed>'}",
+             f"results : {plan['results_root']}",
+             f"charter : {plan['charter'] or '<none - stored answers in use>'}",
+             f"stages  : {', '.join(plan['stages']) or '<none>'}", ""]
+    for i, cmd in enumerate(plan["commands"], 1):
+        flag = ""
+        if cmd.get("parses") is False:
+            flag = "  [REJECTED BY main.py's PARSER]"
+        elif cmd.get("parses") is True:
+            flag = "  [parses]"
+        rs = " (needs RealityScan)" if cmd["needs_realityscan"] else ""
+        lines.append(f"{i}. {cmd['stage']}{rs}{flag}")
+        lines.append(f"   {cmd['display']}")
+        if cmd["env"]:
+            env = " ".join(f"{k}={v}" for k, v in sorted(cmd["env"].items()))
+            lines.append(f"   env: {env}")
+        lines.append("")
+    if plan["warnings"]:
+        lines.append("WARNINGS:")
+        lines += [f"  ! {w}" for w in plan["warnings"]]
+    return "\n".join(lines)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m modules.run_plan",
+        description="Emit the run plan: every command and its environment, "
+                    "proven against main.py's own parser.")
+    parser.add_argument("--charter", default=None,
+                        help="RUN_CHARTER.json - supplies results root, "
+                             "stages, answers and instance (no stored "
+                             "settings are read)")
+    parser.add_argument("--workspace", "-w", default=None,
+                        help="results root, when not using a charter")
+    parser.add_argument("--stages", default="",
+                        help="comma-separated stages to plan. Valid: "
+                             + ",".join(ALL_STAGES))
+    parser.add_argument("--json", action="store_true",
+                        help="emit JSON only (default: human text)")
+    parser.add_argument("--out", default=None,
+                        help="also write the JSON to this path")
+    parser.add_argument("--validate", action="store_true",
+                        help="exit non-zero if any command would be "
+                             "rejected by main.py's parser")
+    args = parser.parse_args(argv)
+
+    stages = [s.strip() for s in args.stages.split(",") if s.strip()]
+    charter = None
+
+    if args.charter and args.workspace:
+        print("ERROR: --workspace and --charter are mutually exclusive; the "
+              "charter's results_root is the authority.", file=sys.stderr)
+        return 2
+
+    if args.charter:
+        from .run_charter import CharterError, load_charter  # noqa: PLC0415
+        try:
+            charter = load_charter(args.charter)
+        except CharterError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        session = session_from_charter(charter, stages or None)
+    else:
+        if not args.workspace:
+            parser.error("one of --charter or --workspace is required")
+        session = default_session()
+        session.results_root = args.workspace
+        session.continue_automatically = True
+        session.enabled = stages
+
+    try:
+        plan = build_plan(session, charter)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print(json.dumps(plan, indent=2) if args.json else format_text(plan))
+    if args.out:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+
+    rejected = [c for c in plan["commands"] if c.get("parses") is False]
+    if rejected:
+        return 1
+    if args.validate and plan["warnings"]:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

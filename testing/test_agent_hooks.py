@@ -45,6 +45,13 @@ def bash(command):
     "& RealityCapture.exe -getStatus RS1",
     "cd RS_CLI/Scripts && MergeZoneComponents.bat x.complist",
     "GenerateModel.bat",
+    "cmd /c ProbeCalibGroups2.bat",
+    r"modules\realityscan_interface\RS_CLI\Scripts\ProbeFlightlog5.bat a b",
+    "AlignImagesFromFolder.bat D:/zone",
+    # A script that does not exist yet must not slip past by being new.
+    r"modules\realityscan_interface\RS_CLI\Scripts\BrandNewWorkflow.bat",
+    r"archive\probes\ProbeCalibGroups4.bat D:/fixture D:/out",
+    "cmd /c archive/legacy_scripts/AlignImageList.bat",
 ])
 def test_direct_realityscan_launches_are_blocked(command):
     result = run_hook(LAUNCH_GUARD, bash(command))
@@ -59,6 +66,10 @@ def test_direct_realityscan_launches_are_blocked(command):
     "py -3.13 merge_zones.py --components_root X",
     "py -3.13 -m pytest testing -q",
     "git status --short",
+    "cat modules/realityscan_interface/RS_CLI/Scripts/ProbeFlightlog5.bat",
+    "grep -n delegateTo modules/realityscan_interface/RS_CLI/Scripts/NightGrow.bat",
+    # A backslash-escaped pipe is regex alternation, not a shell pipe.
+    r'grep -n "delegateTo\|waitCompleted" modules/realityscan_interface/RS_CLI/Scripts/AlignZone.bat',
 ])
 def test_reading_about_realityscan_is_allowed(command):
     """The guard looks for INVOCATION, not for the string appearing."""
@@ -208,3 +219,296 @@ def test_settings_json_wires_every_hook():
                    "normalize_crlf.py"):
         assert script in registered, f"{script} is not wired in settings.json"
         assert os.path.isfile(os.path.join(HOOKS, script))
+
+
+# ------------------------------------------- SessionStart: orientation
+
+STATUS_HOOK = os.path.join(HOOKS, "session_status.py")
+
+
+def run_status(stdin="", env=None, cwd=None):
+    """Run the status hook with raw stdin (it must tolerate an empty
+    payload, so this bypasses run_hook's json.dumps)."""
+    child = dict(os.environ)
+    child.pop("RS_RUN_CHARTER", None)
+    child.pop("CLAUDE_PROJECT_DIR", None)
+    child.update(env or {})
+    return subprocess.run([sys.executable, STATUS_HOOK], input=stdin,
+                          text=True, capture_output=True, env=child,
+                          cwd=cwd or REPO)
+
+
+def test_session_status_runs_with_empty_stdin():
+    """Empty stdin, exit 0, the repo's HANDOFF heading in the output, and
+    nothing outside ASCII - the cp1252 console crashes on anything else."""
+    result = run_status(stdin="")
+    assert result.returncode == 0, result.stderr
+    with open(os.path.join(REPO, "HANDOFF.md"), encoding="utf-8") as fh:
+        heading = next(ln for ln in fh if ln.startswith("## "))
+    # The heading is emitted ASCII-folded; its leading words survive.
+    assert heading.split()[1] in result.stdout
+    assert "HANDOFF.md current section" in result.stdout
+    assert "git status" in result.stdout
+    assert "RS_RUN_CHARTER unset" in result.stdout
+    result.stdout.encode("ascii")            # raises if anything slipped
+    assert len(result.stdout.splitlines()) <= 65
+
+
+def test_session_status_shows_only_the_current_handoff_section(tmp_path):
+    (tmp_path / "HANDOFF.md").write_text(
+        "# HANDOFF\n\n## 2026-09-03 - CURRENT, read this first\n\n"
+        "current line one\ncurrent line two\n\n"
+        "## 2026-09-02 - OLDER\n\nstale line\n", encoding="utf-8")
+    result = run_status(stdin="{}", env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
+    assert result.returncode == 0, result.stderr
+    assert "CURRENT, read this first" in result.stdout
+    assert "current line two" in result.stdout
+    assert "OLDER" not in result.stdout
+    assert "stale line" not in result.stdout
+    # tmp_path is not a git repo: the failure is reported, not raised.
+    assert "git unavailable" in result.stdout
+
+
+def test_session_status_truncates_a_long_section(tmp_path):
+    body = "\n".join(f"line {i}" for i in range(80))
+    (tmp_path / "HANDOFF.md").write_text(
+        f"## NOW\n{body}\n\n## LATER\nx\n", encoding="utf-8")
+    result = run_status(stdin="{}", env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
+    assert result.returncode == 0
+    assert "more lines; read HANDOFF.md" in result.stdout
+    assert "line 79" not in result.stdout
+
+
+def test_session_status_survives_a_missing_handoff(tmp_path):
+    result = run_status(stdin="not json",
+                        env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
+    assert result.returncode == 0
+    assert "HANDOFF.md not readable" in result.stdout
+
+
+def _scaffolded_charter(tmp_path):
+    """A charter from --init with the placeholders that validation needs
+    filled in, the way test_run_charter's fixtures shape one."""
+    from modules.run_charter import main as charter_main
+    path = tmp_path / "results" / "_agent" / "RUN_CHARTER.json"
+    assert charter_main(["--init", str(path)]) == 0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["campaign"], data["dive"] = "T", "D"
+    data["locations"].update({
+        "originals": [str(tmp_path / "src")],
+        "nav": [str(tmp_path / "nav")],
+        "results_root": str(tmp_path / "results"),
+        "agent_workspace": str(tmp_path / "results" / "_agent"),
+        "protected": [{"path": str(tmp_path / "results" / "final"),
+                       "why": "delivered"}],
+    })
+    data["ownership"]["rs_instance"] = "RSAGENT"
+    data["signed_off"] = {"by": "owner", "date": "2026-09-03", "quote": ""}
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path
+
+
+def test_session_status_reports_the_charter_validation(tmp_path):
+    charter = _scaffolded_charter(tmp_path)
+    result = run_status(stdin="{}", env={"RS_RUN_CHARTER": str(charter)})
+    assert result.returncode == 0, result.stderr
+    assert "VALID" in result.stdout
+    assert "validate exit code: 0" in result.stdout
+    assert "RUN_STATE.json: none under" in result.stdout
+
+
+def test_session_status_reports_run_state_fields(tmp_path):
+    charter = _scaffolded_charter(tmp_path)
+    (charter.parent / "RUN_STATE.json").write_text(json.dumps({
+        "stage": "align", "task": "RS_T_D_align", "started": "2026-09-03T10:00",
+        "log": str(tmp_path / "results" / "_agent" / "align.log"),
+        "pid_file": "ignored"}), encoding="utf-8")
+    result = run_status(stdin="{}", env={"RS_RUN_CHARTER": str(charter)})
+    assert result.returncode == 0, result.stderr
+    assert "stage: align" in result.stdout
+    assert "task: RS_T_D_align" in result.stdout
+    assert "started: 2026-09-03T10:00" in result.stdout
+    assert "align.log" in result.stdout
+    assert "pid_file" not in result.stdout
+
+
+def test_session_status_never_blocks_on_a_broken_charter(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    result = run_status(stdin="{}", env={"RS_RUN_CHARTER": str(bad)})
+    assert result.returncode == 0
+    assert "INVALID" in result.stdout
+    assert "validate exit code: 2" in result.stdout
+
+
+def test_settings_json_wires_session_status_and_permissions():
+    """The permission tiers are the cheapest layer for the rules Claude
+    could break by accident (AGENT_OPERATIONS sec.6); a tier that is not
+    in the file is a rule nobody enforces."""
+    with open(os.path.join(REPO, ".claude", "settings.json"),
+              encoding="utf-8") as fh:
+        settings = json.load(fh)
+    assert set(settings) == {"permissions", "hooks"}   # no unknown keys
+    starts = settings["hooks"]["SessionStart"]
+    assert any("session_status.py" in h["command"]
+               for entry in starts for h in entry["hooks"])
+    assert all(entry["matcher"] == "startup|resume|compact" for entry in starts)
+    assert os.path.isfile(STATUS_HOOK)
+
+    perms = settings["permissions"]
+    assert "Bash(python -m pytest *)" in perms["allow"]
+    assert "Bash(python -m modules.verify *)" in perms["allow"]
+    assert "Bash(git status*)" in perms["allow"]
+    for rule in ("Bash(git push*)", "Bash(schtasks *)", "Bash(taskkill *)",
+                 "Bash(rm -rf *)", "PowerShell(Stop-Process *)",
+                 "PowerShell(Remove-Item *)"):
+        assert rule in perms["ask"], rule
+    for rule in ("Bash(git push --force*)", "Bash(git push -f *)",
+                 "Bash(git reset --hard*)", "Bash(git clean -fd*)"):
+        assert rule in perms["deny"], rule
+    # Data paths are per-machine and belong to the charter, never here.
+    assert not any(":/" in r or ":\\" in r
+                   for tier in perms.values() for r in tier)
+
+
+# ------------------------------------------------ UserPromptSubmit: routing
+
+ROUTE_HOOK = os.path.join(HOOKS, "route_driving_prompts.py")
+SCHTASKS_HOOK = os.path.join(HOOKS, "guard_schtasks.py")
+PRECOMPACT_HOOK = os.path.join(HOOKS, "pre_compact.py")
+
+
+def _run_script(script, payload, env=None):
+    child = dict(os.environ)
+    child.update(env or {})
+    return subprocess.run([sys.executable, script], input=json.dumps(payload),
+                          text=True, capture_output=True, env=child)
+
+
+@pytest.mark.parametrize("text", [
+    "process this dive against the H2060 data tonight",
+    "run the pipeline overnight on the NA165 imagery",
+    "align these zones and then merge the components",
+    "kick off an unattended run for the ON2026 dataset",
+])
+def test_driving_requests_get_the_routing_instruction(text):
+    done = _run_script(ROUTE_HOOK, {"prompt": text})
+    assert done.returncode == 0
+    assert "ROUTING" in done.stdout and "/charter" in done.stdout
+
+
+@pytest.mark.parametrize("text", [
+    "is the run done?",
+    "/status",
+    "what does -waitCompleted return early on?",
+    "explain the merge ladder",
+    "",
+])
+def test_non_driving_prompts_add_nothing(text):
+    done = _run_script(ROUTE_HOOK, {"prompt": text})
+    assert done.returncode == 0 and done.stdout.strip() == ""
+
+
+def test_routing_reads_the_user_input_field_too():
+    done = _run_script(ROUTE_HOOK, {"user_input": "process this dive please"})
+    assert "ROUTING" in done.stdout
+
+
+# --------------------------------------------- PreToolUse: schtasks guard
+
+def _launcher(tmp_path, declare=True):
+    agent = tmp_path / "results" / "_agent"
+    (agent / "launch").mkdir(parents=True)
+    vbs = agent / "launch" / "RS_T.vbs"
+    vbs.write_bytes(b"' launcher\r\n")
+    if declare:
+        (agent / "RUN_STATE.json").write_text(json.dumps(
+            {"status": "prepared", "launcher_vbs": str(vbs),
+             "launcher_cmd": str(vbs.with_suffix(".cmd"))}), encoding="utf-8")
+    return vbs
+
+
+def test_schtasks_create_with_the_declared_launcher_is_allowed(tmp_path):
+    vbs = _launcher(tmp_path)
+    cmd = (f'schtasks /Create /TN "RS_T" /TR "wscript.exe //B \\"{vbs}\\"" '
+           f'/SC ONCE /ST 03:00 /F')
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash",
+                                    "tool_input": {"command": cmd}})
+    assert done.returncode == 0, done.stderr
+
+
+def test_schtasks_create_without_a_launcher_is_blocked():
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash", "tool_input": {
+        "command": 'schtasks /Create /TN "X" /TR "python merge_zones.py --output D:/m" /SC ONCE /ST 03:00'}})
+    assert done.returncode == 2 and "rs.py launch" in done.stderr
+
+
+def test_schtasks_create_with_an_undeclared_launcher_is_blocked(tmp_path):
+    vbs = _launcher(tmp_path, declare=False)
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash", "tool_input": {
+        "command": f'schtasks /Create /TN "X" /TR "wscript.exe //B \\"{vbs}\\"" /SC ONCE /ST 03:00'}})
+    assert done.returncode == 2 and "RUN_STATE.json" in done.stderr
+
+
+def test_schtasks_create_with_a_stale_launcher_is_blocked(tmp_path):
+    vbs = _launcher(tmp_path)
+    other = vbs.parent / "OLD.vbs"
+    other.write_bytes(b"' old\r\n")
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash", "tool_input": {
+        "command": f'schtasks /Create /TN "X" /TR "wscript.exe //B \\"{other}\\"" /SC ONCE /ST 03:00'}})
+    assert done.returncode == 2 and "declares" in done.stderr
+
+
+@pytest.mark.parametrize("command", [
+    'schtasks /Run /TN "RS_T"',
+    'schtasks /Query /TN "RS_T" /FO LIST /V',
+    "git status",
+    "python rs.py status --workspace D:/ws",
+])
+def test_other_commands_pass_the_schtasks_guard(command):
+    done = run_hook(SCHTASKS_HOOK, {"tool_name": "Bash",
+                                    "tool_input": {"command": command}})
+    assert done.returncode == 0
+
+
+# ------------------------------------ PreCompact marker + SessionStart note
+
+def test_pre_compact_writes_a_marker_and_never_blocks(tmp_path):
+    marker = tmp_path / ".last_compact"
+    done = _run_script(PRECOMPACT_HOOK, {"trigger": "auto"},
+                       env={"RS_COMPACT_MARKER": str(marker)})
+    assert done.returncode == 0
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    assert record["trigger"] == "auto" and record["at"]
+
+
+def test_session_status_reports_a_recent_compaction(tmp_path):
+    marker = tmp_path / ".last_compact"
+    marker.write_text(json.dumps({"at": "2026-09-05 12:00:00",
+                                  "trigger": "auto"}), encoding="utf-8")
+    done = run_status(stdin=json.dumps({"source": "compact"}),
+                      env={"RS_COMPACT_MARKER": str(marker)})
+    assert done.returncode == 0
+    assert "CONTEXT WAS COMPACTED" in done.stdout
+    assert "FINDINGS.md" in done.stdout
+
+
+def test_session_status_is_silent_without_a_marker(tmp_path):
+    done = run_status(env={"RS_COMPACT_MARKER": str(tmp_path / "absent")})
+    assert done.returncode == 0 and "COMPACTED" not in done.stdout
+
+
+def test_settings_json_wires_the_routing_schtasks_and_compaction_hooks():
+    with open(os.path.join(REPO, ".claude", "settings.json"),
+              encoding="utf-8") as fh:
+        settings = json.load(fh)
+    hooks = settings["hooks"]
+    text = json.dumps(hooks)
+    assert "route_driving_prompts.py" in json.dumps(hooks["UserPromptSubmit"])
+    assert "pre_compact.py" in json.dumps(hooks["PreCompact"])
+    assert "guard_schtasks.py" in json.dumps(hooks["PreToolUse"])
+    assert any("compact" in e["matcher"] for e in hooks["SessionStart"])
+    for script in ("route_driving_prompts.py", "guard_schtasks.py",
+                   "pre_compact.py"):
+        assert os.path.isfile(os.path.join(HOOKS, script)), script
+    assert text.count("$CLAUDE_PROJECT_DIR") >= 7

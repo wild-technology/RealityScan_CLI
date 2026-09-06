@@ -12,7 +12,7 @@ It exists so the export stage goes through
 ``RealityScanCLI.run_batch_script`` like every other RealityScan
 invocation (hard rule 1): per-instance lock, marker-file hygiene, progress
 tailing and stall warnings, resource trace, and verified instance
-shutdown. The wildscan portal previously ran the .bat via a raw
+shutdown. The (now archived) WildScan portal previously ran the .bat via a raw
 ``["cmd", "/c", ...]`` Popen, which provided none of that, broke on
 space-containing checkout paths (cmd strips the outer quotes -
 run_batch_script's own comment), and - because the portal runner captures
@@ -20,9 +20,9 @@ stdout in a PIPE - let the ``start ""``-launched RealityScan GUI child
 inherit that pipe (WINDOWS TRAP recorded 2026-08-07). run_batch_script
 hands the .bat a log FILE instead, so the boot path stays detached.
 
-Layering note: this module is imported by wildscan (and importable by any
+Layering note: this module is importable by any planner or UI (the archived
 driver) but imports only module_base + modules code itself - never
-wildscan. The stage passes the workspace-derived paths as arguments.
+WildScan TUI included). The stage passes the workspace-derived paths as arguments.
 
 Usage:
     py -3.13 modules/export_deliverables.py
@@ -43,11 +43,30 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 from module_base.settings_store import SettingsStore, realityscan_env  # noqa: E402
+from modules.flight_logs import crs_for_flight_log  # noqa: E402
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa: E402
 
 
 # Per component, ExportDeliverables.bat writes one subfolder per format.
 EXPORT_KINDS = ('obj', 'fbx', 'ply')
+
+
+def expected_kinds() -> tuple[str, ...]:
+    """The formats this run is actually supposed to produce.
+
+    RS_EXPORT_SKIP_PLY makes ExportDeliverables.bat skip the dense PLY, whose
+    source model (`<comp>_HighPoly_Raw` / `_HighPoly_Textured`) does not
+    survive GenerateModel in this build. The census must agree with the
+    workflow: without this it reported "1 of 3 expected deliverable folder(s)
+    hold no file: <comp>/ply" and failed a run whose OBJ and FBX were both
+    complete (NA165/H2060, 2026-09-01).
+
+    Deliberately env-driven and narrow - the census keeps its teeth for every
+    format the run DID ask for.
+    """
+    if os.environ.get('RS_EXPORT_SKIP_PLY'):
+        return tuple(k for k in EXPORT_KINDS if k != 'ply')
+    return EXPORT_KINDS
 
 
 def read_component_names(names_file: str) -> list[str]:
@@ -67,8 +86,9 @@ def missing_exports(exports_dir: str, names: list[str]) -> list[str]:
     therefore not evidence a deliverable exists (audit 2026-08-07).
     """
     missing = []
+    kinds = expected_kinds()
     for name in names:
-        for kind in EXPORT_KINDS:
+        for kind in kinds:
             kind_dir = os.path.join(exports_dir, name, kind)
             try:
                 produced = any(
@@ -121,6 +141,14 @@ def main() -> int:
     parser.add_argument('--log_dir', default=None,
                         help='driver log directory '
                              '(default: <exports parent>/logs)')
+    parser.add_argument('--flight-log', default=None,
+                        help='zone-tagged flight log whose UTM zone becomes '
+                             'the export CRS; overrides --crs')
+    parser.add_argument('--crs', default=None,
+                        help='output coordinate system as authority:id '
+                             '(e.g. epsg:32653). Without one the export '
+                             'uses an inherited RS_PROJECT_CRS or, failing '
+                             'that, whatever CRS the app last held')
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -152,6 +180,38 @@ def main() -> int:
         return 1
     logger.info('exporting %d component(s): %s', len(names), ', '.join(names))
 
+    # Output CRS. The exports are raw metric coordinates; the coordinate
+    # SYSTEM they are stamped with comes from the application, and nothing
+    # here ever set it - H2077 (a 53N cruise) exported as
+    # "epsg:32757 - UTM zone 57S", the stale FlightLogParams placeholder
+    # zone (2026-08-14). write_flight_log_params only governs the CRS of
+    # the flight log being IMPORTED, never the export.
+    # Merge 2026-09-03: the remove-xmp-sidecars branch carried this as
+    # RS_OUTPUT_CRS; it is folded into main's repo-wide RS_PROJECT_CRS, the
+    # variable realityscan_interface.py sets at align time from the flight
+    # log's zone and AlignZone.bat / ExportDeliverables.bat consume. An
+    # inherited RS_PROJECT_CRS is honoured when neither flag is given;
+    # --flight-log overrides both.
+    crs = args.crs or os.environ.get('RS_PROJECT_CRS')
+    if args.flight_log:
+        derived = crs_for_flight_log(args.flight_log)
+        if derived:
+            crs = derived.lower()
+        else:
+            logger.error('--flight-log %r carries no UTM zone tag, so no '
+                         'export CRS could be derived from it',
+                         args.flight_log)
+            return 1
+    if crs:
+        os.environ['RS_PROJECT_CRS'] = crs
+        logger.info('export coordinate system (RS_PROJECT_CRS): %s', crs)
+    else:
+        logger.warning(
+            'No export CRS given (--crs / --flight-log) and RS_PROJECT_CRS '
+            'is not set. The models will be stamped with whatever coordinate '
+            'system the application last held, which is NOT necessarily '
+            'this cruise - pass one.')
+
     # Prompt-with-default on a TTY, silent stored/fallback when unattended
     # (SettingsStore.ask); values already in the environment are never
     # prompted for or demoted (same pattern as run_models.py).
@@ -173,7 +233,7 @@ def main() -> int:
                 'success for do-nothing exports (a selection-driven export '
                 'under -silent can export NOTHING), so the exit code alone '
                 'proves nothing. Log: %s',
-                len(missing), len(names) * len(EXPORT_KINDS),
+                len(missing), len(names) * len(expected_kinds()),
                 ', '.join(missing[:12]) + (' ...' if len(missing) > 12 else ''),
                 result.log_path)
             return 1

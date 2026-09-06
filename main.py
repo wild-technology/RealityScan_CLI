@@ -5,7 +5,6 @@ import os
 import sys
 import logging
 import argparse
-import inquirer
 
 from module_base.parameter import Parameter
 from module_base.rs_module import RSModule
@@ -40,7 +39,7 @@ def initialize_modules(logger) -> dict[str, RSModule]:
         'RealityScan Alignment': RealityScanAlignment(logger)
     }
 
-    no_interactive = os.environ.get('RS_NO_INTERACTIVE', '').strip().lower() in ('1', 'true', 'yes', 'y')
+    no_interactive = _no_interactive()
     modules_env = os.environ.get('RS_MODULES')
     if no_interactive or modules_env:
         if modules_env:
@@ -53,6 +52,12 @@ def initialize_modules(logger) -> dict[str, RSModule]:
             return {name: mod for name, mod in available_modules.items()
                     if name in wanted}
         return dict(available_modules)
+
+    # Imported HERE, not at module top: `inquirer` is a TTY-only
+    # dependency the headless lane never needs, and modules.run_plan
+    # imports this module to prove every planned argv against the real
+    # parser - which must work on a box without the interactive extras.
+    import inquirer
 
     module_choices = [
         inquirer.Checkbox(
@@ -118,6 +123,13 @@ def initialize_parameters(modules) -> dict[str, Parameter]:
 
     return params
 
+def _no_interactive() -> bool:
+    """RS_NO_INTERACTIVE truthy, or a run charter is active: never prompt."""
+    flag = os.environ.get('RS_NO_INTERACTIVE', '').strip().lower()
+    return flag in ('1', 'true', 'yes', 'y') or bool(
+        os.environ.get('RS_RUN_CHARTER', '').strip())
+
+
 def _str_to_bool(value: str) -> bool:
     # argparse with type=bool would treat any non-empty string
     # (including "False") as True
@@ -128,7 +140,7 @@ def build_arg_parser(params) -> argparse.ArgumentParser:
     """The parser this run accepts - built from the ENABLED modules only.
 
     Extracted from parse_arguments so callers that GENERATE a main.py
-    command line (the WildScan portal) can be tested against the real
+    command line (modules.run_plan) can be tested against the real
     parser instead of a parallel list of flag names. A flag not defined
     here is an argparse exit-2 "unrecognized arguments" before any stage
     runs (audit 2026-08-07).
@@ -177,11 +189,44 @@ def parse_arguments(argv, params, logger) -> None:
     args = parser.parse_args(argv[1:])
 
     settings = SettingsStore()
+    no_interactive = _no_interactive()
 
     for p in params.values():
         val = getattr(args, p.cli_long, None)
-        if val is None and p.prompt_user:
-            last_value = settings.get('main', p.cli_long, p.get_default_value())
+        # argparse's None is the ONLY record that a flag was absent, and
+        # it dies with this loop: a supplied value is allowed to EQUAL the
+        # declared default, so no consumer downstream can tell the two
+        # apart by comparing them. Measured on NA168 - --b_max_zone 4000
+        # (default 4000) read as absent, the stored batch.max_zone_size
+        # won, and a zone came out at 7,842 images against a 6,000 cap.
+        supplied = val is not None
+        if val is None and p.prompt_user and no_interactive:
+            # RS_NO_INTERACTIVE = "never prompt; missing required values
+            # fail fast" (this parser's own epilog). Until 2026-09-05 the
+            # code still called input() here and, on EOF, took the stored
+            # answer in silence - the self-answering prompt PRODUCT_
+            # READINESS 11 names. Resolution, in order: a stored answer
+            # ONLY where inheritance is not refused (default_for prints
+            # the refusal), then the declared default, else fail by flag.
+            stored = settings.default_for('main', p.cli_long, None)
+            if stored is not None:
+                logger.warning('UNATTENDED: --%s = %r (stored answer from '
+                               'rs_settings.json)', p.cli_long, stored)
+                val = stored
+                supplied = True
+            elif p.get_default_value() is not None:
+                val = p.get_default_value()
+                logger.info('UNATTENDED: --%s = %r (declared default)',
+                            p.cli_long, val)
+            else:
+                logger.error('UNATTENDED run and no value for --%s (%s). '
+                             'Pass it on the command line or in the run '
+                             'charter; nothing is prompted for under '
+                             'RS_NO_INTERACTIVE.', p.cli_long, p.get_name())
+                sys.exit(2)
+        elif val is None and p.prompt_user:
+            last_value = settings.default_for('main', p.cli_long,
+                                              p.get_default_value())
             prompt = f'{p.get_description()}'
             if last_value is not None:
                 prompt += f' [{last_value}]'
@@ -205,9 +250,13 @@ def parse_arguments(argv, params, logger) -> None:
                 val = p.get_default_value()
             if val is not None:
                 settings.set('main', p.cli_long, val)
+                # Just persisted as this run's answer, so it IS one -
+                # typed, or the stored 'main' value taken on an EOF stdin.
+                # Only the declared-default fallback below is unanswered.
+                supplied = True
         if val is None and not p.prompt_user:
             val = p.get_default_value()
-        p.set_value(val)
+        p.set_value(val, explicit=supplied)
 
 def update_parameters(params, modules) -> None:
     """
@@ -278,7 +327,8 @@ def main(argv) -> None:
             log_output_data(logger, overall_data)
             sys.exit(1)
 
-        if not params['continue_automatically'].get_value() and idx < len(modules) - 1:
+        if (not params['continue_automatically'].get_value()
+                and idx < len(modules) - 1 and not _no_interactive()):
             # isatty() lies under hidden consoles and redirected pipes, so
             # this gate cannot be reached only when a human is present.
             # Unattended, stdin is at EOF immediately: continue rather than
