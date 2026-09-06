@@ -11,8 +11,13 @@
 2. No test inherits the developer's own ``RS_*`` environment: an exported
    ``RS_RUN_CHARTER`` or ``RS_NO_SETTINGS_INHERITANCE`` would arm guards
    the fixture-based tests do not expect.
-3. At session end the repo root is checked: a stray ``rs_settings.json``
-   fails the run loudly instead of being silently gitignored.
+3. At session end the repo root is checked: an ``rs_settings.json`` the
+   suite CREATED OR MODIFIED fails the run loudly instead of being silently
+   gitignored. The owner's own interactive store may already sit there
+   (gitignored; the interactive lane writes it on every box), so the check
+   compares the file's state before and after the session rather than its
+   mere existence - the first Windows run of this suite (2026-09-05) failed
+   on the owner's pre-existing file.
 
 Known platform-bound failures off Windows (not defects): the alignment
 tests in test_align_and_rollback_safety.py need the RealityScan install
@@ -49,11 +54,29 @@ def _isolate_settings_store(tmp_path, monkeypatch):
 
 
 
+_STRAY = os.path.join(REPO, "rs_settings.json")
+
+
+def _stray_signature():
+    """(size, mtime_ns) of the repo-root store, or None when absent."""
+    try:
+        st = os.stat(_STRAY)
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
+
+
+def pytest_sessionstart(session):
+    session.config._rs_stray_before = _stray_signature()
+
+
 def pytest_sessionfinish(session, exitstatus):
-    stray = os.path.join(REPO, "rs_settings.json")
-    if os.path.isfile(stray):
+    before = getattr(session.config, "_rs_stray_before", None)
+    after = _stray_signature()
+    if after is not None and after != before:
+        verb = "wrote" if before is None else "modified"
         sys.stderr.write(
-            f"\nHYGIENE FAILURE: the suite wrote {stray}. No test may write "
+            f"\nHYGIENE FAILURE: the suite {verb} {_STRAY}. No test may write "
             "the repo root (testing/conftest.py isolates the store; a test "
             "that constructs SettingsStore(path=...) explicitly, or a child "
             "process that clears RS_SETTINGS_PATH, escaped it).\n")

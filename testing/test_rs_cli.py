@@ -135,13 +135,34 @@ def test_launch_refuses_cmd_metacharacters(tmp_path, monkeypatch, capsys):
 
 
 def test_launch_never_calls_schtasks(ready, monkeypatch):
-    calls = []
-    monkeypatch.setattr(rs_mod.subprocess, "run",
-                        lambda *a, **k: calls.append(a) or None)
-    monkeypatch.setattr(rs_mod.subprocess, "Popen",
-                        lambda *a, **k: calls.append(a) or None)
+    # rs_mod.subprocess IS the subprocess module, so this fake also serves
+    # preflight's read-only hook-interpreter probe (`python -c "import ..."`),
+    # which runs wherever `python` is on PATH (Windows; not the macOS box the
+    # suite was first written on). The probe is allowed; what must never
+    # happen is a task registration or a detached launch.
+    import subprocess as _sp
+    runs, spawns = [], []
+
+    def fake_run(argv, *a, **k):
+        runs.append([str(x) for x in argv])
+        return _sp.CompletedProcess(argv, 0, "", "")
+
+    class NoSpawn(_sp.Popen):
+        # A CLASS, not a lambda: preflight's module-import check may be the
+        # first thing to import asyncio.windows_utils, which subclasses
+        # subprocess.Popen at import time - a function there is a TypeError.
+        def __init__(self, *a, **k):
+            spawns.append(a)
+            raise AssertionError("rs launch must never spawn a process")
+
+    monkeypatch.setattr(rs_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(rs_mod.subprocess, "Popen", NoSpawn)
     assert rs_mod.main(["launch", "--charter", str(ready.path)]) == 0
-    assert calls == []
+    assert spawns == []
+    for argv in runs:
+        joined = " ".join(argv).lower()
+        assert "schtasks" not in joined and "wscript" not in joined, argv
+        assert os.path.basename(argv[0]).lower().startswith("python"), argv
 
 
 def test_status_is_read_only_and_reports(tmp_path, ready, capsys):
