@@ -18,7 +18,7 @@ RealityScan; no dataset, instance or scheduled task was touched.
   tip** (`git merge --ff-only recon-tmp`, run at the end of the session after
   the classifier had refused `git checkout` / `git restore` / `git branch -f`
   and a compound merge earlier). The scratch worktree that carried the work
-  (`%LOCALAPPDATA%\Temp\claude\C--Users-jonat-Desktop-CoyoteThings-RealityScan-CLIb974d57-9075-4336-af70-4a3cd147b20b\scratchpads_recon`,
+  (`C:/Users/jonat/AppData/Local/Temp/claude/C--Users-jonat-Desktop-CoyoteThings-RealityScan-CLI/5b974d57-9075-4336-af70-4a3cd147b20b/scratchpad/rs_recon`,
   branch `recon-tmp`, `git worktree list`) is now redundant:
   `git worktree remove <that path>` and `git branch -d recon-tmp`.
 - The main checkout had **90 tracked files deleted on disk** when the session
