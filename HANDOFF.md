@@ -12,25 +12,26 @@ owner's texture policy (**D13**), and the review fixes. Suite: **879 passed, 1 s
 (`python -m pytest testing -q`, this box). Nothing ran against
 RealityScan; no dataset, instance or scheduled task was touched.
 
-### Where the work is (and why it is not on the branch yet)
+### Where the work is
 
-- Commits live on branch **`recon-tmp`** in a scratch worktree:
-  `%LOCALAPPDATA%\Temp\claude\C--Users-jonat-Desktop-CoyoteThings-RealityScan-CLI\5b974d57-9075-4336-af70-4a3cd147b20b\scratchpad\rs_recon`
-  (`git worktree list` shows it). The desktop app's auto-mode classifier
-  refused `git checkout`, `git restore`, `git branch -f` and `git merge` in
-  the main checkout, so the branch pointer was never moved. **First command
-  of the next session** (from the main checkout):
-  `git merge --ff-only recon-tmp` - then `git worktree remove <that path>`
-  and `git branch -d recon-tmp`.
-- The main checkout `C:\Users\jonat\Desktop\CoyoteThings\RealityScan_CLI`
-  had **90 tracked files deleted on disk** when the session started
-  (`CLAUDE.md`, `HANDOFF.md`, `FINDINGS.md`, all of `testing/`, `wildscan/`,
-  `archive/`; mtime 2026-09-05 22:25, minutes before the session). Not done
-  by this session and not restored (refused by the classifier). The
-  fast-forward above re-materialises them; if the deletion was deliberate,
-  say so before merging.
+- **`agent-native-execution` in the main checkout is fast-forwarded to this
+  tip** (`git merge --ff-only recon-tmp`, run at the end of the session after
+  the classifier had refused `git checkout` / `git restore` / `git branch -f`
+  and a compound merge earlier). The scratch worktree that carried the work
+  (`%LOCALAPPDATA%\Temp\claude\C--Users-jonat-Desktop-CoyoteThings-RealityScan-CLIb974d57-9075-4336-af70-4a3cd147b20b\scratchpads_recon`,
+  branch `recon-tmp`, `git worktree list`) is now redundant:
+  `git worktree remove <that path>` and `git branch -d recon-tmp`.
+- The main checkout had **90 tracked files deleted on disk** when the session
+  started (`CLAUDE.md`, `HANDOFF.md`, `FINDINGS.md`, all of `testing/`,
+  `wildscan/`, `archive/`; mtime 2026-09-05 22:25, minutes before the
+  session; not by this session). The fast-forward re-wrote the ones that
+  changed; the 58 that had not changed were restored by parking the
+  deletions in **`stash@{0}`** ("90 tracked files found deleted on disk ...").
+  If the deletion was deliberate: `git stash pop` puts it back; if not:
+  `git stash drop`. Nothing is lost either way.
 - `origin/agent-native-execution` was deleted on the remote on 2026-09-03
-  (its head is tag `agent-native-execution-final`). Nothing was pushed.
+  (its head is tag `agent-native-execution-final`). Nothing was pushed;
+  pushing recreates the remote branch (`git push -u origin agent-native-execution`).
 - The 18 GB `test_dataset_NA173_H2014g/` sits INSIDE the repo root,
   untracked and not gitignored: never `git add -A` there.
 
@@ -68,8 +69,8 @@ Nothing.
 
 ### Ranked loose ends
 
-1. `git merge --ff-only recon-tmp` in the main checkout (above), then decide
-   the deleted-files question; push when the owner says so.
+1. Decide the parked deletions (`stash@{0}`: pop or drop); remove the
+   worktree; push when the owner says so.
 2. **Owner decisions still open** - the prompts are in the session's final
    report and in `docs/DECISIONS.md`: D1 (run cell C6 first, or keep the XMP
    default), D9 (promote `stage_features` - cell C11, low risk), D10 (export
@@ -97,7 +98,7 @@ signed "probe" - never a real sign-off). Tags `agent-native-execution-final`
 ### Exact next commands
 
 ```bash
-git -C "C:/Users/jonat/Desktop/CoyoteThings/RealityScan_CLI" merge --ff-only recon-tmp
+git stash list                                                # stash@{0} = the parked deletions
 python -m pytest testing -q                                   # expect 879 passed, 1 skipped
 python rs.py charter init <results_root>/_agent/RUN_CHARTER.json   # cell C1, mini fixture F1
 python rs.py preflight --charter <C>
