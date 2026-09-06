@@ -20,7 +20,7 @@ from modules.verify import (EXIT_CODES, SCALE_MAX, SCALE_MIN, format_text,
 # --------------------------------------------------------------- fixtures
 
 def _zone(ws, name, *, cameras=3, nav_sha="aaa", settings_sha="zzz",
-          frame="utm", fingerprint=True, nav_path=None):
+          frame="utm", fingerprint=True, nav_path=None, capture=None):
     """One aligned zone: images, a component, its manifest, its fingerprint."""
     batched = ws / "batched_images_by_zone" / name
     batched.mkdir(parents=True, exist_ok=True)
@@ -38,6 +38,7 @@ def _zone(ws, name, *, cameras=3, nav_sha="aaa", settings_sha="zzz",
             {"schema": 1, "frame": frame,
              "flight_log": ({"sha256": nav_sha, "path": nav_path}
                             if nav_path else {"sha256": nav_sha}),
+             **({"identity_capture": capture} if capture else {}),
              "align_settings": {"sha256": settings_sha},
              "flight_log_params": {"sha256": "ppp"},
              "min_component_size": 10}), encoding="utf-8")
@@ -295,3 +296,35 @@ def test_per_zone_logs_elsewhere_still_compare_raw(tmp_path):
     _batch_record(ws)
     out = verify_workspace(str(ws))
     assert any("navigation flight log DIFFERS" in b for b in out["blocking"])
+
+
+# ------------------------------------------- identity capture unanimity
+#
+# A csv zone and an xmp zone carry different membership records and only
+# the xmp zone wrote sidecars beside its images (2026-09-06 audit, gap G9).
+
+def test_mixed_identity_capture_blocks(tmp_path):
+    ws = _workspace(tmp_path, zones=())
+    _zone(ws, "zone_1", capture="csv")
+    _zone(ws, "zone_2", capture="xmp")
+    out = verify_workspace(str(ws))
+    assert out["verdict"] == "blocked"
+    assert any("IDENTITY CAPTURE DIFFERS" in b for b in out["blocking"])
+    assert out["provenance"]["identity_captures"] == ["csv", "xmp"]
+
+
+def test_one_identity_capture_is_fine(tmp_path):
+    ws = _workspace(tmp_path, zones=(), capture="csv")
+    _zone(ws, "zone_1", capture="csv")
+    _zone(ws, "zone_2", capture="csv")
+    out = verify_workspace(str(ws))
+    assert not any("IDENTITY CAPTURE" in b for b in out["blocking"])
+    assert out["provenance"]["zones"]["zone_1"]["identity_capture"] == "csv"
+
+
+def test_fingerprints_without_the_field_are_not_judged(tmp_path):
+    """Fingerprints written before 2026-09-06 carry no mechanism."""
+    ws = _workspace(tmp_path)
+    out = verify_workspace(str(ws))
+    assert out["provenance"]["identity_captures"] == []
+    assert not any("IDENTITY CAPTURE" in b for b in out["blocking"])

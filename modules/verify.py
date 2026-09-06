@@ -151,6 +151,7 @@ def check_provenance(ws: Workspace) -> tuple[dict, list[str]]:
         zones[zone] = {
             "present": True,
             "frame": fp.get("frame"),
+            "identity_capture": fp.get("identity_capture"),
             "flight_log_sha256": _sha_of(fp.get("flight_log")),
             "align_settings_sha256": _sha_of(fp.get("align_settings")),
             "flight_log_params_sha256": _sha_of(fp.get("flight_log_params")),
@@ -176,6 +177,22 @@ def check_provenance(ws: Workspace) -> tuple[dict, list[str]]:
     for zone, (_value, origin) in nav_keys.items():
         zones[zone]["flight_log_origin"] = origin
 
+    # The identity mechanism is a plain word, not a file: a csv zone and an
+    # xmp zone carry different membership records and only one of them wrote
+    # sidecars beside the images, so a merge across them is not comparable
+    # (2026-09-06 audit gap G9). Recorded per zone since the same day, so
+    # older fingerprints report None and are not judged.
+    captures = {z: fp.get("identity_capture") for z, fp in present.items()}
+    seen_capture = sorted({c for c in captures.values() if c})
+    if len(seen_capture) > 1:
+        listing = ", ".join(f"{z}={captures[z]}" for z in sorted(captures)
+                            if captures[z])
+        blocking.append(
+            f"IDENTITY CAPTURE DIFFERS across aligned zones ({listing}) - the "
+            "zones carry different membership records and only the xmp zones "
+            "wrote sidecars beside their images; re-align one mechanism before "
+            "merging")
+
     for key, label in _UNANIMITY_FIELDS:
         seen: dict[Optional[str], list[str]] = {}
         for zone, fp in present.items():
@@ -197,6 +214,7 @@ def check_provenance(ws: Workspace) -> tuple[dict, list[str]]:
         "flight_log_source_sha256": (batch_fp or {}).get("flight_log_sha256"),
         "zones": zones,
         "frames": distinct_frames,
+        "identity_captures": seen_capture,
         "frame_unanimous": len(distinct_frames) <= 1,
         "zones_without_fingerprint": sorted(
             z for z, fp in fingerprints.items() if fp is None),

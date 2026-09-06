@@ -126,3 +126,18 @@ def test_prior_groups_file_is_recorded_as_provenance(tmp_path):
         tmp_path, "prior_groups_other.cmds", "-setPriorCalibrationGroup 3" + chr(10)))
     assert diff_fingerprints(fp, other) == []
     assert matches_current(str(out), other)
+
+
+def test_identity_capture_is_recorded_but_is_not_a_retry_change(monkeypatch, tmp_path):
+    """verify compares the mechanism ACROSS zones; re-aligning one zone the
+    other way is deliberate, not a 'changed inputs' surprise."""
+    nav, flp, ap = _inputs(tmp_path)
+    monkeypatch.setenv("RS_LEGACY_XMP_IDENTITY", "0")
+    csv_fp = build_fingerprint(nav, flp, ap, 50)
+    assert csv_fp["identity_capture"] == "csv"
+    monkeypatch.delenv("RS_LEGACY_XMP_IDENTITY")
+    xmp_fp = build_fingerprint(nav, flp, ap, 50)
+    assert xmp_fp["identity_capture"] == "xmp"
+    monkeypatch.setenv("RS_LEGACY_XMP_IDENTITY", "1")
+    assert build_fingerprint(nav, flp, ap, 50)["identity_capture"] == "xmp"
+    assert diff_fingerprints(csv_fp, xmp_fp) == []

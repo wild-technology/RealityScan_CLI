@@ -353,6 +353,35 @@ def test_export_runs_through_the_python_driver(tmp_path):
     assert export.env.get("PYTHONIOENCODING") == "utf-8"
 
 
+def test_export_carries_the_workspace_crs_instead_of_re_entering_it(tmp_path):
+    """2026-09-06 audit gap G3: RS_PROJECT_CRS is set only inside the ALIGN
+    process, so an export planned without a CRS stamped the .rsInfo with
+    whatever the assembly project held (H2077 a 53N cruise as 57S; H2060 a
+    2S dive as 55N). The zone-tagged log the publish command already gets is
+    the workspace's own statement of its frame."""
+    ws = make_workspace(tmp_path, stage="model")
+    s = _session(tmp_path, ["export"])
+    s.results_root = str(ws.root)
+    export = build_commands(s)[0]
+    assert "--flight-log" in export.argv
+    log = export.argv[export.argv.index("--flight-log") + 1]
+    assert log.endswith("flight_log_4Q_UTM.txt")
+    from modules.flight_logs import crs_for_flight_log
+    assert crs_for_flight_log(log)          # the tag resolves to an EPSG
+
+
+def test_export_of_a_local_frame_campaign_carries_no_crs(tmp_path):
+    """No zone tag anywhere = a local-frame campaign; inventing a CRS for it
+    would be worse than the gap."""
+    ws = make_workspace(tmp_path, stage="model")
+    for log in ws.root.rglob("flight_log_4Q_UTM.txt"):
+        log.rename(log.with_name("flight_log.txt"))
+    s = _session(tmp_path, ["export"])
+    s.results_root = str(ws.root)
+    export = build_commands(s)[0]
+    assert "--flight-log" not in export.argv
+
+
 def test_export_driver_goes_through_the_execution_layer(tmp_path, monkeypatch):
     """run_export must delegate to RealityScanCLI.run_batch_script with the
     .bat's own three-argument contract - never spawn cmd itself."""

@@ -10,7 +10,7 @@ beside any image. The owner's instruction ("D1: design and execute an end to
 end comprehensive test of the CSV workflow. End to end means zones too and
 merging. Ideally no xmp are written") is the sign-off quote in both charters;
 every charter answer was DERIVED by the agent and is listed below for veto.
-Suite: **935 passed, 1 skipped** (`python -m pytest testing -q`, this box). Nothing pushed.
+Suite: **941 passed, 1 skipped** (`python -m pytest testing -q`, this box). Nothing pushed.
 
 ### Done
 
@@ -61,6 +61,18 @@ Suite: **935 passed, 1 skipped** (`python -m pytest testing -q`, this box). Noth
   calibration is degenerate (focal 14-29k px) - a focal sanity band per
   family is a census gap. `align_inputs.json` now records the
   prior-group command file.
+- **Pipeline variable audit** -> `docs/PIPELINE_VARIABLES.md` (routed from
+  CLAUDE.md): every variable classified baked / detected / owner / inherited
+  with its file:line and whether it crosses the stage boundary, the
+  required-owner-input table, the hand-off matrix, the XMP census and 14
+  ranked gaps. Headlines: the MERGE stage writes XMP under a csv charter
+  (ungated, `RS_MERGE_HARVEST=1` always); the F2 fused component would be
+  REFUSED by the model stage (scale replays as 0.641, a fail, not
+  unmeasured); zone sizes, overlap, identity capture, min component size,
+  export CRS, publish credentials and the georeference science values are
+  silent defaults the lane never asks for. Four carry-forward defects fixed
+  the same day (export CRS carried, identity capture fingerprinted and
+  cross-checked by verify, preflight's identity check widened, Nira sidecar).
 - **D1 decision narrowed** (`docs/DECISIONS.md`): CSV lane proven end to end;
   arm (i) of C6 measured (prior groups alone -> every camera its own focal);
   arms (ii)/(iii) still to run; the scale oracle now reads the identity CSVs
@@ -88,25 +100,31 @@ is free; RealityScan's CRTemp logs are copied under each workspace's
 
 ### Ranked loose ends
 
-1. **When does RealityScan fold duplicate copies?** F2 kept both copies of
+1. **Owner decisions the audit surfaced** (`docs/PIPELINE_VARIABLES.md` section 6):
+   should the zone sizes, overlap, `identity_capture`, `min_component_size` and the
+   georeference science values become required intake questions? Should the merge
+   peel be ported from XMP to `-exportRegistration` (it is the last XMP writer, and
+   `run_models` must change with it)? Should a 120-second fixture be scale-gated at
+   all, given F2's fused component reads 0.641?
+2. **When does RealityScan fold duplicate copies?** F2 kept both copies of
    the 21 shared images (158 = 78 + 80); the owner's H2063 numbers show
    fused components peeling at the unique count. The accounting now accepts
    both (`attribute_result`, `duplicates_collapsed` in the report), but the
    condition (merge mode? shared-image graph? build?) is unmeasured. The
    H2063 re-merge the owner's other session proposed (`--resume`,
    `--loss_tolerance 0.0025`) is the live test; it runs on the NA165 box.
-2. **C6 arms (ii) and (iii)** on F0/F2 (XMP sidecars = known-good; neither
+3. **C6 arms (ii) and (iii)** on F0/F2 (XMP sidecars = known-good; neither
    = known-bad) to finish D1's prior-group question; arm (i) is measured.
-3. **C2's model + export half** on the F2 assembly (158 cameras) - D12/D13
+4. **C2's model + export half** on the F2 assembly (158 cameras) - D12/D13
    live proof; then C13 at full scale (F2 measured 10 min for 363 images).
-4. **Registration on this rig**: camlower and zeuss barely join the cammid
+5. **Registration on this rig**: camlower and zeuss barely join the cammid
    strip (34-40 % per zone). Science, not lane; the owner may want C4/C5
    (hardness, Zeuss mount) before C13.
-5. The installed `flightlogs.xml` has drifted from the repo copy (06 A8);
+6. The installed `flightlogs.xml` has drifted from the repo copy (06 A8);
    `install_all_managed` never corrects an existing id.
-6. The merge peel census still writes ordinal XMPs (inside its attempt
+7. The merge peel census still writes ordinal XMPs (inside its attempt
    folder); porting it to `-exportRegistration` is optional hygiene.
-7. `stash@{0}` (the 90 on-disk deletions from 2026-09-05 22:25) is still
+8. `stash@{0}` (the 90 on-disk deletions from 2026-09-05 22:25) is still
    parked: pop or drop. Push when the owner says so.
 
 ### Artifact locations

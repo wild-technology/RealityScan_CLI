@@ -15,7 +15,10 @@ Do not re-read what it printed. Then, saying in one line what you will do:
 2. Route, never browse: `docs/ARCHITECTURE.md` (module map - grep it),
    `docs/AGENT_OPERATIONS.md` (the driving contract; wins on conflict),
    `docs/DECISIONS.md` (open owner decisions D1..), `docs/rs-reference/README.md`
-   (any RealityScan question - never answer one from general knowledge).
+   (any RealityScan question - never answer one from general knowledge),
+   `docs/PIPELINE_VARIABLES.md` (which values are baked, detected, owner-supplied
+   or inherited, how each crosses a stage boundary, and the ranked gaps - read it
+   before adding a parameter, a default or a hand-off).
 3. Baseline: `python -m pytest testing -q`. Windows: fully green expected.
    macOS/Linux: exactly the 22 platform-bound failures named in
    `testing/conftest.py`. Anything else: stop and report.

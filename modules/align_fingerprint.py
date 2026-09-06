@@ -99,6 +99,8 @@ def build_fingerprint(flight_log: str | None,
         "flight_log_params": _file_identity(flight_log_params),
         "align_settings": _file_identity(align_settings_xml),
         "prior_groups": _file_identity(prior_groups),
+        "identity_capture": ("csv" if os.environ.get(
+            "RS_LEGACY_XMP_IDENTITY") == "0" else "xmp"),
         "min_component_size": int(min_component_size),
         "repo_sha": _repo_sha(),
     }
@@ -119,6 +121,15 @@ _COMPARED = (
     ("flight_log", "navigation flight log (positions/orientations)"),
     ("flight_log_params", "coordinate-frame template (FlightLogParams)"),
     ("align_settings", "alignment settings XML (detector/priors/model)"),
+)
+
+#: Fields compared ACROSS zones by modules.verify but not between a zone's
+#: own runs: the identity mechanism decides which membership record exists
+#: and whether sidecars were written beside the images, so zones captured
+#: differently are not comparable - but re-aligning one zone with the other
+#: mechanism is a deliberate act, not a "changed inputs" surprise.
+_CROSS_ZONE_ONLY = (
+    ("identity_capture", "identity capture mechanism (csv / xmp)"),
 )
 
 

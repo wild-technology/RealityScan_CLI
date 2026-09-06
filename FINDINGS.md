@@ -663,3 +663,64 @@ The facts that were not already in the entries above:
 - **Reference corrections**: 02 row for `-setPriorCalibrationGroup` said
   "never exercised through the CLI here" (it runs on every align); 07's
   table still listed the orientation hardness at 10.0 (2.0 since D3).
+
+## [HARNESS] 2026-09-06 - pipeline variable audit: what is baked, detected, owner-supplied or inherited, and four carry-forward defects fixed
+
+Sixteen read-only agents (eight stage-group readers, eight skeptics re-deriving
+every claim from the files; ~620 claims, none refuted) over the code, the two
+2026-09-06 runs and the reference. Written up as `docs/PIPELINE_VARIABLES.md`
+(routed from CLAUDE.md): the required-owner-input table for any dataset, a
+per-stage variable table (kind, value, file:line, whether it reaches the next
+stage), the hand-off matrix, the XMP census, and fourteen ranked gaps. Facts
+worth having outside that document:
+
+- **The merge stage writes XMP under a `csv` charter, ungated.**
+  `merge_zones.py:813-815` sets `RS_MERGE_HARVEST=1` for EVERY ladder attempt and
+  `MergeZoneComponents.bat:218/:270/:275` runs `-exportXMPForSelectedComponent`
+  plus a PowerShell move; neither file reads `RS_LEGACY_XMP_IDENTITY`, which was
+  in the merge environment and ignored. RealityScan writes those sidecars BESIDE
+  THE IMAGES first (rs-reference 05:1139-1140), so "zero XMP beside images" is the
+  post-move state - a lap dying between export and move leaves them in the zone
+  copies. The peel count is the merge's whole camera-accounting instrument and
+  `run_models.resolve_scale` reads `identity_r0` for fused components, so a CSV
+  port must change both or every fused component reverts to unmeasured.
+  [VERIFIED: the workflow, `rslog.txt:214-238`, 316 files on disk]
+- **The F2 fused component would be REFUSED by the model stage today.** Replaying
+  `run_models.resolve_scale` from disk (158 peel poses, the manifest, the scalegate
+  union log) gives median 0.641, IQR 0.607-0.711 - `fail`, not `unmeasured`. So
+  `run_models.py:310-316` would skip it and exit with nothing modelled. Whether a
+  120 s fixture should be scale-gated at all is an owner question.
+  [VERIFIED: `scale_oracle.quantile_ratio_scale` replay, 2026-09-06]
+- **Silent defaults that are science, not housekeeping**: zone target/min/max
+  (3000/1000/4000 - a small survey collapses to ONE zone), zone overlap 20 %,
+  `identity_capture` unset = the destructive harvest, `min_component_size` 50,
+  declination 0.0, prior accuracies 10/1/15, assumed mount 10/30, acceptance floor
+  80 %, extract 1 fpm / 3 Mpx. Preflight asks for none of them
+  (`preflight.py:415-421` asks only required and path/file answers).
+- **Detectors that fail open**: an unknown nav datum projects silently; a log that
+  loses its zone tag becomes a local-frame campaign; `preprocessed_images` is
+  chosen by existence, not by the stage having run; `merge_zones.py:165-166`
+  silently drops a manifest whose `.rsalign` is missing.
+- **`RS_NO_SETTINGS_INHERITANCE` is only half a refusal**: it blocks prompt
+  defaults but not `SettingsStore.get` (`settings_store.py:238-241`), so
+  `RS_HEADLESS`, GPU pinning, the shutdown timeout, the executable path and the
+  instance-name fallback still come from `rs_settings.json` - both runs booted
+  GUI-visible instances under a hidden scheduled task.
+- **The lane writes into charter-protected paths**: `rs_settings.json` in the repo
+  root (the C0 zone sizes and the F2 merge flags are in it now), marker files under
+  `RS_CLI/Errors/`, and the format installs under the RealityScan install
+  directory. No driver calls `guard_write` (`run_charter.py:330`, called only from
+  tests); the hooks bind the agent's own tool calls, not the pipeline's.
+
+FIXED the same day (carry-forward defects, not design changes):
+1. The export command now carries the workspace's zone-tagged flight log, so the
+   exported `.rsInfo` states this cruise's CRS instead of whatever the assembly
+   project held (H2077 stamped 53N as 57S; H2060 a 2S dive as 55N).
+2. `align_inputs.json` records `identity_capture`, and `verify` BLOCKS a csv zone
+   merged with an xmp zone.
+3. preflight's identity check runs for align OR merge (a merge-only charter used to
+   get no line at all, not even on a typo) and its `csv` line no longer claims that
+   nothing writes XMP.
+4. `publish_nira.py` accepts `.rsInfo`, not only the RealityCapture-era `.rcinfo`,
+   so the georeferencing sidecar is in the upload.
+Suite: 941 passed, 1 skipped.

@@ -39,7 +39,10 @@ logger = logging.getLogger('publish_nira')
 GEOMETRY = {'.obj', '.fbx', '.dae', '.gltf', '.glb'}
 MATERIAL = {'.mtl'}
 TEXTURE = {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp'}
-SIDECAR = {'.rcinfo'}
+# RealityScan 2.2 writes <model>.obj.rsInfo; RealityCapture wrote .rcInfo.
+# Only .rcinfo was listed until 2026-09-06, so the georeferencing sidecar
+# this file's own header says to upload was never in the file list.
+SIDECAR = {'.rcinfo', '.rsinfo'}
 POINTCLOUD = {'.las', '.laz', '.e57'}
 
 

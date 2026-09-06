@@ -759,14 +759,27 @@ def build_commands(session: Session) -> list[StageCommand]:
         # Metadata presets; the driver only carries the same three
         # arguments the .bat has always taken.
         names_file = ws.exports / "components.names"
+        export_argv = [sys.executable,
+                       str(REPO / "modules" / "export_deliverables.py"),
+                       "--project", str(ws.assembly_project() or ""),
+                       "--exports", str(ws.exports),
+                       "--names", str(names_file),
+                       "--log_dir", str(ws.root / "logs")]
+        # The EXPORT CRS, carried rather than re-entered (2026-09-06 audit
+        # gap G3). RS_PROJECT_CRS is set only inside the ALIGN process
+        # (realityscan_interface.py), so without this the exported .rsInfo
+        # carries whatever coordinate system the assembly project happens to
+        # hold - H2077 stamped a 53N cruise as 57S, and H2060 a 2S dive as
+        # 55N. The same zone-tagged log the publish command already gets is
+        # the workspace's own statement of its frame; export_deliverables
+        # derives the CRS from its zone tag. A local-frame campaign has no
+        # tagged log and correctly gets nothing.
+        export_log = workspace_flight_log(ws)
+        if export_log:
+            export_argv += ["--flight-log", str(export_log)]
         commands.append(StageCommand(
             stage="Export Deliverables",
-            argv=[sys.executable,
-                  str(REPO / "modules" / "export_deliverables.py"),
-                  "--project", str(ws.assembly_project() or ""),
-                  "--exports", str(ws.exports),
-                  "--names", str(names_file),
-                  "--log_dir", str(ws.root / "logs")],
+            argv=export_argv,
             env={"PYTHONIOENCODING": "utf-8", **rs_env},
             needs_realityscan=True))
 

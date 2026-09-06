@@ -363,9 +363,14 @@ class Preflight:
         else:
             self.ok(f"alignment settings {xml} (applied through RS_ALIGN_PARAMS)")
         capture = str(s.get("identity_capture") or "").strip().lower()
-        if "align" in self.stages:
+        # Checked for align AND merge: a merge-only charter used to get no
+        # line at all, not even on a typo (2026-09-06 audit gap G6), and the
+        # merge stage's peel census writes XMP under BOTH values (gap G2).
+        if {"align", "merge"} & set(self.stages):
             if capture == "csv":
-                self.ok("identity capture: csv (-exportRegistration, no XMP written)")
+                self.ok("identity capture: csv - align writes no XMP "
+                        "(-exportRegistration); the merge peel census still "
+                        "writes ordinal sidecars into its own attempt folder")
             elif capture == "xmp":
                 self.warn("identity capture: xmp - the destructive in-session harvest "
                           "writes sidecars into the zone copies and strips the last "
