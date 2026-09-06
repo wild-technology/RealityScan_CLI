@@ -375,3 +375,163 @@ Read-only census, 2026-09-05/06, by the integration probe and by hand:
   no missing line and planned ONE `main.py` command; the full-stage variant
   planned four. [VERIFIED: `scratchpad/agents/na173-probe/` outputs,
   2026-09-05 - a scratch charter signed "probe", never a real sign-off]
+
+## [NA173] 2026-09-06 - D1 end-to-end CSV identity run on fixture F2: zones, merge, zero XMP beside images
+
+Scheduler-owned run (`rs launch` -> Task Scheduler, task RS_NA173_F2_CSV,
+instance RSAGENT, cache `_agent/rs_cache`, charter
+`NA173_H2014g_RS/_agent/RUN_CHARTER.json` with `science.identity_capture =
+csv` -> `RS_LEGACY_XMP_IDENTITY=0`), fixture F2 (363 images = 121 per
+camera, 20:17:36-20:19:36, copy layout, b_target 180 / b_min 100 / b_max
+250, min component 50, ladder merge_first / neighbour / overlap gate / loss
+0.0025). Batch + 2 aligns + merge: 12:55:54 -> 13:05:09, launcher exit 0,
+`RUN_STATE` prepared -> running -> done, `.rc` = 0. Evidence under
+`NA173_H2014g_RS/` (results) and `_agent/logs/rs_logs/` (RealityScan's own
+logs, copied). [VERIFIED: this run]
+
+- **XMP census.** 0 `*.xmp` under the source dataset, 0 under either zone's
+  image tree, 0 under `aligned_components/`. 316 under
+  `merged/cluster_0/attempt_1_merge_georef/identity_r{0,1,2}/` (158 + 80 + 78,
+  ordinal `00000.xmp`...): the merge peel census
+  (`-exportXMPForSelectedComponent`, MergeZoneComponents.bat) is the ONE
+  remaining XMP writer, and it writes into the merge's own attempt folder,
+  never beside an image. The owner's "downstream effects" case (sidecars
+  beside images changing the next align) does not arise. [VERIFIED: `find`]
+- **Align census.** zone_1: 229 in (camlower 78, cammid 78, zeuss 73) ->
+  RealityScan `Count = 1` component, 78 cameras, ALL cammid; 132 s. zone_2:
+  200 in (65/64/71) -> `Count = 4`, largest 80 = 64 cammid + 16 camlower;
+  70 s. Registration 34 % / 40 %: camlower and zeuss did not join the cammid
+  strip (unique orientations; zeuss carries the pre-D3 30/15 mount in the
+  log). A science result for the owner, not a lane fault: every component the
+  lane promised exists with a manifest and an identity CSV. [VERIFIED:
+  manifests, RealityScan `65537` ALIGN records]
+- **Identity CSVs** (`aligned_components/<zone>/identity/<zone>_c0.csv`):
+  `#cameras N` header, then `name,x,y,z,yaw,pitch,roll,focal,k1,k2` per
+  camera - 78 and 80 rows, matching the manifests exactly. x/y/z came out in
+  the range -1..8 m on a scene pinned to EPSG:32757 with the trajectory
+  imported: the export CRS is the instance's current "Coordinate system"
+  choice (rs-reference 13 sec.8 frame #8; only `calexFileFormatId` is pinned,
+  the `calexTrans` bundle is not), so the CSV positions are NOT a scale or
+  georeference readback yet. [VERIFIED: the CSVs; frame [OPEN]]
+- **Merge.** `merge_report.json` schema 2: cluster_0 = zone_1_c0 + zone_2_c0
+  -> ONE final component, 158 cameras, attribution exact, cameras_lost 0,
+  converged, 116 s, `EVALUATION_READY`. 158 = 78 + 80 because the copy
+  layout holds the 21 overlap images twice (137 unique registered images;
+  `unique_images` 365 counts log rows). **Scale: UNMEASURED for both inputs**
+  - the scale oracle reads `identity_r0/*.xmp` poses, which the CSV lane does
+  not write; the gate passed vacuously. [VERIFIED: report]
+- **`rs verify`** first returned BLOCKED: "navigation flight log DIFFERS
+  across aligned zones". False - the batcher cuts every zone its own log.
+  Fixed (`591a30f`): the batch fingerprint records each zone log's sha and
+  verify collapses vouched-for logs to the source sha; verdict now OK.
+- **Flight-log format (cell C0, answered).** The saved `zone_1.rsproj` /
+  `zone_2.rsproj` carry `absPrior="pose"` on all 229 / 200 inputs with
+  `absuX/Y/Z = 10/10/1` and `absuRX/RY/RZ = 15/15/15` - the log's own
+  accuracy columns. The 13-column log imported ALL 13 columns under the
+  14-column `{D1F2A3B4}` format; a row one column short of `FocalLength`
+  is fine. [VERIFIED: the documented .rsproj oracle, rs-reference 06 sec.2.3]
+- **RealityScan's own log is a zip.** `%LOCALAPPDATA%/Temp/CRTemp/{guid}/
+  YY_MM_DD[_n].log` is a PK archive of one `log_HH_MM_SS.json` (`Metadata`,
+  `Events[]` of `EventId`/`Type`/`Data`). The `65537` ALIGN record carries the
+  effective align settings and `align_largest_component_camera_count`; the
+  `20598 IMPORT_FLIGHT_LOG` record carries `file_format`, `camera_mount`,
+  `euler_angle_order`. In BOTH zone imports `file_format` read
+  `B438A61724245A24C1B758920F28345A` = the hand-edited variant
+  `{B438A617-2424-5A24-C1B7-58920F28345A}` (rs-reference 06 sec.2.3), which
+  is in NO flightlogs.xml on this box, while the params named `{D1F2A3B4}`
+  and the .rsproj proves `{D1F2A3B4}` resolved. So the telemetry field is
+  NOT the format that parsed - most likely the instance's stored default.
+  [VERIFIED: both records; interpretation [INFERRED]]
+- **The installed `flightlogs.xml` is not the repo's.** The install's
+  `{B438A617}` is a 14-column "Rig local ... FocalLength" block plus three
+  sibling rig-local formats (`{6F1B2A84}`, `{A7D4E9C2}`, `{3C92F5B7}`) the
+  repo file does not carry; the repo's `{B438A617}` is 13 columns.
+  `flightlog_format.install_all_managed` only ADDS missing ids, so the drift
+  persists. Harmless today (both 14-column parsers are identical) and a
+  portability trap for the NA165 box. [VERIFIED: diff of the two files]
+- **Cost.** 363 images, three RealityScan boots: 10 min wall; align peak
+  32.7 GB commit / 98 % CPU on 32 threads; cache +0.8 GB. [VERIFIED:
+  `resources_AlignZone_*.csv`]
+
+## [RECON] 2026-09-06 - D1 arm (i): prior groups alone leave every camera with its own focal
+
+The F2 run applied `-setPriorCalibrationGroup` / `-setPriorLensGroup` per
+family (`logs/prior_groups_zone_*.cmds`, "Applying calibration/lens prior
+groups" in the AlignZone output) with NO calibration sidecars beside the
+images (`RS_LEGACY_XMP_IDENTITY=0` also skips the sidecar repair). Readback
+from the identity CSVs: zone_1 cammid 78 cameras, 78 DISTINCT focals
+(2653.3-2665.4 px, spread 12.1); zone_2 cammid 64 distinct (spread 37.9),
+camlower 16 distinct (spread 23.1); k1 spreads 0.004-0.03; k2 pinned at 0.
+A calibration group shares one focal across its members, so either the
+group commands did not take effect from the delegated CLI (main's 2026-08-08
+measurement) or each image was solved on its own calibration regardless.
+This is C6 arm (i) of `testing/NA173_TEST_PLAN.md`; arm (ii) (the same
+fixture with XMP calibration sidecars = known-good) and arm (iii) (neither)
+are still to run before the decision rule fires. [MEASURED: the CSVs; the
+"did not take effect" reading is [INFERRED] until arm (ii) shows equality]
+
+## [HARNESS] 2026-09-06 - first scheduler-owned run: what the lane got wrong and what it cannot see
+
+- `rs launch --stages batch,align,merge` was refused ("unsafe for cmd") -
+  the comma is in the cmd metacharacter set and the stage list went through
+  the path check. Fixed `eaa2bb4` (stage grammar check). ESTABLISHED.
+- `rs launch` computes the task's start time as launch time + 2 min; the
+  printed lines were run two hours later (usage-limit pause) and the
+  scheduler warned that the start time was already past - the explicit run
+  line is what starts the task, so this is a warning to expect, not a
+  failure. ESTABLISHED.
+- The scheduler guard hook also fires on the literal create-switch text
+  inside a heredoc that only writes a memory or findings file. Keep that
+  string out of scripts; append long text through a file.
+- `rs verify` blocked a healthy copy-layout run on per-zone flight logs
+  (above; fixed `591a30f`). The oracle had never seen a real copy layout.
+- The scale oracle is BLIND under the CSV lane (no `identity_r0` poses);
+  `merge_zones --scale_gate true` passes with `unmeasured`. Until the CSV
+  positions are exported in the output CRS (pin the `calexTrans` bundle, or
+  a GUI-saved Export Registration params - rs-reference 05 Q20) the CSV lane
+  has no metric-scale check. OPEN, ranked for the owner.
+- preflight's "13 columns vs 14-column format" warning reads the canonical
+  `FlightLogParams.xml`, not the charter's `r_flight_log_params` answer.
+- RealityScan's logs are ephemeral zips under CRTemp (above); the agent copies
+  them into `_agent/logs/rs_logs/` after every run from now on.
+- The Monitor loop on `RUN_STATE.json` + the errors marker + the launcher
+  `.rc` file saw every transition (prepared -> running -> done, `.rc`
+  written 13:05:09); no `/loop` was needed.
+
+## [NA173] 2026-09-06 - C0 probe: `gpsLogFileFormat` IS honoured; RealityScan's event-log `file_format` never changes
+
+Second scheduler-owned run (charter `NA173_C0probe_RS/_agent/RUN_CHARTER.json`,
+fixture F0 = 41 cammid frames 20:18:20-20:19:00, copy layout, two zones of 13
+and 32, `identity_capture: csv`, min component 10), identical to the F2 run
+except that `r_flight_log_params` pointed at a copy of `FlightLogParams.xml`
+whose `gpsLogFileFormat` names the STOCK 7-column position + accuracy format
+`{0E9850E2-73E1-4538-B2CF-B18BEF6CECEB}` (no orientation columns). 3 min
+wall, two boots, exit 0, zero `*.xmp`. Evidence: `NA173_C0probe_RS/`,
+RealityScan logs copied to `_agent/logs/rs_logs/`. [VERIFIED: this run]
+
+- **The params GUID is honoured.** Both zone projects carry
+  `absPrior="registered"` (position only) on every input, `absuX/Y/Z =
+  10/10/1` from the log, `absuRX/RY/RZ = -1` and no `absRX/RY/RZ` at all -
+  exactly the 7-column format's footprint - where the F2 run under
+  `{D1F2A3B4}` had `absPrior="pose"` with the orientation accuracies. The
+  `.rsproj` oracle (rs-reference 06 sec.2.3) now has its known-different
+  case: pose + six accuracies vs registered + three. [VERIFIED: 13 + 32 inputs]
+- **RealityScan's `20598` `file_format` did not move**: it read
+  `B438A61724245A24C1B758920F28345A` again - the same hand-edited
+  `{B438A617-2424-...}` variant as under `{D1F2A3B4}`, a GUID in no
+  `flightlogs.xml` on this box. The field reports something stored in the
+  instance (registry default from an earlier session), never the format
+  the params selected. Never use it as a format oracle. ESTABLISHED.
+- Registration under position-only priors: 13/13 and 32/32 cammid frames in
+  one component each (`Count = 1`), 2.6 s and 9.0 s aligns. [VERIFIED]
+- The first launch of this probe died in 30 s AFTER preflight said READY:
+  the batcher's own `validate_parameters()` refuses `b_target_images < 100`
+  at start-up, which the plan check (argparse only) cannot see. Preflight now
+  runs the batcher's validator on the charter's answers when `b_input` and
+  `b_flight_log_path` are answered and no zoning exists yet (it would
+  otherwise reach the validator's stdin "Overwrite?" prompt);
+  `testing/test_preflight.py`. Two `REFUSING stored default` lines
+  (`main.b_overlap_percent`, `main.r_project_label`) appear in every
+  charter-driven `main.py` log and are NOT failures: the store's own
+  refusal of inherited defaults, printed while the declared default is
+  installed instead. ESTABLISHED.

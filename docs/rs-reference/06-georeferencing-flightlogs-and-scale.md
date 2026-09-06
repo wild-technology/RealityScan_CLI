@@ -2234,3 +2234,37 @@ Facts established after this document was written (2026-08-04), carried here so 
 ### A2. Two UTM notations are live, and they disagree on one letter
 
 `epsg_for_utm_zone(2, 'S')` returns **32602 (north)**: MGRS latitude band `S` is NORTHERN, while the hemisphere notation ROVDataConcat writes ("2S") means SOUTH (EPSG:32702). Both notations reach this pipeline; the band-letter parser owns the flight-log filename tag, the hemisphere letter owns the nav tables. Pinned by test. [VERIFIED: FINDINGS 2026-09-02]
+
+### A6. A 13-column log under the 14-column `{D1F2A3B4}` format imports all 13 columns (2026-09-06)
+
+NA173's `flight_log_57L_UTM.txt` has no `FocalLength` column (13 columns) while
+`FlightLogParams.xml` pins the 14-column `{D1F2A3B4}`. Both zone projects of the F2 run carry
+`absPrior="pose"` on EVERY input with `absuX/Y/Z = 10/10/1` and `absuRX/RY/RZ = 15/15/15` -
+the log's own accuracy columns - so the row one column short of index 13 imported position,
+orientation and all six accuracies. The sec.2.3 `.rsproj` oracle (absPrior + absu*) is the
+proof; no format fallback occurred. [VERIFIED: FINDINGS `[NA173] 2026-09-06`, 229 + 200 inputs]
+
+### A7. RealityScan's own event log names a format GUID that did NOT parse the import (2026-09-06)
+
+RealityScan writes a zipped JSON log per session (`%LOCALAPPDATA%/Temp/CRTemp/{guid}/YY_MM_DD[_n].log`
+= PK archive of `log_HH_MM_SS.json`; see 01 Addenda). Its `20598 IMPORT_FLIGHT_LOG` record carries
+`file_format`, `camera_mount`, `euler_angle_order`. On both F2 imports `file_format` read
+`B438A61724245A24C1B758920F28345A` = the hand-edited `{B438A617-2424-5A24-C1B7-58920F28345A}`
+variant this section already documents - a GUID present in NO `flightlogs.xml` on the box - while
+the params named `{D1F2A3B4}` and A6 proves `{D1F2A3B4}` resolved. **Do not read `file_format` as
+the format that parsed**; it is most likely the instance's stored default. The `.rsproj` oracle
+stays the only proof. The same-day probe with the params naming the stock 7-column `{0E9850E2}`
+settled it: the projects came back `absPrior="registered"` with `absuRX/RY/RZ = -1` and no
+orientation (the 7-column footprint - `gpsLogFileFormat` IS honoured), while `file_format` read
+the same `{B438A617-2424-...}` string again. The field is a stored instance value, not the
+format that parsed. [VERIFIED: FINDINGS `[NA173] 2026-09-06` C0 probe, 13 + 32 inputs]
+
+### A8. The installed `flightlogs.xml` has drifted from the repo copy (2026-09-06)
+
+On the RiverOtter box the install's `{B438A617}` block is a 14-column "Rig local ... FocalLength"
+parser (identical to `{D1F2A3B4}`'s) and three sibling rig-local formats (`{6F1B2A84}`, `{A7D4E9C2}`,
+`{3C92F5B7}`) exist that the repo file does not carry; the repo's `{B438A617}` is 13 columns.
+`flightlog_format.install_all_managed` only ADDS missing ids, so an existing block is never
+corrected. Harmless where both parsers agree; a portability trap between boxes - census the
+install with `python -m modules.flightlog_format --install` output before trusting a format id
+on a new machine. [VERIFIED: diff of the two files, 2026-09-06]

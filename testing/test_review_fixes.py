@@ -209,13 +209,35 @@ def test_zone_must_match_the_log_tag(tmp_path, frame, verdict):
         assert asks and "utm:57L" in asks[0]["question"]
 
 
-def test_log_width_mismatch_is_named(tmp_path):
+def test_log_width_is_compared_with_the_format_the_run_uses(tmp_path):
+    """A SHORTER log is fine (measured 2026-09-06: the 13-column NA173 log
+    under the 14-column format landed every column); a WIDER one is still
+    unmeasured and warns; a charter's own r_flight_log_params is what is
+    compared, not the canonical template."""
     log = _log(tmp_path, "flight_log_57L_UTM.txt", HEADER13)
     charter = _ready(tmp_path, frame="utm:57L")
     charter.raw["pipeline"]["answers"]["b_flight_log_path"] = str(log)
     report = pf.preflight_charter(charter)
-    hits = [w for w in report["warnings"] if "13 columns" in w and "UNMEASURED" in w]
+    assert any("13 columns" in c and "shorter log" in c for c in report["checked"]),         report["checked"]
+    assert not any("13 columns" in w for w in report["warnings"])
+
+    wide = _log(tmp_path, "flight_log_57L_UTM.txt",
+                HEADER13 + ";FocalLength;Extra")
+    charter.raw["pipeline"]["answers"]["b_flight_log_path"] = str(wide)
+    report = pf.preflight_charter(charter)
+    hits = [w for w in report["warnings"] if "15 columns" in w and "EXTRA" in w]
     assert hits, report["warnings"]
+
+    custom = tmp_path / "FlightLogParams_custom.xml"
+    canon = (pf.Path(pf.METADATA_DIR) / "FlightLogParams.xml").read_text(encoding="utf-8")
+    custom.write_text(canon.replace("{D1F2A3B4-5C6D-4E7F-8A9B-0C1D2E3F4A5B}",
+                                    "{0E9850E2-73E1-4538-B2CF-B18BEF6CECEB}"),
+                      encoding="utf-8")
+    charter.raw["pipeline"]["answers"]["b_flight_log_path"] = str(log)
+    charter.raw["pipeline"]["answers"]["r_flight_log_params"] = str(custom)
+    report = pf.preflight_charter(charter)
+    lines = report["warnings"] + report["checked"]
+    assert any("FlightLogParams_custom.xml" in ln and "0E9850E2" in ln for ln in lines), lines
 
 
 # ----------------------------------------------------------------- rs.py

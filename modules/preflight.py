@@ -69,7 +69,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 from .run_charter import CharterError, RunCharter, load_charter
-from .run_plan import (ALL_STAGES, CHAIN_STAGES, RawDataScan, Session,
+from .run_plan import (ALL_STAGES, CHAIN_STAGES, MODULE_DISPLAY, RawDataScan, Session,
                        build_plan, build_questions, scan_cameras,
                        session_from_charter)
 from .realityscan_interface.realityscan_cli import (ERRORS_DIR, METADATA_DIR,
@@ -160,6 +160,21 @@ def _placeholder(value: Any) -> bool:
     """True for the template's ``<fill me in>`` values and empties."""
     text = str(value if value is not None else "").strip()
     return not text or (text.startswith("<") and text.endswith(">"))
+
+
+def _cast(kind, raw: str):
+    """A charter answer (always a string) as the type main.py's argparse
+    would hand the module. Bools follow argparse's true/false spelling."""
+    if kind is bool:
+        text = str(raw).strip().lower()
+        if text in ("true", "1", "yes", "y"):
+            return True
+        if text in ("false", "0", "no", "n"):
+            return False
+        raise ValueError(raw)
+    if kind in (int, float):
+        return kind(raw)
+    return raw
 
 
 class Preflight:
@@ -523,13 +538,16 @@ class Preflight:
             self._check_log_width(p)
 
     def _check_log_width(self, log_path: str) -> None:
-        """Warn when the log's column count is not the pinned format's.
+        """Compare the log's column count with the format the run will use.
 
-        What RealityScan.Import.CSVFlightLog does with a row that lacks the
-        format's last column(s) is UNMEASURED (testing/NA173_TEST_PLAN.md
-        cell C0): the NA173 log is 13 columns while FlightLogParams.xml pins
-        the 14-column format. The rows will import; whether the trailing
-        accuracy columns land is the experiment. Say so before the run.
+        The format comes from the charter's r_flight_log_params answer when
+        there is one (the C0 probe of 2026-09-06 ran a variant template and
+        preflight kept quoting the canonical file), else from the canonical
+        FlightLogParams.xml. A log SHORTER than the format imports every
+        column it has: measured 2026-09-06 with the 13-column NA173 log
+        under the 14-column {D1F2A3B4} (absPrior="pose", all six accuracies
+        landed; FINDINGS [NA173] 2026-09-06). A log WIDER than the format
+        is still unmeasured, so that case warns.
         """
         try:
             from . import flightlog_format  # noqa: PLC0415
@@ -537,7 +555,9 @@ class Preflight:
                 header = fh.readline().rstrip("\r\n")
             width = len(header.split(_LOG_SEPARATOR)) if _LOG_SEPARATOR in header \
                 else len(header.split(","))
-            params = Path(METADATA_DIR) / "FlightLogParams.xml"
+            custom = (self.answers.get("r_flight_log_params") or "").strip()
+            params = (Path(custom) if custom
+                      else Path(METADATA_DIR) / "FlightLogParams.xml")
             guid = flightlog_format.configured_guid(str(params))
             expected = flightlog_format.column_count(
                 str(REPO_ROOT / "flightlogs.xml"), guid) if guid else None
@@ -546,18 +566,22 @@ class Preflight:
                       f"{os.path.basename(log_path)}: {type(exc).__name__}: {exc}")
             return
         if expected is None:
-            self.warn(f"flight-log width check: format {guid!r} not found in "
-                      "the repo's flightlogs.xml")
-        elif width != expected:
+            self.warn(f"flight-log width check: format {guid!r} (from "
+                      f"{params.name}) not found in the repo's flightlogs.xml")
+        elif width > expected:
             self.warn(f"flight log {os.path.basename(log_path)} has {width} "
-                      f"columns but FlightLogParams.xml pins format {guid} "
-                      f"with {expected} - what RealityScan does with the "
-                      "missing/extra column(s) is UNMEASURED (cell C0 of "
-                      "testing/NA173_TEST_PLAN.md): settle it on the mini "
-                      "fixture before the first align")
+                      f"columns but {params.name} pins format {guid} with "
+                      f"{expected} - what RealityScan does with the EXTRA "
+                      "column(s) is UNMEASURED: settle it on the mini fixture "
+                      "before the first align")
+        elif width < expected:
+            self.ok(f"flight log {os.path.basename(log_path)}: {width} columns "
+                    f"under {params.name}'s {expected}-column format {guid} - "
+                    "a shorter log imports every column it has (measured "
+                    "2026-09-06, FINDINGS [NA173])")
         else:
             self.ok(f"flight log {os.path.basename(log_path)}: {width} columns "
-                    f"= the pinned format's {expected}")
+                    f"= {params.name}'s format {guid}")
 
     def check_machine(self) -> None:
         if os.name != "nt":
@@ -868,6 +892,68 @@ class Preflight:
             self.ok(f"plan builds: {len(plan['commands'])} command(s)")
         return plan
 
+    def check_module_bounds(self, session: Optional[Session]) -> None:
+        """The batcher's OWN validate_parameters() on the charter's answers.
+
+        A plan that parses is not a plan that runs: main.py calls each
+        module's validate_parameters() after argparse, and the batcher
+        refuses b_target_images below 100 there. The first C0 probe
+        (2026-09-06) was READY here, scheduled, booted and dead inside
+        30 s on exactly that. Only the batch stage is checked: its
+        validator is pure (bounds + the input folder), while the align
+        module's probes the RealityScan install and the zone tree, which
+        preflight covers separately and which does not exist before the
+        run. Skipped when the batch inputs are handed over in-process
+        (no b_input / b_flight_log_path answer: main validates each
+        module right before it runs, after the handover), and when a
+        non-empty batched_images_by_zone already exists - the validator
+        then asks "Overwrite? (y/n)" on stdin and rmtree's on "y", which
+        a read-only preflight must never trigger.
+        """
+        if session is None or "batch" not in self.stages:
+            return
+        answers = dict(session.answers)
+        if not (answers.get("b_input") and answers.get("b_flight_log_path")):
+            return
+        batched = Path(self.charter.results_root) / "batched_images_by_zone"
+        if batched.is_dir() and any(batched.iterdir()):
+            self.warn(f"batch: {batched} already holds a zoning - the batcher's "
+                      "reuse check (batch_inputs.json vs these answers) runs at "
+                      "start-up, not here")
+            return
+        from module_base.parameter import Parameter
+        from modules.image_batcher.batch_directory import BatchDirectory
+        import logging
+        module = BatchDirectory(logging.getLogger("preflight"))
+        enabled = {MODULE_DISPLAY[k] for k in self.stages if k in MODULE_DISPLAY}
+        params: dict = {}
+        params["output_dir"] = Parameter(
+            name="Output Directory", cli_short="o", cli_long="output_dir",
+            type=str, default_value=self.charter.results_root)
+        for key, param in module.get_parameters().items():
+            disable = param.disable_when_module_active
+            if disable is not None:
+                gated = disable if isinstance(disable, list) else [disable]
+                if any(d in enabled for d in gated):
+                    continue
+            raw = answers.get(param.cli_long)
+            if raw is not None:
+                try:
+                    param.set_value(_cast(param.type, raw))
+                except (TypeError, ValueError):
+                    self.block(f"batch: --{param.cli_long} {raw!r} is not a "
+                               f"{getattr(param.type, '__name__', param.type)}")
+                    return
+            params[key] = param
+        module.params = params
+        ok, message = module.validate_parameters()
+        if ok:
+            self.ok("batch parameters pass the module's own validation")
+        else:
+            self.block(f"batch: main.py would refuse this run at start-up - "
+                       f"{message}. Fix the answer in the charter; a plan "
+                       "that parses is not yet a plan that runs.")
+
     # -------------------------------------------------------------- run
     def run(self) -> dict:
         self.check_charter()
@@ -883,6 +969,7 @@ class Preflight:
         self.check_hook_interpreter()
         self.check_machine()
         plan = self.check_plan(session)
+        self.check_module_bounds(session)
         verdict = "ready" if not (self.missing or self.blocking) else "not_ready"
         return {
             "schema": SCHEMA,

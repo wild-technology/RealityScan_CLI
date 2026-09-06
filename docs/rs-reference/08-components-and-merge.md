@@ -1386,3 +1386,14 @@ Facts established after this document was written (2026-08-04), carried here so 
 ### A1. Deleting a component from the delegated CLI does not survive `-save`
 
 Both the named path (`-selectComponent` + `-deleteSelectedComponent`) and the name-free path (`-selectMaximalComponent` → delete → promote → delete → `-importComponent` → `-save`) exit 0 with an empty errors file and leave the saved scene byte-identical on reload — on the GUI-visible instance (three censuses) and on a headless twin holding a copy, where commit rose 93 → 110 GB during the re-import, so the operations did execute in memory. The census peel "works" only because it peels in memory and discards the result by reloading; a workflow that SAVES the peeled state does not keep it. Production rule: never rely on CLI component deletion as a persistent edit — exclude the component's members at the driver level (baseline and enable lists) and leave the object for a GUI delete. [VERIFIED: FINDINGS 2026-08-12]
+
+### A5. The merge peel census is the last XMP writer, and it writes into its own attempt folder (2026-09-06)
+
+Under the CSV identity lane (`RS_LEGACY_XMP_IDENTITY=0`) the align stage writes no sidecars, but
+`MergeZoneComponents.bat`'s peel census still runs `-exportXMPForSelectedComponent`: the F2 merge
+left 316 ordinal `NNNNN.xmp` under `merged/cluster_0/attempt_1_merge_georef/identity_r{0,1,2}/`
+(158 + 80 + 78 = the peel sizes), none beside an image. The copy layout counts the overlap images
+twice (158 cameras = 78 + 80 for 137 unique registered images); `merge_report.json` reports
+`attribution: exact`, `cameras_lost 0`. **The scale gate cannot measure under the CSV lane**: it
+reads `identity_r0` poses from the ALIGN stage, which the CSV capture does not write, so
+`--scale_gate true` passed with both inputs `unmeasured`. [VERIFIED: FINDINGS `[NA173] 2026-09-06`]

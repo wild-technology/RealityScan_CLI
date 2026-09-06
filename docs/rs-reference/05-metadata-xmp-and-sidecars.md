@@ -1972,3 +1972,21 @@ Owner field finding (2026-08-08), matched by this repo's own record (NA167 #3 si
 ### A2. Exported XMPs write `CalibrationPrior="exact"` regardless of the input prior
 
 The export field reflects the export mode, not the prior that drove the solve (B7 semantics). Never census prior MODE from exported sidecars; census the group echo and solved-focal equality. [VERIFIED: FINDINGS 2026-08-08]
+
+### A9. The non-destructive identity capture, run live (2026-09-06)
+
+`AlignZone.bat` with `RS_LEGACY_XMP_IDENTITY=0` (charter `science.identity_capture: csv`) captured
+component membership on NA173 fixture F2 with `-exportLatestComponents` + one
+`-exportRegistration <csv> RegistrationExportParams.xml` per component: the CSV opens with
+`#cameras N`, then `name,x,y,z,yaw,pitch,roll,focal,k1,k2` per camera (format `{E7C3B1A9}` from
+this repo's `calibration.xml`), 78 and 80 rows matching the manifests exactly, and **no `.xmp`
+was written anywhere** - not beside the images, not in the output tree. `-exportRegistration`
+WITH the params XML returned in 1.5 ms (`20576` record, Result 0); the block-forever case
+(sec.15 row 13) is the no-params case only. The per-camera `focal` column is a real readback:
+with prior groups alone and no calibration sidecars, every camera in a family came back with
+its OWN focal (78 distinct of 78; k2 pinned at 0) - see rs-reference 13 A-series and FINDINGS
+`[RECON] 2026-09-06`. The `x,y,z` columns came out in a local frame (-1..8 m) on a scene pinned
+to EPSG:32757: the export CRS is the dialog's "Coordinate system" choice (`calexTrans`
+bundle, sec.14), which the params file does not pin - so the CSV is membership plus
+calibration readback, not a georeference or scale readback (Q10/U13 still open for this
+writer). [VERIFIED: FINDINGS `[NA173] 2026-09-06`]

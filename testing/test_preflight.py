@@ -233,6 +233,51 @@ def test_an_answer_that_reaches_no_command_blocks(tmp_path):
     assert report["verdict"] == "not_ready"
 
 
+def test_batch_bounds_the_module_would_refuse_at_runtime_block(tmp_path):
+    """A plan that parses is not a plan that runs: the first C0 probe
+    (2026-09-06) was READY, scheduled and dead in 30 s on the batcher's
+    own 'Target images per zone must be at least 100'."""
+    originals, nav = _dataset(tmp_path)
+    charter = _charter(tmp_path, originals, nav, stages=("batch", "align"),
+                       answers={"b_input": str(originals),
+                                "b_flight_log_path": str(nav),
+                                "b_target_images": "30"})
+    report = preflight_charter(charter)
+    assert any("at least 100" in b and "would refuse" in b
+               for b in report["blocking"]), report["blocking"]
+    assert report["verdict"] == "not_ready"
+
+
+def test_batch_bounds_pass_is_listed_and_a_bad_type_blocks(tmp_path):
+    originals, nav = _dataset(tmp_path)
+    good = {"b_input": str(originals), "b_flight_log_path": str(nav),
+            "b_target_images": "2000"}
+    report = preflight_charter(_charter(tmp_path, originals, nav,
+                                        stages=("batch", "align"), answers=good))
+    assert any("module's own validation" in c for c in report["checked"])
+    report = preflight_charter(_charter(tmp_path, originals, nav,
+                                        stages=("batch", "align"),
+                                        answers={**good, "b_target_images": "lots"}))
+    assert any("b_target_images" in b and "not a int" in b for b in report["blocking"])
+
+
+def test_batch_bounds_skip_when_inputs_are_handed_over_or_zones_exist(tmp_path):
+    """The chain hands batch its inputs in-process (main validates then),
+    and an existing zoning must not reach the validator's stdin prompt."""
+    originals, nav = _dataset(tmp_path)
+    report = preflight_charter(_charter(tmp_path, originals, nav))
+    assert not any("module's own validation" in c for c in report["checked"])
+    zones = tmp_path / "results" / "batched_images_by_zone" / "zone_1"
+    zones.mkdir(parents=True)
+    (zones / "IMG_0.jpg").write_bytes(b"x")
+    report = preflight_charter(_charter(
+        tmp_path, originals, nav, stages=("batch", "align"),
+        answers={"b_input": str(originals), "b_flight_log_path": str(nav),
+                 "b_target_images": "30"}))
+    assert any("reuse check" in w for w in report["warnings"])
+    assert not any("at least 100" in b for b in report["blocking"])
+
+
 # ------------------------------------- modules, scripts, metadata, hooks
 
 def test_repo_metadata_and_scripts_pass_for_every_realityscan_stage(tmp_path):

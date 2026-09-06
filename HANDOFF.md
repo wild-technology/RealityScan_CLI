@@ -1,5 +1,113 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-09-06 (afternoon) — D1 CSV LANE RAN END TO END, scheduler-owned, read this first
+
+Two RealityScan runs happened this afternoon, both through the lane
+(`rs charter` -> `preflight` -> `plan --validate` -> `launch` -> Task
+Scheduler -> `RUN_STATE.json` -> `rs verify`), both on instance RSAGENT with
+their own cache, both with the source dataset read-only and zero `*.xmp`
+beside any image. The owner's instruction ("D1: design and execute an end to
+end comprehensive test of the CSV workflow. End to end means zones too and
+merging. Ideally no xmp are written") is the sign-off quote in both charters;
+every charter answer was DERIVED by the agent and is listed below for veto.
+Suite: **922 passed, 1 skipped** (`python -m pytest testing -q`, this box). Nothing pushed.
+
+### Done
+
+- **D1 run** (`C:/Users/jonat/Desktop/CoyoteThings/NA173_H2014g_RS/`, charter
+  under `_agent/`): fixture F2 (363 images, 121 per camera, 20:17:36-20:19:36),
+  copy layout, `b_target_images 180 / b_min_zone 100 / b_max_zone 250`,
+  `min_component_size 50`, `identity_capture: csv`. Batch -> 2 zones (229 /
+  200) -> 2 aligns -> merge, 10 min wall, exit 0. Results: zone_1 one
+  component of 78 (all cammid), zone_2 one of 80 (64 cammid + 16 camlower);
+  merge fused them into ONE 158-camera component (`attribution exact`,
+  `cameras_lost 0`, `EVALUATION_READY`). Identity CSVs present with the
+  per-camera focal/k1/k2 readback; **0 XMP** beside images, 316 ordinal XMPs
+  inside `merged/cluster_0/attempt_1_merge_georef/identity_r*/` (the merge
+  peel census, the last XMP writer). `rs verify` OK. FINDINGS
+  `[NA173] 2026-09-06` (run), `[RECON] 2026-09-06` (D1 arm (i)),
+  `[HARNESS] 2026-09-06` (lane defects).
+- **C0 probe** (`C:/Users/jonat/Desktop/CoyoteThings/NA173_C0probe_RS/`):
+  41 cammid frames, params naming the stock 7-column `{0E9850E2}`. Settled:
+  `gpsLogFileFormat` IS honoured (`.rsproj` shows `registered` + `-1`
+  orientation accuracies vs the F2 run's `pose` + 15/15/15); the 13-column
+  log imports all 13 columns under `{D1F2A3B4}`; RealityScan's own event-log
+  `file_format` never follows the params (a stored `{B438A617-2424-...}`
+  string on this box) and is not an oracle. 3 min wall. FINDINGS `[NA173]
+  2026-09-06` (C0 probe); rs-reference 06 A6-A8, 01 A6, 05 A9, 08 A5, 11 A5.
+- **Lane fixes found by the runs**: `eaa2bb4` (`rs launch --stages a,b,c`
+  was refused on the comma), `591a30f` (`rs verify` blocked every copy-layout
+  run on per-zone flight logs; the batch fingerprint now vouches per zone),
+  and this commit: preflight runs the batcher's own `validate_parameters()`
+  on the charter (the first probe launch died at start-up on
+  `b_target_images < 100` after READY) and compares the log width with the
+  charter's `r_flight_log_params`, not the canonical template.
+- **D1 decision narrowed** (`docs/DECISIONS.md`): CSV lane proven end to end;
+  arm (i) of C6 measured (prior groups alone -> every camera its own focal);
+  arms (ii)/(iii) still to run; the scale oracle is BLIND under csv.
+- `testing/NA173_TEST_PLAN.md`: C0 answered, C1 done (F2), C2 partial
+  (model + export half pending), C6 arm (i), C12 done, C13 re-estimated.
+- Memory: `honeybadger-box` corrected (hostname RiverOtter; scheduler notes),
+  `owner-wants-no-prompts` (feedback).
+
+### Running
+
+Nothing. Both scheduled tasks were deleted after their runs; RSAGENT's lock
+is free; RealityScan's CRTemp logs are copied under each workspace's
+`_agent/logs/rs_logs/`.
+
+### Charter answers derived by the agent (veto here)
+
+| Charter | Answer | Derived from |
+|---|---|---|
+| F2 | `b_input` = `_agent/fixture/F2` (a COPY of the 120 s window, never the source tree) | "end to end ... zones too and merging" needs >= 2 zones at fixture cost |
+| F2 | `b_target_images 180 / b_min_zone 100 / b_max_zone 250`, copy layout | two overlapping zones of ~200; pool layout would point RealityScan's writes at the source |
+| F2 | `science.min_component_size 50` | the test plan's F2 row |
+| F2 | `identity_capture: csv`, ladder `merge_first`, neighbour scope, overlap gate, loss 0.0025, `scale_gate true` | the CSV workflow under test with the production merge defaults |
+| C0 | 41 cammid frames, `b_target_images 100 / b_min_zone 10 / b_max_zone 150`, `min_component_size 10`, `r_flight_log_params` -> the `{0E9850E2}` copy | cell C0's decision rule; the batcher's >= 100 bound |
+
+### Ranked loose ends
+
+1. **Scale under the CSV lane.** The scale oracle reads `identity_r0` poses,
+   which the CSV capture does not write, so `--scale_gate true` passed with
+   both inputs `unmeasured`. Either pin the Export Registration coordinate
+   system (`calexTrans` bundle; a GUI-saved params XML is rs-reference 05
+   Q20) so the identity CSV carries UTM positions and teach
+   `scale_oracle` to read it, or keep `xmp` the default. Owner call (D1).
+2. **C6 arms (ii) and (iii)** on F0/F2 (XMP sidecars = known-good; neither
+   = known-bad) to finish D1's prior-group question; arm (i) is measured.
+3. **C2's model + export half** on the F2 assembly (158 cameras) - D12/D13
+   live proof; then C13 at full scale (F2 measured 10 min for 363 images).
+4. **Registration on this rig**: camlower and zeuss barely join the cammid
+   strip (34-40 % per zone). Science, not lane; the owner may want C4/C5
+   (hardness, Zeuss mount) before C13.
+5. The installed `flightlogs.xml` has drifted from the repo copy (06 A8);
+   `install_all_managed` never corrects an existing id.
+6. The merge peel census still writes ordinal XMPs (inside its attempt
+   folder); porting it to `-exportRegistration` is optional hygiene.
+7. `stash@{0}` (the 90 on-disk deletions from 2026-09-05 22:25) is still
+   parked: pop or drop. Push when the owner says so.
+
+### Artifact locations
+
+- D1 run: `C:/Users/jonat/Desktop/CoyoteThings/NA173_H2014g_RS/` -
+  `_agent/{RUN_CHARTER.json,RUN_STATE.json,build_fixture.py,analyze_csv_run.py,
+  launch/,logs/,logs/rs_logs/}`, `aligned_components/zone_{1,2}/{identity/,*.rsalign,
+  *.manifest.json,align_inputs.json,zone_N.rsproj}`, `merged/merge_report.json`.
+- C0 probe: `C:/Users/jonat/Desktop/CoyoteThings/NA173_C0probe_RS/` (same
+  shape; `_agent/FlightLogParams_probe_0E9850E2.xml`).
+- Fixtures: `_agent/fixture/F2` (1.81 GB) and `_agent/fixture/F0` (0.2 GB) -
+  copies, safe to delete.
+
+### Exact next commands
+
+```
+python -m pytest testing -q
+python rs.py verify --workspace C:/Users/jonat/Desktop/CoyoteThings/NA173_H2014g_RS
+python rs.py status --charter "C:/Users/jonat/Desktop/CoyoteThings/NA173_H2014g_RS/_agent/RUN_CHARTER.json"
+python C:/Users/jonat/Desktop/CoyoteThings/NA173_H2014g_RS/_agent/analyze_csv_run.py
+```
+
 ## 2026-09-06 — RECONCILED + REVIEWED on `recon-tmp` (a worktree), read this first
 
 The owner's local `agent-native-execution` branch (2 commits, 2026-08-31 /

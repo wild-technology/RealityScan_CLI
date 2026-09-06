@@ -1671,3 +1671,17 @@ Facts established after this document was written (2026-08-04), carried here so 
 ### A2. Recovery after a hard-killed instance
 
 After a mid-operation instance was hard-killed, the next boot answered `-getStatus` but ignored `-quit`, blocking `run_batch_script`'s own shutdown path for 15 min; a stale `<instance>.lock` with a dead PID then failed the first relaunch outright. Validated recipe: stop ALL `RealityScan.exe` PIDs and any lingering `-waitCompleted` clients, delete `Errors\*.lock` and the `errors_`/`results_` markers for that instance, then relaunch. `schtasks /End` does **not** kill the driver python or its `.bat`/RealityScan children; enumerate them by `Win32_Process CommandLine` and stop them explicitly. [VERIFIED: FINDINGS 2026-08-09]
+
+### A6. RealityScan keeps a per-session JSON log, zipped, under CRTemp (2026-09-06)
+
+Besides the progress file (sec.8) and the results log (sec.9), RealityScan 2.2 writes
+`%LOCALAPPDATA%/Temp/CRTemp/{guid}/YY_MM_DD[_n].log` per session: a PK zip archive holding one
+`log_HH_MM_SS.json` with `Metadata` (start time, hashed machine ids) and `Events[]` of
+`EventId` / `Type` / `Timestamp` / `Data`. The ids are the process ids of sec.8: `65536` image
+import (`ImageCount`, `import_image_geometry_count`), `20598` flight-log import (`file_format`,
+`camera_mount`, `euler_angle_order`), `65537` align (the effective `align_*` settings,
+`Count` = components, `align_largest_component_camera_count`, `Duration`), `20576` export
+(`Format`, `Exporter` = the calibration-format GUID for CSV exports), `41061/41063/41064` the
+getStatus-family polls. It is telemetry (`operationLog`), ephemeral, and one file per boot - copy
+it into the run's evidence folder right after the run (`_agent/logs/rs_logs/`). The `20598`
+`file_format` value is NOT the format that parsed (06 A7). [VERIFIED: FINDINGS `[NA173] 2026-09-06`]

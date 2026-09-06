@@ -1965,3 +1965,14 @@ Settings (`-set` from the params XML, every key it names) → pin project and ou
 ### A3. `schtasks /End` does not kill the run
 
 Ending a scheduled task stops the task's process, not the driver python or its `.bat` / RealityScan children. Enumerate by `Win32_Process CommandLine` and stop them explicitly; a hard-killed instance then needs the recovery recipe in `01` A2. [VERIFIED: FINDINGS 2026-08-09]
+
+### A5. First scheduler-owned run of the agent lane (2026-09-06)
+
+`rs launch` (CRLF `.cmd` + `.vbs` shim, `RUN_STATE.json`, `.rc` exit file) plus the printed
+Task Scheduler lines drove NA173 fixture F2 (363 images: batch, two zone aligns, merge) hidden
+and unattended in 10 min; a 30 s poll on `RUN_STATE.json` + the errors marker + the `.rc` file
+saw every transition. Two lane defects surfaced and were fixed the same day: the multi-stage
+`--stages batch,align,merge` list was refused as a cmd-unsafe string (comma), and `rs verify`
+blocked the healthy copy-layout result on per-zone flight logs. The scheduler's start time is
+launch time + 2 min, so lines run later warn that the start is past - the explicit run line
+starts the task regardless. [VERIFIED: FINDINGS `[HARNESS] 2026-09-06`]
