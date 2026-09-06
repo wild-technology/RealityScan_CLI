@@ -461,11 +461,24 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
     CLI fact (smoke E2E, 2026-07-24): a merge/align leaves the SOURCE
     components in the scene alongside the freshly fused one - the peel
     of a fused 78+42 pair reads [120, 78, 42]. So peel entries are
-    attributed LARGEST FIRST against the remaining inputs (duplicate-path
-    exports share no camera identity, so a fusion's count is EXACTLY the
-    sum of its inputs); an entry matching no remaining subset but equal
-    to an already-consumed input's count is that input's RESIDUAL SOURCE
-    component - expected, recorded, never adopted.
+    attributed LARGEST FIRST against the remaining inputs; an entry
+    matching no remaining subset but equal to an already-consumed input's
+    count is that input's RESIDUAL SOURCE component - expected, recorded,
+    never adopted.
+
+    A fusion's expected count is the size of its inputs' UNIQUE IMAGE
+    UNION, not the sum of their camera_counts. The batcher copies every
+    overlap image into each zone it touches, so two zones' components hold
+    the same basenames at different paths; RealityScan 2.2 fuses by image
+    CONTENT (D7, 2026-07-24) and collapses those duplicates, so the fused
+    component carries ONE camera per unique image. Summing camera_counts
+    therefore over-states every cross-zone fusion by exactly the duplicate
+    count and rejects it as a loss. Measured NA165/H2063 2026-09-06:
+    zone_3/C3 (206) + zone_7/C2 (537) share 202 basenames; RealityScan
+    peeled 541 = the union; the sum 743 rejected a byte-perfect fusion as
+    'ambiguous'. Three of six rejected cross-zone fusions were lossless on
+    unique cameras. Singletons are unaffected (a zone never holds a
+    basename twice), so same-zone behaviour is unchanged.
 
     Returns (results, confidence). Each result dict carries its
     peel_index (-> <name>_c<K>.rsalign), camera_count, inputs (consumed
@@ -483,7 +496,10 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
     considered when no exact one exists, and each adopted result carries the
     `loss` it was accepted with so the report can state it."""
     by_key = {component_analysis.component_key(m): m for m in input_manifests}
+    # camera_count is still what a RESIDUAL source component peels as (its
+    # own images, duplicates included), so it stays the residual signature.
     remaining = {k: m['camera_count'] for k, m in by_key.items()}
+    images_of = {k: frozenset(m['images']) for k, m in by_key.items()}
     consumed_counts: list[int] = []
     results, confidence = [], 'exact'
 
@@ -495,21 +511,27 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
         keys = sorted(remaining)
         exact_subsets, lossy_subsets = [], []
 
-        def search(i, acc, chosen):
-            if acc >= count:
-                if acc == count:
+        # Same DFS as before (include-first, so candidate order is
+        # unchanged) but the accumulator is the image UNION, whose size is
+        # the count a content-fused component actually peels as. Union size
+        # is monotone in the subset, so stopping once it reaches `count`
+        # prunes exactly as the old integer sum did.
+        def search(i, acc_images, chosen):
+            expected = len(acc_images)
+            if chosen and expected >= count:
+                if expected == count:
                     exact_subsets.append(list(chosen))
-                elif acc - count <= loss_tolerance and chosen:
-                    lossy_subsets.append((acc - count, list(chosen)))
+                elif expected - count <= loss_tolerance:
+                    lossy_subsets.append((expected - count, list(chosen)))
                 return
             if i >= len(keys):
                 return
             chosen.append(keys[i])
-            search(i + 1, acc + remaining[keys[i]], chosen)
+            search(i + 1, acc_images | images_of[keys[i]], chosen)
             chosen.pop()
-            search(i + 1, acc, chosen)
+            search(i + 1, acc_images, chosen)
 
-        search(0, 0, [])
+        search(0, frozenset(), [])
         if len(exact_subsets) == 1:
             matched = exact_subsets[0]
         elif len(exact_subsets) > 1:
@@ -983,13 +1005,20 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                 os.path.join(adir, 'rslog.txt'),
                 [m['rsalign'] for m in subset])
             input_cams = sum(m['camera_count'] for m in subset)
-            tol = loss_budget(input_cams, loss_tolerance_frac)
+            # Loss is measured against the UNIQUE image union, for the same
+            # reason attribute_result matches against it: the scene holds
+            # both copies of every overlap image (input_cams counts them
+            # twice), but the fusion RealityScan hands back holds one. A
+            # budget or a loss figured from the sum would call a perfect
+            # cross-zone fusion a loss of exactly the duplicate count.
+            input_unique = len(set().union(*(set(m['images']) for m in subset)))
+            tol = loss_budget(input_unique, loss_tolerance_frac)
             attributed, confidence = attribute_result(subset, sizes, logger,
                                                       loss_tolerance=tol)
             adopted = [r for r in attributed if r['inputs']]
             residuals = [r for r in attributed if r['residual']]
             adopted_cams = sum(r['camera_count'] for r in adopted)
-            lost = input_cams - adopted_cams if adopted else None
+            lost = input_unique - adopted_cams if adopted else None
 
             entry = {'attempt': attempt_no, 'label': step['label'],
                      'mode': step['mode'], 'workflow_success': result.success,
@@ -998,7 +1027,10 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                      'scope': merge_scope, 'target': target_key,
                      'input_count': len(subset), 'adopted_count': len(adopted),
                      'residual_count': len(residuals),
-                     'camera_delta': (adopted_cams - input_cams) if adopted else None,
+                     'input_cameras': input_cams,
+                     'input_unique_images': input_unique,
+                     'duplicate_cameras': input_cams - input_unique,
+                     'camera_delta': (adopted_cams - input_unique) if adopted else None,
                      'cameras_lost': lost,
                      'loss_tolerance': tol,
                      'loss_tolerance_frac': loss_tolerance_frac,
@@ -1140,6 +1172,11 @@ def run_fingerprint(input_keys, ladder_name, merge_scope, pair_gate,
     sorted() - because input order does not affect partitioning.
     """
     return {
+        # Bumped when the ACCEPTANCE ARITHMETIC changes, so a report whose
+        # clusters "converged" under the old sum-based accounting - which
+        # rejected every cross-zone fusion - is never resumed by code that
+        # would have accepted them.
+        'attribution': 'unique-image-union',
         'inputs': sorted(input_keys),
         'ladder': ladder_name,
         'merge_scope': merge_scope,

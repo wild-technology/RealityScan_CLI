@@ -3280,6 +3280,57 @@ from that run.
   (2026-09-02)
   ESTABLISHED
 
+- **Every cross-zone fusion RealityScan produced was rejected by our own
+  arithmetic; the solver was never the problem.** `attribute_result`
+  matched each peeled component against subset SUMS of `camera_count`,
+  on a premise its own docstring stated: "duplicate-path exports share no
+  camera identity, so a fusion's count is EXACTLY the sum of its inputs."
+  That was superseded by D7 (2026-07-24: RealityScan 2.2 fuses by image
+  CONTENT, path identity not required) and never revisited. The batcher
+  copies every overlap image into each zone it touches, so two zones'
+  components share basenames at different paths; a content fusion
+  collapses them and peels as the UNIQUE union. Measured NA165/H2063,
+  2026-09-06, every cross-zone attempt in the run:
+
+      pair                 sum   unique  dupes  RS peel   truth
+      zone_3/3 + zone_7/1   760    756      4     756    lossless, REJECTED
+      zone_3/3 + zone_7/2   743    541    202     541    lossless, REJECTED
+      zone_2/8 + zone_5/4  1488   1248    240    1240    8 shed (0.6%), REJECTED
+      zone_5/5 + zone_5/9  1110   1110      0    1029    same zone, 81 shed - correctly refused
+
+  Two byte-perfect fusions and one near-perfect one were carried unfused,
+  and the deliverable had ZERO cross-zone fusions. No `loss_tolerance` could
+  fix it - the second case needs 27% - because the error is not a loss, it is
+  the duplicate count. FIXED: the subset search accumulates the image UNION
+  (monotone, so it prunes exactly as the old sum did), and the loss budget
+  and `cameras_lost` are figured against the subset's unique union. The run
+  fingerprint now carries `attribution: unique-image-union` so a report
+  whose clusters "converged" under the old arithmetic is never resumed.
+  Covered by `TestAttributionUniqueUnion` with these exact numbers.
+  Note the report entry now records `input_cameras`, `input_unique_images`
+  and `duplicate_cameras` side by side, so the next reader does not have to
+  rediscover this. [NA165] (2026-09-06)
+  ESTABLISHED
+
+- **CORRECTION to the 2026-09-02 patch review: the `scale_oracle` CSV port
+  was withheld on a false premise, and is now landed.** The adversarial
+  reviewer argued the identity CSV's x,y,z "appear to be in the nav frame",
+  which would make distance ratios trivially 1.000 and turn a fail-closed
+  gate fail-open. One `head` of a real CSV refutes it:
+
+      identity CSV   x=-7.88     y=0.76       z=-1.12     <- model frame
+      flight log     X=710380    Y=8430032    Alt=-1487   <- UTM
+
+  Model frame is exactly what `scale_oracle` expects - its own docstring
+  says so ("the model frame, not UTM; irrelevant, because distance ratios
+  are rigid-invariant"). No frame-detection logic ever existed or was
+  needed; the gate went dark only because its INPUT (identity_r<K> XMPs)
+  stopped being produced. The port restores that input. The lesson is
+  about review, not code: a premise that one command can check must be
+  checked, however confident the reviewer sounds. I accepted an
+  "appears to be" without looking. [NA165] (2026-09-06)
+  ESTABLISHED
+
 - **A merge that cannot resume will eventually cost you the whole run.**
   `merge_zones` wrote `merge_report.json` after every cluster but had no way
   to READ it back, so any interruption meant re-merging every input from

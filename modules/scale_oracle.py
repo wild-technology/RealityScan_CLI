@@ -25,10 +25,18 @@ merge_zones before any model is generated, so it must not live beside the unit
 tests. A 0.236-scale H2024 component passed every existing check and reached a
 deliverable because nothing called this module (review finding D3).
 
-Positions come from the pose XMPs of an identity_r<K> harvest directory
-(zone-scene exports carry real stems - B10 only degrades imported-
-component scenes). Components are separated by successive difference,
-exactly as the align workflow's identity loop defines them.
+Positions come from whichever identity record the workflow left on disk:
+`identity/<component>.csv` (-exportRegistration - the default since the
+sidecar removal, one file per component, so membership needs no
+reconstruction), or the pose XMPs of an identity_r<K> harvest directory,
+which fused components and RS_LEGACY_XMP_IDENTITY=1 runs still produce and
+which are separated by successive difference. Both report camera centres
+in the project's own output frame, so the distance ratio means the same
+thing either way.
+
+The CSV reader was added 2026-09-02: the default align path writes no
+harvest at all, so every zone component came back 'unmeasured' - a
+deliverable gate that measured nothing.
 """
 from __future__ import annotations
 
@@ -55,6 +63,55 @@ def load_solved_positions(identity_dir: str) -> dict[str, tuple]:
             raw = m.group(1) or m.group(2)
             out[os.path.splitext(os.path.basename(path))[0].lower()] = tuple(
                 float(v) for v in raw.split())
+    return out
+
+
+# Column order pinned by the repo's own calibration.xml, RUMI format
+# {E7C3B1A9-...-0A48}: "#name,x,y,z,yaw,pitch,roll,focal,k1,k2". The
+# trailing columns are the per-camera prior readback, not geometry.
+CSV_XYZ_COLUMNS = (1, 2, 3)
+
+
+def parse_identity_csv(path: str) -> dict[str, tuple]:
+    """{stem_lower: (x, y, z)} from ONE -exportRegistration CSV.
+
+    A row that will not parse is DROPPED rather than defaulted: a camera
+    invented at the origin would drag the centroid and bias the very ratio
+    this module gates deliverables on.
+    """
+    out = {}
+    try:
+        with open(path, encoding='utf-8-sig', errors='replace') as fh:
+            rows = fh.readlines()
+    except OSError:
+        return out
+    for line in rows:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = [p.strip().strip('"') for p in line.split(',')]
+        if len(parts) <= CSV_XYZ_COLUMNS[-1] or not parts[0]:
+            continue
+        try:
+            xyz = tuple(float(parts[i]) for i in CSV_XYZ_COLUMNS)
+        except ValueError:
+            continue
+        out[os.path.splitext(parts[0])[0].lower()] = xyz
+    return out
+
+
+def load_identity_csv_positions(identity_dir: str) -> dict[str, tuple]:
+    """{stem_lower: (x, y, z)} for a WHOLE align output, from identity/*.csv.
+
+    The union over the per-component CSVs is the exact analogue of the old
+    identity_r0 harvest, whose lap 0 held every component's poses - so a
+    caller that intersects this with one manifest's image list stays
+    per-component with no other change.
+    """
+    out = {}
+    for path in sorted(glob.glob(os.path.join(glob.escape(identity_dir),
+                                              '*.csv'))):
+        out.update(parse_identity_csv(path))
     return out
 
 
@@ -98,6 +155,20 @@ def solved_position_cloud(identity_dir: str) -> list[tuple]:
     frame, not UTM; irrelevant, because distance ratios are rigid-invariant
     and the scale factor is exactly what is measured."""
     return list(load_solved_positions(identity_dir).values())
+
+
+def component_position_cloud(components_dir: str, component: str) -> list[tuple]:
+    """EVERY solved position of ONE component, identity-free.
+
+    CSV first: `identity/<component>.csv` already holds exactly that
+    component's cameras, so no directory convention is needed. Harvest
+    second, NOT instead: MergeZoneComponents.bat still peels one component
+    per identity_r<K>, so a fused export's identity_r0 IS its cloud.
+    """
+    csv_path = os.path.join(components_dir, 'identity', component + '.csv')
+    if os.path.isfile(csv_path):
+        return list(parse_identity_csv(csv_path).values())
+    return solved_position_cloud(os.path.join(components_dir, 'identity_r0'))
 
 
 def member_multiset(manifest: dict, components_root: str) -> list[str]:
@@ -222,11 +293,21 @@ def scale_for_images(images: list, components_dir: str, nav: dict) -> dict | Non
     Preferred over report() when the caller already knows exactly which images
     belong to the component: it needs no successive-difference reconstruction
     and cannot mis-attribute a component by ordinal position. Returns None when
-    the component cannot be measured (no harvest on disk, or fewer than 30
-    images shared between the harvest and the nav table) - callers must treat
+    the component cannot be measured (no identity record on disk, or fewer
+    than 30 images shared between it and the nav table) - callers must treat
     None as UNMEASURED, never as passing.
+
+    identity/*.csv first, identity_r0 second. The default align path writes
+    only the CSVs, so reading the harvest alone returned {} for every zone
+    component and merge_zones reported 'unmeasured' across the board. The
+    harvest read is kept, not replaced: fused components still get one from
+    MergeZoneComponents.bat, as do RS_LEGACY_XMP_IDENTITY=1 runs.
     """
-    solved = load_solved_positions(os.path.join(components_dir, 'identity_r0'))
+    solved = load_identity_csv_positions(os.path.join(components_dir,
+                                                      'identity'))
+    if not solved:
+        solved = load_solved_positions(os.path.join(components_dir,
+                                                    'identity_r0'))
     if not solved:
         return None
     members = {os.path.splitext(str(i))[0].lower() for i in images}

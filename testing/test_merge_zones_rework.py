@@ -168,5 +168,73 @@ class TestLoadInputs(unittest.TestCase):
             self.assertEqual(picked[0]['component'], 'zone_x_c0')
 
 
+class TestAttributionUniqueUnion(unittest.TestCase):
+    """Cross-zone fusions peel as the UNIQUE image union, not the camera sum.
+
+    The batcher copies every overlap image into each zone it touches, so two
+    zones' components hold the same basenames at different paths, and
+    RealityScan 2.2 fuses by image content (D7) and collapses them. Every
+    number below is measured from NA165/H2063 on 2026-09-06, where the old
+    sum-based arithmetic rejected three lossless cross-zone fusions.
+    """
+
+    @staticmethod
+    def _pair(shared, own_a, own_b, za='zone_3', ca='c3', zb='zone_7', cb='c2'):
+        s = [f'shared_{i}.jpg' for i in range(shared)]
+        a = mk(za, ca, shared + own_a, None,
+               images=s + [f'{za}_{ca}_own_{i}.jpg' for i in range(own_a)])
+        b = mk(zb, cb, shared + own_b, None,
+               images=s + [f'{zb}_{cb}_own_{i}.jpg' for i in range(own_b)])
+        return a, b
+
+    def test_perfect_cross_zone_fusion_is_exact_on_union(self):
+        # zone_3/C3 206 + zone_7/C2 537, 202 shared -> union 541; RS peeled
+        # 541 alongside both sources. Sum-based code rejected this.
+        a, b = self._pair(202, 4, 335)
+        res, conf = merge_zones.attribute_result([a, b], [541, 206, 537], logger)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual(res[0]['inputs'], ['zone_3/c3', 'zone_7/c2'])
+        self.assertEqual(len(res[0]['members']), 541)
+        self.assertEqual(res[0]['loss'], 0)
+        self.assertTrue(res[1]['residual'])
+        self.assertTrue(res[2]['residual'])
+
+    def test_small_duplicate_count_still_exact(self):
+        # zone_3/C3 206 + zone_7/C1 554, 4 shared -> union 756, peel 756.
+        a, b = self._pair(4, 202, 550, zb='zone_7', cb='c1')
+        res, conf = merge_zones.attribute_result([a, b], [756], logger)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual(res[0]['inputs'], ['zone_3/c3', 'zone_7/c1'])
+
+    def test_sum_of_camera_counts_is_no_longer_a_match(self):
+        # 743 is the camera SUM. A content fusion never peels as that, so it
+        # must not be attributed as one - that was the old false positive.
+        a, b = self._pair(202, 4, 335)
+        res, conf = merge_zones.attribute_result([a, b], [743], logger)
+        self.assertEqual(conf, 'ambiguous')
+        self.assertEqual(res[0]['inputs'], [])
+
+    def test_real_loss_is_measured_against_union_not_sum(self):
+        # zone_2/C8 464 + zone_5/C4 1024, 240 shared -> union 1248. RS peeled
+        # 1240: 8 genuinely shed cameras, NOT the 248 the sum implied.
+        a, b = self._pair(240, 224, 784, za='zone_2', ca='c8', zb='zone_5', cb='c4')
+        res, conf = merge_zones.attribute_result([a, b], [1240], logger,
+                                                 loss_tolerance=8)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual(res[0]['inputs'], ['zone_2/c8', 'zone_5/c4'])
+        self.assertEqual(res[0]['loss'], 8)
+        # and with no budget it is correctly refused
+        res, conf = merge_zones.attribute_result([a, b], [1240], logger)
+        self.assertEqual(conf, 'ambiguous')
+
+    def test_same_zone_disjoint_inputs_unchanged(self):
+        # No shared basenames -> union == sum, identical to the old behaviour.
+        a = mk('z1', 'c0', 78, None)
+        b = mk('z1', 'c1', 42, None)
+        res, conf = merge_zones.attribute_result([a, b], [120, 78, 42], logger)
+        self.assertEqual(conf, 'exact')
+        self.assertEqual(res[0]['inputs'], ['z1/c0', 'z1/c1'])
+
+
 if __name__ == '__main__':
     unittest.main()

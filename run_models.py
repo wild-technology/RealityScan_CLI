@@ -71,19 +71,26 @@ def resolve_scale(key: str, comp: dict, report: dict,
                   workspace: Workspace, union_log: str,
                   logger: logging.Logger) -> tuple[str, str, float | None]:
     """(status, why, median) - stem verdict from the report, else the
-    quantile oracle on the component's own harvest."""
+    quantile oracle on the component's own identity record."""
     verdict = report.get('input_scales', {}).get(key)
     if verdict and verdict.get('status') != 'unmeasured':
         return (verdict['status'], verdict.get('explanation', ''),
                 verdict.get('median'))
     rsalign = comp.get('rsalign', '')
     manifest_path = rsalign + '.manifest.json'
-    identity = os.path.join(os.path.dirname(rsalign), 'identity_r0')
-    if not (os.path.isfile(manifest_path) and os.path.isdir(identity)):
-        return 'unmeasured', 'no manifest or harvest beside the export', None
+    if not os.path.isfile(manifest_path):
+        return 'unmeasured', 'no manifest beside the export', None
     with open(manifest_path, encoding='utf-8') as fh:
         manifest = json.load(fh)
-    solved = scale_oracle.solved_position_cloud(identity)
+    # identity/<component>.csv first, identity_r0 harvest second: the
+    # default align path writes only CSVs (so this used to find nothing for
+    # an unfused component), while a fused export still carries the harvest
+    # MergeZoneComponents.bat peeled for it.
+    solved = scale_oracle.component_position_cloud(
+        os.path.dirname(rsalign),
+        os.path.splitext(os.path.basename(rsalign))[0])
+    if not solved:
+        return 'unmeasured', 'no identity record beside the export', None
     members = scale_oracle.member_multiset(
         manifest, str(workspace.aligned))
     nav = scale_oracle.nav_position_multiset(union_log, members)
