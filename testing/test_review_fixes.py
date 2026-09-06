@@ -361,3 +361,16 @@ def test_model_to_final_fallback_moves_its_own_marker_and_runs_through_run():
     assert 'call :run -unwrap "%UnwrapFallback%" || exit /b 1' in fallback
     assert "-delegateTo %RS_TARGET% -unwrap" not in fallback
     assert "lastError is sticky only while the instance is" in text
+
+
+def test_launch_accepts_a_comma_separated_stage_list(tmp_path, capsys):
+    # the comma is the stage grammar's separator, not a cmd metacharacter
+    # (refused as one on the first live launch, 2026-09-06)
+    charter = _ready(tmp_path)
+    rc = rs_mod.main(["launch", "--charter", str(charter.path), "--stages", "georeference,batch",
+                      "--task-name", "RS_T", "--start", "03:00"])
+    assert rc == 0, capsys.readouterr().err
+    out = capsys.readouterr().out
+    assert '--stages "georeference,batch"' in (tmp_path / "results" / "_agent" / "launch").glob("*.cmd").__next__().read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        rs_mod.write_launcher(charter, str(charter.path), ["align", "b&d"], "RS_T")

@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -329,8 +330,13 @@ def write_launcher(charter: RunCharter, charter_path: str,
     rc_path = launch_dir / f"{_slug(task_name)}_{stamp}.rc"
     log_path = logs / f"launch_{_slug(task_name)}_{stamp}.log"
     stage_arg = ",".join(stages) if stages else ""
-    _assert_cmd_safe(str(REPO), charter_path, str(agent_ws), python, stage_arg,
-                     task_name)
+    # The stage list is OUR token grammar, not a path: commas are its
+    # separator and it is written quoted, so it is checked against the
+    # grammar rather than the cmd metacharacter set (which lists ',').
+    if stage_arg and not re.fullmatch(r"[a-z_]+(,[a-z_]+)*", stage_arg):
+        raise ValueError(f"--stages {stage_arg!r}: stage names are lowercase "
+                         "words separated by commas, nothing else")
+    _assert_cmd_safe(str(REPO), charter_path, str(agent_ws), python, task_name)
     run_line = (f'"{python}" "{REPO / "rs.py"}" run --charter "{charter_path}"'
                 + (f' --stages "{stage_arg}"' if stage_arg else "")
                 + f' --foreground > "{log_path}" 2>&1')
