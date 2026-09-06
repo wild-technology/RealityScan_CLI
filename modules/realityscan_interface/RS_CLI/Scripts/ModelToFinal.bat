@@ -72,13 +72,28 @@ if /i "%tex_preset%" == "fixed50"   set "TexParams=%MetadataDir%\Texturing_Fixed
 if not defined TexParams goto :badPreset
 if not exist "%TexParams%" goto :noTexParams
 
-:: 80% per pass (owner 2026-08-07), matching GenerateModel.bat's
-:: SimplifySmooth: 0.80^4 ~ 41% of input triangles over the four passes.
-:: The previous SimplifyAutomationParams.xml (70%, ~24%) produced the
-:: 2026-08-04 ON2026 deliverable; the presets differ ONLY in
-:: mvsFltTargetTrisCountRel.
-set "SimplifyParams=%MetadataDir%\SimplifySmooth_80per_Params.xml"
+:: Simplification target (D12, owner 2026-09-06), matching GenerateModel.bat:
+:: 75%% KEPT per pass until the model is at or under RS_TARGET_TRIS
+:: triangles; a model already under needs no pass and is exported as is.
+:: (Until 2026-09-06: four fixed 80%% passes = 41%% of the input, whatever
+:: the input was.)
+if not defined RS_TARGET_TRIS set "RS_TARGET_TRIS=10000000"
+set "SimplifyTarget=%MetadataDir%\Simplify75per_Params.xml"
 set "ReprojParams=%MetadataDir%\ReprojectionParams.xml"
+:: Model MEASUREMENT (D12, owner 2026-09-06). -selectModel on a missing name
+:: inside a populated component is a SILENT no-op (FINDINGS 2026-09-03,
+:: rs-reference 12 F-102), so every destructive step below proves its
+:: selection by reading the model report back, and the simplification is
+:: driven by the MEASURED triangle count, not a fixed pass count:
+::   -exportReport <html> "<install>\Reports\SelectedModel.html"   (~4 s)
+:: parsed by modules/realityscan_interface/model_report.py into
+:: RS_MODEL_NAME / RS_MODEL_TRIS / RS_MODEL_TEXTURED / ... RealityScanCLI sets
+:: RS_PYTHON to its own interpreter; a hand-run script falls back to the
+:: `python` on PATH (the hooks' interpreter).
+if not defined RS_PYTHON set "RS_PYTHON=python"
+set "ModelReportPy=%~dp0..\..\model_report.py"
+for %%I in (%RealityScan%) do set "ReportTemplate=%%~dpIReports\SelectedModel.html"
+set "ReportHtml=%TEMP%\rs_model_report_modeltofinal.html"
 
 :: The UV layout of the FINAL model comes from the unwrap preset, not from
 :: the texture preset - with simplify on, the exported model is the
@@ -167,11 +182,9 @@ if defined CULL_BOOL (
     call :run -cleanModel || goto :fail
     call :run -renameSelectedModel "Culled" || goto :fail
 
-    call :run -selectModel "CullTemp1" || goto :fail
-    call :run -deleteSelectedModel || goto :fail
-    call :run -selectModel "CullTemp2" || goto :fail
-    call :run -deleteSelectedModel || goto :fail
-    call :run -selectModel "Culled" || goto :fail
+    call :delete_verified "CullTemp1"
+    call :delete_verified "CullTemp2"
+    call :select_verified "Culled" || goto :fail
 )
 
 echo Texturing model
@@ -181,30 +194,32 @@ set "final_source=HighPolyTextured"
 
 if not defined SIMPLIFY_BOOL goto :exportStage
 
-echo Simplifying model - four simplify/clean passes
-for /L %%I in (1,1,3) do (
-    call :run -simplify "%SimplifyParams%" || goto :fail
-    call :run -renameSelectedModel "SimplifyPass%%IRaw" || goto :fail
-    call :run -cleanModel || goto :fail
-    call :run -renameSelectedModel "SimplifyPass%%IClean" || goto :fail
-)
-call :run -simplify "%SimplifyParams%" || goto :fail
-call :run -renameSelectedModel "SimplifyPass4Raw" || goto :fail
+echo Simplifying model - 75%% per pass until at or under %RS_TARGET_TRIS% triangles
+set /a pass=0
+call :select_verified "HighPolyTextured" || goto :fail
+echo   start: %RS_MODEL_TRIS% triangles
+:simplifyLoop
+if %RS_MODEL_TRIS% LEQ %RS_TARGET_TRIS% goto :simplifyDone
+set /a pass+=1
+call :run -simplify "%SimplifyTarget%" || goto :fail
+call :run -renameSelectedModel "SimplifyPass%pass%Raw" || goto :fail
 call :run -cleanModel || goto :fail
+call :run -renameSelectedModel "SimplifyPass%pass%" || goto :fail
+call :select_verified "SimplifyPass%pass%" || goto :fail
+echo   pass %pass%: %RS_MODEL_TRIS% triangles
+goto :simplifyLoop
+:simplifyDone
+:: Already at or under the target: the textured high-poly is exported as
+:: is (final_source is still HighPolyTextured).
+if %pass% EQU 0 goto :exportStage
 call :run -renameSelectedModel "Simplified" || goto :fail
 
 echo Deleting intermediate simplification models
-for /L %%I in (1,1,3) do (
-    call :run -selectModel "SimplifyPass%%IRaw" || goto :fail
-    call :run -deleteSelectedModel || goto :fail
-    call :run -selectModel "SimplifyPass%%IClean" || goto :fail
-    call :run -deleteSelectedModel || goto :fail
-)
-call :run -selectModel "SimplifyPass4Raw" || goto :fail
-call :run -deleteSelectedModel || goto :fail
+for /L %%I in (1,1,%pass%) do call :delete_verified "SimplifyPass%%IRaw"
+for /L %%I in (1,1,%pass%) do if %%I LSS %pass% call :delete_verified "SimplifyPass%%I"
 
 echo Unwrapping simplified model
-call :run -selectModel "Simplified" || goto :fail
+call :select_verified "Simplified" || goto :fail
 call :try_unwrap || goto :fail
 
 echo Reprojecting texture onto simplified model
@@ -214,13 +229,15 @@ call :run -reprojectTexture "HighPolyTextured" "Simplified" "%ReprojParams%" || 
 :: of the two it leaves selected, so renaming "whatever is selected" could
 :: rename the source. GenerateModel.bat does the same re-select for the same
 :: reason.
-call :run -selectModel "Simplified" || goto :fail
+call :select_verified "Simplified" || goto :fail
 call :run -renameSelectedModel "SimplifiedTextured" || goto :fail
 set "final_source=SimplifiedTextured"
 
 :exportStage
 echo Selecting final model "%final_source%"
-call :run -selectModel "%final_source%" || goto :fail
+call :select_verified "%final_source%" || goto :fail
+if /i not "%RS_MODEL_TEXTURED%" == "true" goto :deliverableUntextured
+echo   deliverable: %RS_MODEL_TRIS% triangles, %RS_MODEL_TEXTURES% texture page(s), %RS_MODEL_UNWRAP%, max %RS_MODEL_RESOLUTION% px
 call :run -renameSelectedModel "%final_name%" || goto :fail
 
 if "%export_format%" == "none" goto :saveProject
@@ -255,6 +272,11 @@ echo        %%LOCALAPPDATA%%\Temp\RealityScan.log
 echo        The instance was left running and the scene untouched by teardown.
 exit /b 1
 
+:deliverableUntextured
+echo ERROR: "%final_source%" reports Textured=false ^(%RS_MODEL_TEXTURES% page^(s^)^) - the
+echo        unwrap or the reprojection did nothing ^(rs-reference 12 F-103^). Nothing exported.
+exit /b 1
+
 :badPreset
 echo ERROR: unknown texture preset "%tex_preset%" - use adaptive^|fixed100^|fixed50
 exit /b 1
@@ -281,6 +303,62 @@ echo        This workflow attaches to a running instance whose mesh is already
 echo        computed; it does not start one and never resets a scene. Boot an
 echo        instance and load the project first, or pass the right instance name.
 exit /b 1
+
+:: :measure - -exportReport for the SELECTED model, parsed into
+:: RS_MODEL_NAME / RS_MODEL_TRIS / RS_MODEL_TEXTURED / RS_MODEL_TEXTURES /
+:: RS_MODEL_UNWRAP / RS_MODEL_RESOLUTION by model_report.py. The report is
+:: the only way to know what is selected (F-102) and whether it is
+:: textured (F-103). Single-line exits only.
+:measure
+set "RS_MODEL_NAME="
+set "RS_MODEL_TRIS="
+set "RS_MODEL_TEXTURED="
+set "RS_MODEL_TEXTURES="
+set "RS_MODEL_UNWRAP="
+set "RS_MODEL_RESOLUTION="
+if exist "%ReportHtml%" del /q "%ReportHtml%"
+if exist "%ReportHtml%.txt" del /q "%ReportHtml%.txt"
+call :run -exportReport "%ReportHtml%" "%ReportTemplate%" || exit /b 1
+"%RS_PYTHON%" "%ModelReportPy%" "%ReportHtml%" --write "%ReportHtml%.txt"
+if errorlevel 1 goto :measureMissing
+for /f "usebackq tokens=1,* delims==" %%A in ("%ReportHtml%.txt") do set "RS_MODEL_%%A=%%B"
+if not defined RS_MODEL_NAME goto :measureMissing
+if not defined RS_MODEL_TRIS goto :measureMissing
+exit /b 0
+:measureMissing
+echo ERROR: could not read the model report %ReportHtml% ^(template %ReportTemplate%, parser %ModelReportPy%^)
+exit /b 1
+
+:: :select_verified <name> - -selectModel and PROVE it took: a missing name
+:: inside a populated component leaves the previous selection live with no
+:: error at all (F-102).
+:select_verified
+call :run -selectModel "%~1" || exit /b 1
+call :measure || exit /b 1
+if /i not "%RS_MODEL_NAME%" == "%~1" goto :selectMismatch
+exit /b 0
+:selectMismatch
+echo ERROR: -selectModel "%~1" left "%RS_MODEL_NAME%" selected - the model is absent
+exit /b 1
+
+:: :delete_verified <name> - delete a model ONLY after a verified select; an
+:: absent name is a safe skip, never a delete of whatever was selected
+:: (F-102). A select that RealityScan refuses outright (an empty component)
+:: is evidence, not an abort.
+:delete_verified
+call :run -selectModel "%~1"
+if errorlevel 1 goto :deleteDelegateFailed
+call :measure || exit /b 1
+if /i not "%RS_MODEL_NAME%" == "%~1" goto :deleteSkip
+call :run -deleteSelectedModel || exit /b 1
+echo   deleted %~1
+exit /b 0
+:deleteSkip
+echo   skip %~1 - not present ^(selection is %RS_MODEL_NAME%^)
+exit /b 0
+:deleteDelegateFailed
+echo NOTE: could not select %~1 - leaving it in place
+exit /b 0
 
 :: ------------------------------------------------------------------
 :: :try_unwrap - AdaptiveTexelSize first, MaxTexturesCount 4 x 4096 second.

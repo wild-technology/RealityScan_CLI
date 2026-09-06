@@ -20,6 +20,60 @@ import os
 from dataclasses import dataclass, field
 
 
+class FeatureStageAbort(RuntimeError):
+    """An owner gate or an empty plan: the driver stops, never proceeds."""
+
+
+def plan_feature_stage(components: list, features_json: str, nav_path: str,
+                       ceiling: int, plan_path: str, log=print) -> dict:
+    """Stage F of a per-feature campaign: assign the aligned components to
+    the owner's feature boxes and write ``features_plan.json``.
+
+    Promoted from the ON2026 campaign driver (``run_on2026_run2.stage_features``,
+    decision D9, 2026-09-06) so the live tree no longer depends on a finished
+    driver. ``components`` are manifest records with ``key``, ``rsalign``,
+    ``camera_count`` and ``images`` (component_manifest); ``log`` receives
+    one line per warning. Raises FeatureStageAbort when features.json is
+    not confirmed (an owner gate is a STOP), when there are no components,
+    or when EVERY component lacks a nav extent - the plan would be empty
+    and a chain could reach DONE having delivered nothing (C-20260827-06).
+    """
+    boxes, default, confirmed = load_feature_boxes(features_json)
+    if not confirmed:
+        raise FeatureStageAbort("features.json is not confirmed - owner gate")
+    if not components:
+        raise FeatureStageAbort("no aligned components found")
+    nav = load_nav_positions(nav_path)
+    assigned = assign_components(components, nav, boxes, default)
+    unassigned = assigned.get("_unassigned", [])
+    if unassigned and len(unassigned) == len(components):
+        raise FeatureStageAbort(
+            f"stage F: ALL {len(components)} component(s) have no nav "
+            f"extent - nav keys from {nav_path} match no component member "
+            "(filename-vs-path mismatch?); refusing to write an empty "
+            "feature plan (C-20260827-06)")
+    for c in unassigned:
+        log(f"WARNING: component {c['key']} has no nav extent - "
+            "NOT delivered under any feature; investigate")
+    plans: dict = {}
+    for feat, fcomps in assigned.items():
+        if feat == "_unassigned" or not fcomps:
+            continue
+        stages = plan_feature_merge(fcomps, ceiling)
+        plans[feat] = {
+            "components": [{k: c[k] for k in ("key", "rsalign", "camera_count")}
+                           for c in fcomps],
+            "total_cameras": sum(c["camera_count"] for c in fcomps),
+            "stages": len(stages),
+        }
+        log(f"feature {feat}: {len(fcomps)} component(s), "
+            f"{plans[feat]['total_cameras']:,} cameras")
+    os.makedirs(os.path.dirname(plan_path) or ".", exist_ok=True)
+    with open(plan_path, "w", encoding="utf-8") as fh:
+        json.dump(plans, fh, indent=2)
+    return plans
+
+
 def _basename_key(name) -> str:
     """Lowercase bare basename - the match key for an image row. Flight
     logs may name images by ABSOLUTE path (export_rs_flightlog

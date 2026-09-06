@@ -13,6 +13,7 @@ rules are `CLAUDE.md`, the current design is `docs/ARCHITECTURE.md`.
 | `MERGE_REWORK_RECOMMENDATIONS.md` | The Q1-Q10 merge-stage rework proposal (implemented in `merge_zones.py`). | `docs/` |
 | `HANDOFF_2026-07_to_2026-09.md` | Every HANDOFF section older than the current one. | `HANDOFF.md` |
 | `WORKFLOW_WALKTHROUGH.md` | Plain-language H2023 walkthrough, snapshot 2026-07-24 (its D-numbers are NA167 test cells, not `docs/DECISIONS.md` rows). Moved 2026-09-06. | `docs/` |
+| `FINDINGS_2026-07_to_2026-09-03.md` | Every FINDINGS.md entry dated before 2026-09-05 (the 2026-09-05 reconciliation folded them into `docs/rs-reference/`), verbatim; `FINDINGS.md` keeps its header, the open [RECON] D1 entry and the live tail. Moved 2026-09-06 (D15). | `FINDINGS.md` |
 
 Other relocations on 2026-09-05 (a stale path in an older FINDINGS/HANDOFF
 entry resolves through this table):

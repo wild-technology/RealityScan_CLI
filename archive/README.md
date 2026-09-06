@@ -8,7 +8,7 @@ Kept for reference and provenance; nothing here is imported by live code
 |---|---|
 | `wildscan_tui/` | The WildScan Textual console - archived 2026-09-05 but FUNCTIONAL (`python archive/wildscan_tui/run_wildscan.py <ws>`); its planner now lives in `modules/run_plan.py`. |
 | `probes/` | Probe and one-off `.bat` workflows retired from `RS_CLI/Scripts/` (calibration-group, flight-log, settings-dump probes; NightGrow; CalibCellAlign). |
-| `campaign_drivers/` | Finished campaign drivers (H2023/H2024/NA167/ON2026) and analysis one-offs; citation targets for FINDINGS. |
+| `campaign_drivers/` | Finished campaign drivers (H2023/H2024/NA167/ON2026) and analysis one-offs; citation targets for FINDINGS. `run_on2026_run2.py` joined them 2026-09-06 once its `stage_features` moved to `modules/feature_merge.py` (D9). |
 | `legacy_scripts/` | Superseded `.bat` workflows. |
 | `colmap/` | Retired COLMAP scripts and the frozen COLMAP fact base (`colmap/docs/`). |
 | `reference_data/` | `sensorsdb.xml` - RealityScan's install-tree sensor database, read by nothing here. |

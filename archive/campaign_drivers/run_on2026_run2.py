@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modules import align_fingerprint, feature_merge  # noqa: E402
 from modules import component_manifest  # noqa: E402
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RUN2 = r"M:\ON2026_run2"
 CODE = "ON2026_RH0041_RH2042"
 NAV = os.path.join(RUN2, "nav", "flight_log_run2.txt")
@@ -343,44 +343,15 @@ def load_components():
 
 
 def stage_features():
+    # The logic lives in modules/feature_merge.plan_feature_stage since
+    # 2026-09-06 (decision D9); this driver only supplies its campaign
+    # constants and turns the abort into the driver's exit.
     plan_path = os.path.join(AGENT, "features_plan.json")
-    boxes, default, confirmed = feature_merge.load_feature_boxes(FEATURES_JSON)
-    if not confirmed:
-        abort("features.json is not confirmed - owner gate")
-    comps = load_components()
-    if not comps:
-        abort("no aligned components found")
-    nav = feature_merge.load_nav_positions(NAV)
-    assigned = feature_merge.assign_components(comps, nav, boxes, default)
-    unassigned = assigned.get("_unassigned", [])
-    if unassigned and len(unassigned) == len(comps):
-        # Every component "no nav extent" means the nav keys match NO
-        # component member (name-vs-path mismatch, wrong log, ...): the
-        # feature plan would be EMPTY and the chain could still reach
-        # DONE having delivered nothing (C-20260827-06). Refuse.
-        abort(f"stage F: ALL {len(comps)} component(s) have no nav "
-              f"extent - nav keys from {NAV} match no component member "
-              "(filename-vs-path mismatch?); refusing to write an empty "
-              "feature plan (C-20260827-06)")
-    for c in unassigned:
-        log(f"WARNING: component {c['key']} has no nav extent - "
-            "NOT delivered under any feature; investigate")
-    plans = {}
-    for feat, fcomps in assigned.items():
-        if feat == "_unassigned" or not fcomps:
-            continue
-        stages = feature_merge.plan_feature_merge(fcomps, CEILING)
-        plans[feat] = {
-            "components": [{k: c[k] for k in
-                            ("key", "rsalign", "camera_count")}
-                           for c in fcomps],
-            "total_cameras": sum(c["camera_count"] for c in fcomps),
-            "stages": len(stages),
-        }
-        log(f"feature {feat}: {len(fcomps)} component(s), "
-            f"{plans[feat]['total_cameras']:,} cameras")
-    json.dump(plans, open(plan_path, "w", encoding="utf-8"), indent=2)
-    return plans
+    try:
+        return feature_merge.plan_feature_stage(
+            load_components(), FEATURES_JSON, NAV, CEILING, plan_path, log=log)
+    except feature_merge.FeatureStageAbort as exc:
+        abort(str(exc))
 
 
 # ---------------------------------------------------------------- stage M

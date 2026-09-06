@@ -7,8 +7,9 @@ setlocal
 ::   close holes -> clean model (the CLI equivalent of the GUI Check
 ::   Integrity / Check Topology FIX actions; the checks themselves have
 ::   no CLI commands) -> simplify (noise) -> generate texture ->
-::   simplify (smooth) 80% x4 with clean between -> unwrap -> reproject
-::   high-poly texture.
+::   simplify 75% per pass until at or under RS_TARGET_TRIS (default
+::   10,000,000; owner 2026-09-06, D12 - a model already under needs
+::   none) with clean between -> unwrap -> reproject high-poly texture.
 ::
 :: Selection semantics: RealityScan's Filter Selection
 :: (-removeSelectedTriangles) removes the SELECTED triangles, so the
@@ -61,10 +62,28 @@ set "MetadataDir=%Metadata%"
 :: error - exactly what run_decimate.py does.
 set "HighModelTexture=%MetadataDir%\Texturing_AdaptiveTexel_4k.xml"
 set "SimplifyNoise=%MetadataDir%\SimplifyNoise_Params.xml"
-set "SimplifySmooth=%MetadataDir%\SimplifySmooth_80per_Params.xml"
 set "UnwrapSimplified=%MetadataDir%\Unwrapping_AdaptiveTexel_4k.xml"
 set "UnwrapFallback=%MetadataDir%\Unwrapping_MaxCount4_4k.xml"
 set "ReprojectionParams=%MetadataDir%\ReprojectionParams.xml"
+:: Simplification target (D12): 75%% KEPT per pass (mvsFltTargetTrisCountRel)
+:: until the model is at or under RS_TARGET_TRIS triangles. Small models
+:: need no pass at all. The pass count is whatever the measurement says.
+if not defined RS_TARGET_TRIS set "RS_TARGET_TRIS=10000000"
+set "SimplifyTarget=%MetadataDir%\Simplify75per_Params.xml"
+:: Model MEASUREMENT (D12, owner 2026-09-06). -selectModel on a missing name
+:: inside a populated component is a SILENT no-op (FINDINGS 2026-09-03,
+:: rs-reference 12 F-102), so every destructive step below proves its
+:: selection by reading the model report back, and the simplification is
+:: driven by the MEASURED triangle count, not a fixed pass count:
+::   -exportReport <html> "<install>\Reports\SelectedModel.html"   (~4 s)
+:: parsed by modules/realityscan_interface/model_report.py into
+:: RS_MODEL_NAME / RS_MODEL_TRIS / RS_MODEL_TEXTURED / ... RealityScanCLI sets
+:: RS_PYTHON to its own interpreter; a hand-run script falls back to the
+:: `python` on PATH (the hooks' interpreter).
+if not defined RS_PYTHON set "RS_PYTHON=python"
+set "ModelReportPy=%~dp0..\..\model_report.py"
+for %%I in (%RealityScan%) do set "ReportTemplate=%%~dpIReports\SelectedModel.html"
+set "ReportHtml=%ErrorPath%\model_report_%RS_INSTANCE%.html"
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
@@ -142,65 +161,71 @@ if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
     call :run -save "%RS_PROJECTS_DIR%\%RS_PROJECT_LABEL%_merged_%RS_PROJECT_DATE%.rsproj" || goto :fail
 )
 
-echo [7/8] Smooth simplification - four 80%% passes with clean between
-call :run -simplify "%SimplifySmooth%" || goto :fail
-call :run -renameSelectedModel "%model_tag%_SimplifyPass1Raw" || goto :fail
+echo [7/8] Simplify to target: 75%% per pass until at or under %RS_TARGET_TRIS% triangles
+set /a pass=0
+call :select_verified "%model_tag%_HighPoly_Textured" || goto :fail
+echo   start: %RS_MODEL_TRIS% triangles
+:simplifyLoop
+if %RS_MODEL_TRIS% LEQ %RS_TARGET_TRIS% goto :simplifyDone
+set /a pass+=1
+call :run -simplify "%SimplifyTarget%" || goto :fail
+call :run -renameSelectedModel "%model_tag%_SimplifyPass%pass%Raw" || goto :fail
 call :run -cleanModel || goto :fail
-call :run -renameSelectedModel "%model_tag%_SimplifyPass1" || goto :fail
-
-call :run -simplify "%SimplifySmooth%" || goto :fail
-call :run -renameSelectedModel "%model_tag%_SimplifyPass2Raw" || goto :fail
-call :run -cleanModel || goto :fail
-call :run -renameSelectedModel "%model_tag%_SimplifyPass2" || goto :fail
-
-call :run -simplify "%SimplifySmooth%" || goto :fail
-call :run -renameSelectedModel "%model_tag%_SimplifyPass3Raw" || goto :fail
-call :run -cleanModel || goto :fail
-call :run -renameSelectedModel "%model_tag%_SimplifyPass3" || goto :fail
-
-call :run -simplify "%SimplifySmooth%" || goto :fail
-call :run -renameSelectedModel "%model_tag%_SimplifyPass4Raw" || goto :fail
-call :run -cleanModel || goto :fail
+call :run -renameSelectedModel "%model_tag%_SimplifyPass%pass%" || goto :fail
+call :select_verified "%model_tag%_SimplifyPass%pass%" || goto :fail
+echo   pass %pass%: %RS_MODEL_TRIS% triangles
+goto :simplifyLoop
+:simplifyDone
+if %pass% EQU 0 goto :noSimplification
 call :run -renameSelectedModel "%model_tag%_Simplified" || goto :fail
+call :select_verified "%model_tag%_Simplified" || goto :fail
+echo   %pass% pass(es); simplified model: %RS_MODEL_TRIS% triangles
 
 echo [8/8] Unwrapping and reprojecting high-poly texture
 call :try_unwrap || goto :fail
 call :run -reprojectTexture "%model_tag%_HighPoly_Textured" "%model_tag%_Simplified" "%ReprojectionParams%" || goto :fail
-call :run -selectModel "%model_tag%_Simplified" || goto :fail
+call :select_verified "%model_tag%_Simplified" || goto :fail
+call :run -renameSelectedModel "%model_tag%_Simplified_Textured" || goto :fail
+goto :sweep
+
+:noSimplification
+:: Already at or under the target (owner 2026-09-06: small models need
+:: none). The adaptive-4K-textured high-poly IS the deliverable: it keeps
+:: its texture and takes the deliverable name; there is nothing to unwrap
+:: or reproject. _HighPoly_Raw stays for the dense PLY export.
+echo   already at or under the target - no simplification, no reprojection
 call :run -renameSelectedModel "%model_tag%_Simplified_Textured" || goto :fail
 
+:sweep
 :: NO save before the cleanup loop. Saving with all ~15 models still present
 :: costs an inordinate amount of time and disk - owner-observed, and measured
 :: here: zone_1_c0's saves consumed ~81 GB with the extra write in place. The
-:: deliverable is protected instead by the double-wait in :try_delete_model,
-:: which reliably detects a no-op select on a missing intermediate before any
-:: delete runs (audit #4). Only the three kept models are ever saved.
+:: deliverable is protected instead by :delete_verified, which reads the
+:: selected model's name back from the report before every delete (D12,
+:: 2026-09-06; a no-op select is skipped, never acted on). Only the three
+:: kept models are ever saved. The pass names are dynamic (%pass% passes).
 echo Deleting intermediate models
-for %%M in (Cleanup1 Cleanup2 Cleanup3 Manifold HighPoly SimplifyPass1Raw SimplifyPass1 SimplifyPass2Raw SimplifyPass2 SimplifyPass3Raw SimplifyPass3 SimplifyPass4Raw) do (
-    call :try_delete_model "%model_tag%_%%M"
-)
+for %%M in (Cleanup1 Cleanup2 Cleanup3 Manifold HighPoly) do call :delete_verified "%model_tag%_%%M"
+for /L %%I in (1,1,%pass%) do call :delete_verified "%model_tag%_SimplifyPass%%IRaw"
+for /L %%I in (1,1,%pass%) do if %%I LSS %pass% call :delete_verified "%model_tag%_SimplifyPass%%I"
 :: A filter/simplify step can leave a DEFAULT-NAMED residual behind - the
 :: H2024 run produced one "Model N" per component (owner-observed in the
 :: GUI, 2026-07-29), most likely from the large-triangle cleanup path.
 :: Default names carry no component prefix, so they are swept separately.
 :: Residuals from EARLIER components persist in the shared project, so by
 :: the sixth component the name can be "Model 6" - sweep to 9.
-:: try_delete_model is tolerant: absent names are skipped silently.
-for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do (
-    call :try_delete_model %%M
-)
+:: delete_verified is tolerant: absent names are skipped, by proof.
+for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do call :delete_verified %%M
 
-:: POSITIVE PROOF the deliverable survived the sweep, before the save
-:: persists whatever is left. The 21 deletes above rest entirely on
-:: RealityScan writing an error for a missing model name - the one
-:: assumption the fact base says not to make (silence is not success)
-:: - and :try_delete_model own header records the hazard: a no-op
-:: -selectModel leaves the PREVIOUS selection live and the following
-:: -deleteSelectedModel then targeted the deliverable (audit #4).
-:: One delegated op, and a silently eaten model can no longer be
-:: written to disk as if it were the product (audit 2026-08-07).
-echo Verifying the deliverable still exists
-call :run -selectModel "%model_tag%_Simplified_Textured" || goto :deliverableGone
+:: POSITIVE PROOF the deliverable survived the sweep AND is textured,
+:: before the save persists whatever is left: the model report names the
+:: selection (F-102) and carries Textured (F-103 - an untextured model
+:: exports "successfully"). A silently eaten or untextured model can no
+:: longer be written to disk as if it were the product.
+echo Verifying the deliverable still exists and is textured
+call :select_verified "%model_tag%_Simplified_Textured" || goto :deliverableGone
+if /i not "%RS_MODEL_TEXTURED%" == "true" goto :deliverableUntextured
+echo   deliverable: %RS_MODEL_TRIS% triangles, %RS_MODEL_TEXTURES% texture page(s), %RS_MODEL_UNWRAP%, max %RS_MODEL_RESOLUTION% px
 
 echo Saving project
 call :run -save "%scene_path%" || goto :fail
@@ -213,6 +238,18 @@ if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
 echo Shutting down RealityScan instance %RS_INSTANCE%
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
+
+:deliverableUntextured
+echo ERROR: %model_tag%_Simplified_Textured reports Textured=false ^(%RS_MODEL_TEXTURES% page^(s^)^)
+echo   - the unwrap or the reprojection did nothing ^(rs-reference 12 F-103^).
+echo   The project was NOT saved.
+goto :fail
+
+:deliverableUntextured
+echo ERROR: %model_tag%_Simplified_Textured reports Textured=false ^(%RS_MODEL_TEXTURES% page^(s^)^)
+echo   - the unwrap or the reprojection did nothing ^(rs-reference 12 F-103^).
+echo   The project was NOT saved.
+goto :fail
 
 :deliverableGone
 echo ERROR: %model_tag%_Simplified_Textured is GONE after the intermediate
@@ -279,40 +316,65 @@ if exist "%ErrorsFile%" (
 )
 exit /b 0
 
-:: :try_delete_model <name> - delete an intermediate model if it exists;
-:: missing intermediates (skipped filter steps) are not an error.
-:: Uses the SAME double-wait shape as every other subroutine: the old single
-:: short wait could return before the instance picked the select up, so a
-:: no-op select on a missing name left the PREVIOUS selection live - which at
-:: loop entry is the final textured model - and the delete that followed
-:: targeted the deliverable (audit #4). Evidence moves get per-model names so
-:: twelve iterations stop overwriting each other.
-:try_delete_model
+:: :measure - -exportReport for the SELECTED model, parsed into
+:: RS_MODEL_NAME / RS_MODEL_TRIS / RS_MODEL_TEXTURED / RS_MODEL_TEXTURES /
+:: RS_MODEL_UNWRAP / RS_MODEL_RESOLUTION by model_report.py. The report is
+:: the only way to know what is selected (F-102) and whether it is
+:: textured (F-103). Single-line exits only.
+:measure
+set "RS_MODEL_NAME="
+set "RS_MODEL_TRIS="
+set "RS_MODEL_TEXTURED="
+set "RS_MODEL_TEXTURES="
+set "RS_MODEL_UNWRAP="
+set "RS_MODEL_RESOLUTION="
+if exist "%ReportHtml%" del /q "%ReportHtml%"
+if exist "%ReportHtml%.txt" del /q "%ReportHtml%.txt"
+call :run -exportReport "%ReportHtml%" "%ReportTemplate%" || exit /b 1
+"%RS_PYTHON%" "%ModelReportPy%" "%ReportHtml%" --write "%ReportHtml%.txt"
+if errorlevel 1 goto :measureMissing
+for /f "usebackq tokens=1,* delims==" %%A in ("%ReportHtml%.txt") do set "RS_MODEL_%%A=%%B"
+if not defined RS_MODEL_NAME goto :measureMissing
+if not defined RS_MODEL_TRIS goto :measureMissing
+exit /b 0
+:measureMissing
+echo ERROR: could not read the model report %ReportHtml% ^(template %ReportTemplate%, parser %ModelReportPy%^)
+exit /b 1
+
+:: :select_verified <name> - -selectModel and PROVE it took: a missing name
+:: inside a populated component leaves the previous selection live with no
+:: error at all (F-102).
+:select_verified
+call :run -selectModel "%~1" || exit /b 1
+call :measure || exit /b 1
+if /i not "%RS_MODEL_NAME%" == "%~1" goto :selectMismatch
+exit /b 0
+:selectMismatch
+echo ERROR: -selectModel "%~1" left "%RS_MODEL_NAME%" selected - the model is absent
+exit /b 1
+
+:: :delete_verified <name> - delete a model ONLY after a verified select; an
+:: absent name is a safe skip, never a delete of whatever was selected
+:: (F-102). A select that RealityScan refuses outright (an empty component)
+:: is evidence, not an abort.
+:delete_verified
 %RealityScan% -delegateTo %RS_INSTANCE% -selectModel "%~1"
-if errorlevel 1 (
-    echo NOTE: could not delegate -selectModel %~1 - leaving intermediate in place
-    exit /b 0
-)
+if errorlevel 1 goto :deleteDelegateFailed
 ping -n 3 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
 ping -n 2 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
-if exist "%ErrorsFile%" (
-    for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
-        move /y "%ErrorsFile%" "%ErrorPath%\expected_select_%RS_INSTANCE%_%~1.txt" >nul
-        exit /b 0
-    )
-)
-%RealityScan% -delegateTo %RS_INSTANCE% -deleteSelectedModel
-ping -n 3 127.0.0.1 >nul
-%RealityScan% -waitCompleted %RS_INSTANCE%
-ping -n 2 127.0.0.1 >nul
-%RealityScan% -waitCompleted %RS_INSTANCE%
-if exist "%ErrorsFile%" (
-    for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
-        move /y "%ErrorsFile%" "%ErrorPath%\expected_delete_%RS_INSTANCE%_%~1.txt" >nul
-    )
-)
+if exist "%ErrorsFile%" for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 move /y "%ErrorsFile%" "%ErrorPath%\expected_select_%RS_INSTANCE%_%~1.txt" >nul
+call :measure || exit /b 1
+if /i not "%RS_MODEL_NAME%" == "%~1" goto :deleteSkip
+call :run -deleteSelectedModel || exit /b 1
+echo   deleted %~1
+exit /b 0
+:deleteSkip
+echo   skip %~1 - not present ^(selection is %RS_MODEL_NAME%^)
+exit /b 0
+:deleteDelegateFailed
+echo NOTE: could not select %~1 - leaving it in place
 exit /b 0
 
 :: :try_unwrap - AdaptiveTexelSize first, MaxTexturesCount 4 x 4096 second.

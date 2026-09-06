@@ -35,7 +35,8 @@ paths:
   one offline skip, the geoid grid). ASCII-only output - the cp1252 console
   crashes otherwise. [CLAUDE.md "Environment"; HANDOFF 2026-09-03]
 - **Campaign drivers and frozen notes are citation targets, not tests.**
-  They live in `archive/campaign_drivers/`; `testing/run_on2026_run2.py`
+  They live in `archive/campaign_drivers/` (all of them since 2026-09-06 -
+  `stage_features` moved to `modules/feature_merge.py`, D9); `archive/campaign_drivers/run_on2026_run2.py`
   stays only because `test_feature_merge.py` imports its `stage_features`
   (decision D9). `NA167_SESSION_NOTES.md` is frozen. [CLAUDE.md hard rule 9]
 - **Do not leak global logging state.** `test_rig_mounts.py` leaves

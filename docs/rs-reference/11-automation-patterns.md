@@ -1707,7 +1707,7 @@ owner-specified eight-step recipe, with the literal model names:
 | [4/8] | `-selectLargestModelComponent` + `-invertTrianglesSelection` + `-removeSelectedTriangles` | `<tag>_Cleanup3` |
 | [5/8] | `-closeHoles` → `-cleanModel` | `<tag>_Manifold` |
 | [6/8] | `-simplify SimplifyNoise_Params.xml` → `<tag>_HighPoly` → `-calculateTexture Texturing_AdaptiveTexel_4k.xml` (D13, 2026-09-05; `Texturing_MaxTextureCount4_8k.xml` 2026-07-31..09-05, `…4_16k` before) | `<tag>_HighPoly_Textured` |
-| [7/8] | 4 × (`-simplify SimplifySmooth_80per_Params.xml` + `-cleanModel`) | `<tag>_Simplified` |
+| [7/8] | measure (`-exportReport SelectedModel.html`, `model_report.py`); while triangles > `RS_TARGET_TRIS` (10 M): `-simplify Simplify75per_Params.xml` -> `<tag>_SimplifyPassNRaw`, `-cleanModel` -> `<tag>_SimplifyPassN`, re-measure; zero passes when already under (D12, 2026-09-06; four fixed 80 % passes until then) | `<tag>_Simplified` (or the textured high-poly renamed straight to `<tag>_Simplified_Textured` when no pass was needed) |
 | [8/8] | `:try_unwrap` (`-unwrap Unwrapping_AdaptiveTexel_4k.xml`; on a reported error the marker becomes `expected_unwrap_adaptive_<inst>_<tag>.txt` and `-unwrap Unwrapping_MaxCount4_4k.xml` runs through `:run`) → `-reprojectTexture <tag>_HighPoly_Textured <tag>_Simplified ReprojectionParams.xml` → rename | `<tag>_Simplified_Textured` |
 
 `%model_tag%` = the component name (or `maximal`). **Every model name is namespaced by the

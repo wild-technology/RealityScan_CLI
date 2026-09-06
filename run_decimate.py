@@ -65,6 +65,9 @@ MIN_FREE_GB = 40
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 META = os.path.join(HERE, 'modules', 'realityscan_interface', 'RS_CLI', 'Metadata')
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from modules.realityscan_interface.model_report import parse_report  # noqa: E402
 
 
 def rs_exe():
@@ -121,20 +124,14 @@ class Rs:
         the bake had nothing to write into. A census that checks only geometry
         calls that a success.
         """
-        d = {'name': None, 'triangles': None, 'textured': False, 'textures': 0}
+        d = {'name': None, 'triangles': None, 'textured': False, 'textures': 0,
+             'unwrap_style': None}
         html = self._report_html()
         if html is None:
             return d
-        def field(label):
-            m = re.search(r"<th>" + label + r"</th>\s*<td>([^<]*)</td>", html)
-            return m.group(1).strip() if m else None
-        d['name'] = field('Model name')
-        t = field(r"Triangles' count")
-        d['triangles'] = int(t) if t and t.isdigit() else None
-        d['textured'] = (field('Textured') or '').lower() == 'true'
-        c = field(r"Textures' count")
-        d['textures'] = int(c) if c and c.isdigit() else 0
-        d['unwrap_style'] = field('Unwrapping style')
+        # One parser for every consumer of the report (the workflow
+        # scripts read it through model_report.py --write since D12).
+        d.update(parse_report(html))
         return d
 
     def report(self):
@@ -142,11 +139,8 @@ class Rs:
         html = self._report_html()
         if html is None:
             return None, None
-        # Label and value sit on consecutive lines; anchor on the label.
-        nm = re.search(r"<th>Model name</th>\s*<td>([^<]*)</td>", html)
-        tr = re.search(r"Triangles' count</th>\s*<td>(\d+)</td>", html)
-        return (nm.group(1).strip() if nm else None,
-                int(tr.group(1)) if tr else None)
+        info = parse_report(html)
+        return info['name'], info['triangles']
 
     def _report_html(self):
         out = os.path.join(self.work, 'measure.html')

@@ -159,10 +159,24 @@ def test_load_nav_positions_collision_raises_listing_both(tmp_path):
 
 # --------------- stage F gate: ALL-unassigned must ABORT, not DONE
 
+class _Stage:
+    """plan_feature_stage bound to tmp fixtures (the shape the archived
+    ON2026 driver used to supply from its campaign constants)."""
+
+    def __init__(self, features, nav, agent, lines, components):
+        self.features, self.nav, self.agent = features, nav, agent
+        self.lines, self.components = lines, components
+
+    def stage_features(self):
+        from modules.feature_merge import plan_feature_stage
+        return plan_feature_stage(self.components, str(self.features), str(self.nav),
+                                  37_000, str(self.agent / "features_plan.json"),
+                                  log=self.lines.append)
+
+
 def _wire_driver(monkeypatch, tmp_path, members, nav_row_name):
-    """run_on2026_run2.stage_features against tmp fixtures: M:\\ paths,
-    the driver log, and component loading are all patched out."""
-    from testing import run_on2026_run2 as driver
+    """plan_feature_stage (ex run_on2026_run2.stage_features, D9) against tmp
+    fixtures: M:\\ paths, the log, and component loading are all supplied."""
     features = tmp_path / "features.json"
     features.write_text(
         '{"confirmed": true, "default_feature": "hull", '
@@ -173,12 +187,7 @@ def _wire_driver(monkeypatch, tmp_path, members, nav_row_name):
     agent = tmp_path / "_agent"
     agent.mkdir()
     lines: list = []
-    monkeypatch.setattr(driver, "FEATURES_JSON", str(features))
-    monkeypatch.setattr(driver, "NAV", str(nav))
-    monkeypatch.setattr(driver, "AGENT", str(agent))
-    monkeypatch.setattr(driver, "log", lines.append)
-    monkeypatch.setattr(driver, "load_components",
-                        lambda: [_c("zone_1_c0", 10, members)])
+    driver = _Stage(features, nav, agent, lines, [_c("zone_1_c0", 10, members)])
     return driver, agent, lines
 
 
@@ -190,9 +199,10 @@ def test_stage_features_aborts_when_every_component_is_unassigned(
     driver, agent, lines = _wire_driver(
         monkeypatch, tmp_path, members=["img_9.jpg"],
         nav_row_name="unrelated.jpg")
-    with pytest.raises(SystemExit):
+    from modules.feature_merge import FeatureStageAbort
+    with pytest.raises(FeatureStageAbort) as exc:
         driver.stage_features()
-    assert any("ABORT" in ln and "no nav extent" in ln for ln in lines), lines
+    assert "no nav extent" in str(exc.value)
     assert not (agent / "features_plan.json").exists()
 
 
@@ -215,9 +225,8 @@ def test_stage_features_survives_a_partially_unassigned_set(
     driver, agent, lines = _wire_driver(
         monkeypatch, tmp_path, members=["img_9.jpg"],
         nav_row_name="M:\\pool\\cammid\\img_9.jpg")
-    monkeypatch.setattr(driver, "load_components",
-                        lambda: [_c("zone_1_c0", 10, ["img_9.jpg"]),
-                                 _c("zone_2_c0", 5, ["ghost.jpg"])])
+    driver.components = [_c("zone_1_c0", 10, ["img_9.jpg"]),
+                         _c("zone_2_c0", 5, ["ghost.jpg"])]
     plans = driver.stage_features()
     assert plans["hull"]["total_cameras"] == 10
     assert any("zone_2_c0" in ln and "no nav extent" in ln

@@ -35,6 +35,8 @@ import sys
 
 import pytest
 
+from testing.export_fixture import textured_deliverable
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
@@ -172,9 +174,7 @@ def test_a_partial_export_is_measured_against_the_merge_report(tmp_path):
     ws = tmp_path / 'cruise'
     ws.mkdir()
     _merged(ws)
-    d = ws / 'exports' / 'zone_1_c0' / 'obj'
-    d.mkdir(parents=True)
-    (d / 'zone_1_c0.obj').write_bytes(b'o')
+    textured_deliverable(ws / 'exports' / 'zone_1_c0' / 'obj', 'zone_1_c0', 'obj', b'o')
     status = Workspace(ws).detect()['export']
     assert status.status == 'partial'
     assert 'zone_2_c0' in status.summary, status.summary
@@ -185,9 +185,7 @@ def test_a_complete_export_is_done(tmp_path):
     ws.mkdir()
     _merged(ws)
     for comp in ('zone_1_c0', 'zone_2_c0'):
-        d = ws / 'exports' / comp / 'obj'
-        d.mkdir(parents=True)
-        (d / f'{comp}.obj').write_bytes(b'o')
+        textured_deliverable(ws / 'exports' / comp / 'obj', comp, 'obj', b'o')
     assert Workspace(ws).detect()['export'].status == 'done'
 
 
@@ -324,9 +322,7 @@ def test_finish_model_accepts_a_real_deliverable(tmp_path, monkeypatch):
 def test_export_postcondition_names_the_missing_folders(tmp_path):
     names = ['zone_1_c0', 'zone_2_c0']
     for kind in ('obj', 'fbx', 'ply'):
-        d = tmp_path / 'zone_1_c0' / kind
-        d.mkdir(parents=True)
-        (d / f'zone_1_c0.{kind}').write_bytes(b'x')
+        textured_deliverable(tmp_path / 'zone_1_c0' / kind, 'zone_1_c0', kind)
     missing = export_deliverables.missing_exports(str(tmp_path), names)
     assert sorted(missing) == ['zone_2_c0/fbx', 'zone_2_c0/obj',
                                'zone_2_c0/ply']
@@ -334,9 +330,8 @@ def test_export_postcondition_names_the_missing_folders(tmp_path):
 
 def test_export_postcondition_rejects_an_empty_file(tmp_path):
     for kind in ('obj', 'fbx', 'ply'):
-        d = tmp_path / 'c0' / kind
-        d.mkdir(parents=True)
-        (d / f'c0.{kind}').write_bytes(b'' if kind == 'ply' else b'x')
+        textured_deliverable(tmp_path / 'c0' / kind, 'c0', kind,
+                             b'' if kind == 'ply' else b'x')
     assert export_deliverables.missing_exports(str(tmp_path), ['c0']) == \
         ['c0/ply']
 
@@ -362,9 +357,7 @@ def _export_driver_run(tmp_path, monkeypatch, produce):
     exports.mkdir()
     if produce:
         for kind in export_deliverables.EXPORT_KINDS:
-            d = exports / 'c0' / kind
-            d.mkdir(parents=True)
-            (d / f'c0.{kind}').write_bytes(b'x')
+            textured_deliverable(exports / 'c0' / kind, 'c0', kind)
 
     monkeypatch.setattr(export_deliverables, 'run_export',
                         lambda *a, **k: WorkflowResult(True, 0, 'log.txt',

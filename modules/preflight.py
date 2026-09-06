@@ -119,7 +119,7 @@ STAGE_XML: dict[str, tuple[str, ...]] = {
     "merge": ("AlignmentParams.xml", "FlightLogParams.xml",
               "FlightLogParamsLocal.xml"),
     "model": ("Texturing_AdaptiveTexel_4k.xml", "SimplifyNoise_Params.xml",
-              "SimplifySmooth_80per_Params.xml", "Unwrapping_AdaptiveTexel_4k.xml",
+              "Simplify75per_Params.xml", "Unwrapping_AdaptiveTexel_4k.xml",
               "Unwrapping_MaxCount4_4k.xml", "ReprojectionParams.xml"),
     "export": ("ModelExportParamsOBJ_NiraParts.xml", "ModelExportParamsFBX_Parts.xml",
                "ModelExportParamsPLY_DensePoints.xml"),
@@ -347,6 +347,20 @@ class Preflight:
                      "back silently")
         else:
             self.ok(f"alignment settings {xml} (applied through RS_ALIGN_PARAMS)")
+        capture = str(s.get("identity_capture") or "").strip().lower()
+        if "align" in self.stages:
+            if capture == "csv":
+                self.ok("identity capture: csv (-exportRegistration, no XMP written)")
+            elif capture == "xmp":
+                self.warn("identity capture: xmp - the destructive in-session harvest "
+                          "writes sidecars into the zone copies and strips the last "
+                          "component's calibration priors (D1)")
+            elif not capture:
+                self.warn("science.identity_capture not set: the DEFAULT align path "
+                          "writes XMP sidecars into the zone copies (D1 open); set "
+                          "'csv' for the non-destructive -exportRegistration capture")
+            else:
+                self.block(f"science.identity_capture {capture!r} is not 'csv' or 'xmp'")
 
     def check_pipeline(self) -> tuple[Optional[Session], bool]:
         stages = self.stages

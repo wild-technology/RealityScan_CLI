@@ -43,3 +43,6 @@ CLAUDE.local.md
 # pytest's own cache directory
 .pytest_cache/
 /.claude/.last_compact
+
+# Owner test datasets dropped beside the code (18 GB of JPGs): never staged
+/test_dataset_*/

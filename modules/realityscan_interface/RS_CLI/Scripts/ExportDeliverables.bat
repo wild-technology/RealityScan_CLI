@@ -37,6 +37,20 @@ set "MetadataDir=%Metadata%"
 set "ObjParams=%MetadataDir%\ModelExportParamsOBJ_NiraParts.xml"
 set "FbxParams=%MetadataDir%\ModelExportParamsFBX_Parts.xml"
 set "PlyParams=%MetadataDir%\ModelExportParamsPLY_DensePoints.xml"
+:: Model MEASUREMENT (D12, owner 2026-09-06). -selectModel on a missing name
+:: inside a populated component is a SILENT no-op (FINDINGS 2026-09-03,
+:: rs-reference 12 F-102), so every destructive step below proves its
+:: selection by reading the model report back, and the simplification is
+:: driven by the MEASURED triangle count, not a fixed pass count:
+::   -exportReport <html> "<install>\Reports\SelectedModel.html"   (~4 s)
+:: parsed by modules/realityscan_interface/model_report.py into
+:: RS_MODEL_NAME / RS_MODEL_TRIS / RS_MODEL_TEXTURED / ... RealityScanCLI sets
+:: RS_PYTHON to its own interpreter; a hand-run script falls back to the
+:: `python` on PATH (the hooks' interpreter).
+if not defined RS_PYTHON set "RS_PYTHON=python"
+set "ModelReportPy=%~dp0..\..\model_report.py"
+for %%I in (%RealityScan%) do set "ReportTemplate=%%~dpIReports\SelectedModel.html"
+set "ReportHtml=%ErrorPath%\model_report_%RS_INSTANCE%.html"
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
@@ -85,9 +99,7 @@ if defined RS_PROJECT_CRS if not "%RS_PROJECT_CRS%" == "" (
 )
 
 echo Sweeping default-named residual models
-for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do (
-    call :try_delete_model %%M
-)
+for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do call :delete_verified %%M
 
 echo Saving project - residuals removed, before any in-memory coloring
 call :run -save "%scene_path%" || goto :fail
@@ -186,40 +198,65 @@ echo ERROR: export workflow failed - see %ErrorsFile% and the RealityScan log
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
-:: :try_delete_model <name> - tolerant delete with the full double-wait
-:: shape (a single short wait can race the instance and leave the previous
-:: selection live for the delete - GenerateModel audit #4). Evidence files
-:: are named per MODEL (spaces flattened) so nine sweep iterations cannot
-:: overwrite each other's records (final review).
-:try_delete_model
-set "evname=%~1"
-set "evname=%evname: =_%"
+:: :measure - -exportReport for the SELECTED model, parsed into
+:: RS_MODEL_NAME / RS_MODEL_TRIS / RS_MODEL_TEXTURED / RS_MODEL_TEXTURES /
+:: RS_MODEL_UNWRAP / RS_MODEL_RESOLUTION by model_report.py. The report is
+:: the only way to know what is selected (F-102) and whether it is
+:: textured (F-103). Single-line exits only.
+:measure
+set "RS_MODEL_NAME="
+set "RS_MODEL_TRIS="
+set "RS_MODEL_TEXTURED="
+set "RS_MODEL_TEXTURES="
+set "RS_MODEL_UNWRAP="
+set "RS_MODEL_RESOLUTION="
+if exist "%ReportHtml%" del /q "%ReportHtml%"
+if exist "%ReportHtml%.txt" del /q "%ReportHtml%.txt"
+call :run -exportReport "%ReportHtml%" "%ReportTemplate%" || exit /b 1
+"%RS_PYTHON%" "%ModelReportPy%" "%ReportHtml%" --write "%ReportHtml%.txt"
+if errorlevel 1 goto :measureMissing
+for /f "usebackq tokens=1,* delims==" %%A in ("%ReportHtml%.txt") do set "RS_MODEL_%%A=%%B"
+if not defined RS_MODEL_NAME goto :measureMissing
+if not defined RS_MODEL_TRIS goto :measureMissing
+exit /b 0
+:measureMissing
+echo ERROR: could not read the model report %ReportHtml% ^(template %ReportTemplate%, parser %ModelReportPy%^)
+exit /b 1
+
+:: :select_verified <name> - -selectModel and PROVE it took: a missing name
+:: inside a populated component leaves the previous selection live with no
+:: error at all (F-102).
+:select_verified
+call :run -selectModel "%~1" || exit /b 1
+call :measure || exit /b 1
+if /i not "%RS_MODEL_NAME%" == "%~1" goto :selectMismatch
+exit /b 0
+:selectMismatch
+echo ERROR: -selectModel "%~1" left "%RS_MODEL_NAME%" selected - the model is absent
+exit /b 1
+
+:: :delete_verified <name> - delete a model ONLY after a verified select; an
+:: absent name is a safe skip, never a delete of whatever was selected
+:: (F-102). A select that RealityScan refuses outright (an empty component)
+:: is evidence, not an abort.
+:delete_verified
 %RealityScan% -delegateTo %RS_INSTANCE% -selectModel "%~1"
-if errorlevel 1 (
-    echo NOTE: could not delegate -selectModel %~1 - skipping
-    exit /b 0
-)
+if errorlevel 1 goto :deleteDelegateFailed
 ping -n 3 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
 ping -n 2 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
-if exist "%ErrorsFile%" (
-    for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
-        move /y "%ErrorsFile%" "%ErrorPath%\expected_select_%RS_INSTANCE%_%evname%.txt" >nul
-        exit /b 0
-    )
-)
-%RealityScan% -delegateTo %RS_INSTANCE% -deleteSelectedModel
-ping -n 3 127.0.0.1 >nul
-%RealityScan% -waitCompleted %RS_INSTANCE%
-ping -n 2 127.0.0.1 >nul
-%RealityScan% -waitCompleted %RS_INSTANCE%
-if exist "%ErrorsFile%" (
-    for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
-        move /y "%ErrorsFile%" "%ErrorPath%\expected_delete_%RS_INSTANCE%_%evname%.txt" >nul
-    )
-)
-echo   removed residual %~1
+if exist "%ErrorsFile%" for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 move /y "%ErrorsFile%" "%ErrorPath%\expected_select_%RS_INSTANCE%_%~1.txt" >nul
+call :measure || exit /b 1
+if /i not "%RS_MODEL_NAME%" == "%~1" goto :deleteSkip
+call :run -deleteSelectedModel || exit /b 1
+echo   deleted %~1
+exit /b 0
+:deleteSkip
+echo   skip %~1 - not present ^(selection is %RS_MODEL_NAME%^)
+exit /b 0
+:deleteDelegateFailed
+echo NOTE: could not select %~1 - leaving it in place
 exit /b 0
 
 :: :run - delegate one operation, double-wait, abort on reported error

@@ -21,6 +21,7 @@ import pytest
 
 from modules.export_deliverables import (EXPORT_KINDS, expected_kinds,
                                          missing_exports)
+from testing.export_fixture import textured_deliverable
 
 
 @pytest.fixture(autouse=True)
@@ -40,9 +41,8 @@ def test_skip_ply_drops_only_ply(monkeypatch):
 
 def _make(tmp_path, comp, kinds):
     for k in kinds:
-        d = tmp_path / comp / k
-        d.mkdir(parents=True)
-        (d / f'{comp}.{k}').write_text('x', encoding='utf-8')
+        # a TEXTURED deliverable: the census reads the tree since D10
+        textured_deliverable(tmp_path / comp / k, comp, k)
     return str(tmp_path)
 
 
@@ -68,7 +68,5 @@ def test_census_still_catches_a_missing_obj_when_ply_is_skipped(tmp_path, monkey
 def test_empty_files_do_not_count_as_produced(tmp_path, monkeypatch):
     monkeypatch.setenv('RS_EXPORT_SKIP_PLY', '1')
     for k in ('obj', 'fbx'):
-        d = tmp_path / 'c1' / k
-        d.mkdir(parents=True)
-        (d / f'c1.{k}').write_text('', encoding='utf-8')
+        textured_deliverable(tmp_path / 'c1' / k, 'c1', k, payload=b'')
     assert sorted(missing_exports(str(tmp_path), ['c1'])) == ['c1/fbx', 'c1/obj']

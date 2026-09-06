@@ -256,17 +256,19 @@ def test_merge_apply_set_aborts_on_a_rejected_setting():
 
 
 def test_generate_model_proves_the_deliverable_before_saving():
-    """21 deletes rest on RealityScan erroring for a missing model name -
-    the one assumption the fact base says not to make. One delegated
-    -selectModel proves the deliverable survived, before -save persists
-    whatever is left."""
+    """Every delete is a report-verified select (D12, 2026-09-06) and the
+    deliverable is proven present AND textured by the model report before
+    -save persists whatever is left - a bare -selectModel proves nothing
+    (F-102: a missing name is a silent no-op)."""
     text = _bat('GenerateModel.bat')
     verify = text.index(
-        'call :run -selectModel "%model_tag%_Simplified_Textured" '
+        'call :select_verified "%model_tag%_Simplified_Textured" '
         '|| goto :deliverableGone')
+    textured = text.index('goto :deliverableUntextured')
     save = text.index('call :run -save "%scene_path%"')
-    assert verify < save, 'the proof must precede the save'
+    assert verify < textured < save, 'the proof must precede the save'
     assert re.search(r'(?m)^:deliverableGone\s*$', text)
+    assert re.search(r'(?m)^:deliverableUntextured\s*$', text)
 
 
 def test_export_deliverables_refuses_an_empty_name_list():

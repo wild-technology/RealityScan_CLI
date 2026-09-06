@@ -382,6 +382,20 @@ class Workspace:
                         for c in _records(rec, "final_components")}
             expected.discard("")
         if details:
+            # The files being there is not the deliverable being textured:
+            # H2060 c5 exported a geometry-only OBJ with a clean exit
+            # (FINDINGS 2026-09-03). Read the export tree itself (D10,
+            # owner 2026-09-06): texture pages present, JPEG, <= 4096,
+            # .mtl carrying map_Kd. A failure here is a BLOCK - a silent
+            # success the census exists to catch.
+            from .texture_census import untextured_components  # noqa: PLC0415
+            problems = untextured_components(self.exports, sorted(exported))
+            if problems:
+                return StageStatus(
+                    "export", "blocked",
+                    f"{len(problems)} texture problem(s) in {len(exported)} "
+                    "exported component(s) - untextured, non-JPEG or over the "
+                    "4096 cap", details + problems)
             missing = sorted(expected - exported)
             if missing:
                 return StageStatus(

@@ -1015,9 +1015,13 @@ Owner-specified, 2026-07-23; the literal step order and model names as shipped
 [6/8] -simplify SimplifyNoise_Params.xml                     -> rename <tag>_HighPoly
       -calculateTexture Texturing_AdaptiveTexel_4k.xml      -> rename <tag>_HighPoly_Textured
       (if RS_PROJECTS_DIR+RS_PROJECT_LABEL: -save <dated copy>  <-- all intermediates live)
-[7/8] 4 x ( -simplify SimplifySmooth_80per_Params.xml -> <tag>_SimplifyPassNRaw
-            -cleanModel                                -> <tag>_SimplifyPassN )
-      last pass renames to <tag>_Simplified
+[7/8] measure (-exportReport SelectedModel.html -> model_report.py); while
+      triangles > RS_TARGET_TRIS (10,000,000):
+        -simplify Simplify75per_Params.xml -> <tag>_SimplifyPassNRaw
+        -cleanModel                        -> <tag>_SimplifyPassN, re-measure
+      last pass renames to <tag>_Simplified; ZERO passes when already under
+      (the textured high-poly is renamed <tag>_Simplified_Textured and [8/8]
+      is skipped). Every -selectModel is proven by the report (D12, 2026-09-06).
 [8/8] :try_unwrap  (-unwrap Unwrapping_AdaptiveTexel_4k.xml; on a reported error the errors
                     file becomes evidence and -unwrap Unwrapping_MaxCount4_4k.xml runs through :run)
       -reprojectTexture <tag>_HighPoly_Textured <tag>_Simplified ReprojectionParams.xml
@@ -2391,6 +2395,8 @@ With `MvsExportcoordinatesystemtype=3` (the OBJ/FBX presets) the exported vertic
 `-exportModel` resolves a model by name; `-selectModel` resolves only within the active component. `ExportDeliverables.bat` never selected the component, so the dense-PLY step failed with `0x80070057` and one optional format killed a 20-component export (the errors file being sticky, `11` A1). `-selectComponent` now heads each component's export; `RS_EXPORT_SKIP_PLY` survives as an escape hatch. The master project lists `_HighPoly_Raw`, `_HighPoly_Textured` and `_Simplified_Textured` for every component — the raw model survives `GenerateModel`. [VERIFIED: FINDINGS 2026-09-02]
 
 ### A3. Four fixed 80 % simplify passes is a ratio, not a budget
+
+**Resolved 2026-09-06 (decision D12, owner):** `GenerateModel.bat` [7/8] and `ModelToFinal.bat` now simplify 75 % per pass (`Simplify75per_Params.xml`) until the MEASURED count is at or under `RS_TARGET_TRIS` (default 10,000,000), none when already under; the count comes from `-exportReport SelectedModel.html` parsed by `modules/realityscan_interface/model_report.py`, which also proves every `-selectModel` before a delete (F-102). `run_decimate.py` keeps the 500k web tier at 80 %. The pass arithmetic is `ceil(log(target/N0)/log(0.75))`. [VERIFIED-by-inspection 2026-09-06; live run pending - `testing/NA173_TEST_PLAN.md` C2/C9]
 
 `GenerateModel.bat` ends every component with four relative-80 % passes. 0.8⁴ = 0.4096, and all twenty H2060 "Simplified" models measured exactly that fraction of their high-poly (2.77 M to 42.4 M triangles left), which also shows `-cleanModel` removes essentially nothing. A triangle BUDGET needs `ceil(log(budget/N0)/log(0.8))` passes measured per component (9–20 for 500 k here); `run_decimate.py` computes it from the measurement primitive (`02` A2). `_HighPoly_Raw` and `_HighPoly_Textured` are NOT the same mesh (9.7 M vs 6.8 M on one component — texturing applies the unwrap's large-triangle removal); seed from the one you mean. [VERIFIED: FINDINGS 2026-09-03]
 

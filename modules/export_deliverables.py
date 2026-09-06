@@ -91,14 +91,23 @@ def missing_exports(exports_dir: str, names: list[str]) -> list[str]:
         for kind in kinds:
             kind_dir = os.path.join(exports_dir, name, kind)
             try:
+                # The MESH file of that kind, non-empty. A texture page or an
+                # .mtl beside an empty .obj is not a produced deliverable.
                 produced = any(
                     os.path.getsize(os.path.join(kind_dir, f)) > 0
                     for f in os.listdir(kind_dir)
-                    if os.path.isfile(os.path.join(kind_dir, f)))
+                    if os.path.isfile(os.path.join(kind_dir, f))
+                    and f.lower().endswith('.' + kind))
             except OSError:
                 produced = False
             if not produced:
                 missing.append(f'{name}/{kind}')
+    # Files present is not textured (H2060 c5: geometry-only OBJ, clean
+    # exit). The texture census reads the tree: pages, JPEG, <= 4096,
+    # map_Kd (D10, owner 2026-09-06). Each problem is one more line.
+    from .texture_census import untextured_components  # noqa: PLC0415
+    missing += untextured_components(
+        exports_dir, names, kinds=tuple(k for k in ('obj', 'fbx') if k in kinds))
     return missing
 
 

@@ -181,6 +181,14 @@ class RunCharter:
             # applied it, so a signed variant ran on the canonical XML
             # (review finding bugs-surface F1).
             out["RS_ALIGN_PARAMS"] = xml
+        capture = str((self.science or {}).get("identity_capture") or "").strip().lower()
+        if capture == "csv":
+            # The non-destructive -exportRegistration capture: no XMP
+            # written anywhere by the align stage (AlignZone.bat's
+            # RS_LEGACY_XMP_IDENTITY=0 branch; decision D1).
+            out["RS_LEGACY_XMP_IDENTITY"] = "0"
+        elif capture == "xmp":
+            out["RS_LEGACY_XMP_IDENTITY"] = "1"
         return {k: v for k, v in out.items() if v}
 
 
@@ -363,6 +371,7 @@ TEMPLATE: dict = {
     "science": {
         "frame": "<utm:54N | local_euclidean>",
         "align_settings_xml": "<path>",
+        "identity_capture": "",
         "min_component_size": 50,
         "notes": "<every science argument explicit - no stored defaults>",
     },

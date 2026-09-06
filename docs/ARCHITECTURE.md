@@ -68,6 +68,13 @@ subsystem; `CLAUDE.md` carries the invariants and routes here.
   smallest-first, resumable (`models_report.json`).
 - `finish_model.py` — attach-only finishing of an existing mesh
   (`ModelToFinal.bat`).
+- `modules/realityscan_interface/model_report.py` — the model-measurement
+  primitive: parses the `-exportReport SelectedModel.html` output (name,
+  triangles, textured, pages, unwrap style, page size); the workflows call
+  it through `RS_PYTHON` to prove every select and to drive the D12 loop.
+- `modules/texture_census.py` — is an exported deliverable textured: pages,
+  JPEG, <= 4096, `map_Kd`, from the export tree's file headers (D10).
+  `workspace_census` blocks the export stage on a failure.
 - `run_decimate.py` — decimate every component to a triangle budget with
   verified selects (`-selectModel` on a missing name is a silent no-op).
 - `modules/export_deliverables.py` — the export stage
@@ -121,7 +128,9 @@ are the two gitignored exceptions the interactive lane still writes there.
     default is open decision D1 — see hard rule 0),
     `MergeZoneComponents` (`.complist` of in-place `.rsalign` paths;
     merge|align mode; min size; `key:value` settings — driven iteratively
-    by `merge_zones.py`), `GenerateModel` (mesh/cull/texture/simplify
+    by `merge_zones.py`), `GenerateModel` (mesh/cull/texture, then
+    simplify 75 % per pass until at or under `RS_TARGET_TRIS` = 10 M -
+    none if already under - every select proven by the model report,
     ONCE, on the merged component), `ExportDeliverables` (OBJ-by-parts +
     FBX-by-parts + ultra-dense colored PLY), `SaveProjectCopy`.
   - Boot/env: `startRealityScan`, `SetVariables`. Boot honors

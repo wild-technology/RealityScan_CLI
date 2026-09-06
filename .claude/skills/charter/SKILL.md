@@ -38,7 +38,7 @@ overwrite a charter you did not write this session.
 | 4 | `locations.protected[]` of `{"path","why"}` |
 | 5 | `budget.expected_hours`, `memory_peak_gb`, `disk_delta_gb`, `free_disk_gb_now`, `abort_criteria` |
 | 6 | `ownership.rs_instance`, `rs_cache_dir`, `user_instances[]` |
-| science | `science.frame` (`utm:54N` or `local_euclidean`), `align_settings_xml`, `min_component_size` |
+| science | `science.frame` (`utm:54N` or `local_euclidean`), `align_settings_xml` (applied through `RS_ALIGN_PARAMS`), `identity_capture` (`csv` = the non-destructive `-exportRegistration` capture, no XMP written by align; `xmp` or empty = the destructive harvest - decision D1), `min_component_size` (align and merge) |
 | run | `pipeline.stages[]`, `pipeline.answers{}` = `cli_long -> value` exactly as `main.py --help` names them |
 
 Every science argument explicit; the untouched template fails on purpose.

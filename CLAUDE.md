@@ -115,7 +115,9 @@ scheduler-owned with a declared budget; 7 frames and fingerprints honoured;
 
 ## Working discipline (token cost is real)
 
-- Grep, never read whole: `FINDINGS.md` (5,500 lines; `grep -n '^## '` lists
+- Grep, never read whole: `FINDINGS.md` (the live tail since 2026-09-05;
+  everything older is frozen in `docs/history/FINDINGS_2026-07_to_2026-09-03.md`;
+  `grep -n '^## '` lists
   sections), `docs/rs-reference/*` (28,000 lines; route via its README),
   `docs/history/`.
 - Prefer `rs.py` JSON (`--json`) to reading logs; quote its lines verbatim.

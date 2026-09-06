@@ -615,6 +615,10 @@ class RealityScanCLI:
 
         env = os.environ.copy()
         env['RS_EXECUTABLE'] = exe
+        # The workflows measure models through model_report.py (D12) and
+        # must run it with THIS interpreter, not whatever `python` a
+        # scheduled task's PATH resolves to.
+        env['RS_PYTHON'] = sys.executable
         env['RS_INSTANCE'] = self.instance_name
         gpu_devices = gpu_devices if gpu_devices is not None else self.settings.get('realityscan', 'gpu_devices')
         if gpu_devices:
@@ -785,6 +789,10 @@ class RealityScanCLI:
 
         env = os.environ.copy()
         env['RS_EXECUTABLE'] = exe
+        # The workflows measure models through model_report.py (D12) and
+        # must run it with THIS interpreter, not whatever `python` a
+        # scheduled task's PATH resolves to.
+        env['RS_PYTHON'] = sys.executable
         # No RS_GPU_DEVICES/CUDA_VISIBLE_DEVICES here: GPU pinning is a
         # boot-time property of the instance, and attach mode never boots.
 
