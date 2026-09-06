@@ -2376,3 +2376,28 @@ Clean A/B/C ladder on a zone_1 copy, one variable per rung, explicit `-addImageW
 ### A2. The 45° down-look belongs to the UPPER camera, not Cinema (rig correction 2026-08-14)
 
 Owner: "upper is 45 degrees down, cinema and mid are pointed directly forward … how they were loaded on this cruise and NA165." The registry had `wca_cinema` at pitch 45 and the upper (`wca_starboard`) with no mount at all. Corrected: `wca_cinema` pitch 0; new family `wca_upper` (`^u\d+c`, the `U###C` stills) → starboard camera at pitch 45; `wca_port` (mid) 0 as before; lever arms untouched (validated figures). **Blast radius:** the NA156 H2023/H2024 WCA line was solved with cinema at 45 (the 43.11° Cinema median in §5 is that solve); the owner vouched for NA168 and NA165 only — reprocess NA156 under a cruise-scoped family rather than moving the row back. §10's mount table is corrected in place. [VERIFIED: FINDINGS 2026-08-14]
+
+### A3. Group echo from the F2 run: every camera `CalibrationGroup="-1"`, every camera its own focal (2026-09-06)
+
+The NA173 F2 align ran the generated prior-group file on both zones (cammid -> calibration/lens
+group 2/2, camlower -> 3/3, zeuss|herc -> 1/1; `-deselectAllImages`, `-selectImage <regexp>`,
+`-setPriorCalibrationGroup`, `-setPriorLensGroup`, replayed by AlignZone.bat BEFORE the settings
+and the flight-log import). Readback: the identity CSVs (calibration.xml format `{E7C3B1A9}`)
+show 78 distinct focals for 78 cammid cameras in zone_1, 64/64 cammid and 16/16 camlower in
+zone_2 (k2 pinned at 0), and the merge peel's 316 XMPs (`merged/cluster_0/attempt_1_merge_georef/
+identity_r{0,1,2}/`) carry `xcr:CalibrationGroup="-1"` and `xcr:DistortionGroup="-1"` on every
+file with 113/70/53 distinct `FocalLength35mm` values - the official semantics (07 sec.5: images
+sharing a number share calibration parameters after alignment) say a group that took would show ONE
+focal per family. The saved `.rsproj` records no group at all (its `<input>` elements carry only
+`abs*`/`absu*`/`absPrior`/`absCs`), so the CSV focal spread and the XMP echo are the only
+instruments. Same result as the 2026-08-08 fixture (A5 in 02), which tried BOTH the regexp and the
+full-path `-selectImage` forms - so the selection form is not the explanation. Two candidates stay
+open: the commands are inert from the delegated CLI, or the flight-log import's `ifKGrp=2`
+("Automatically group camera calibration", value mapping UNDOCUMENTED, 06 sec.3) re-groups the
+cameras AFTER the commands - the import runs last by design (07 A-series, owner sequence
+2026-08-14). Cheapest discriminator, no new command in the workflow: the shipped
+`Reports/ComponentAccuracyReport.html` carries `$(groupCount)`, `$(ungroupedInputCount)` and the
+`$ExportInputsGrouping` / `$IterateGroups` macros, so one `-exportReport` on the zone scene after
+`-align` echoes the grouping headless; run it once with the flight log and once with a params copy
+whose `ifKGrp` is set to each of its values. [VERIFIED: FINDINGS `[RECON]` and `[NA173]`
+2026-09-06; the C0 probe's 13/13 and 32/32 distinct focals under position-only priors agree]

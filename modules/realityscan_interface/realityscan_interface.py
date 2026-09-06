@@ -583,7 +583,12 @@ class RealityScanAlignment(RSModule):
                 input_folder, output_folder, scene_name, flight_log_path)
         # Fingerprint travels with the exports: nav-aware resume
         # (align_fingerprint.matches_current) and merge-stage unanimity
-        # checks key off this file, not off mere file existence.
+        # checks key off this file, not off mere file existence. The
+        # prior-group command file is generated after the fingerprint was
+        # built, so it is added here (provenance only - the 2026-09-06
+        # audit found no other record on disk of which grouping ran).
+        current_fp['prior_groups'] = align_fingerprint.file_identity(
+            groups_file if families else None)
         try:
             align_fingerprint.write_fingerprint(output_folder, current_fp)
         except OSError as exc:

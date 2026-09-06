@@ -600,3 +600,66 @@ cross-zone fusions thrown away). Checked in `agent-native-execution`:
   silently one. [VERIFIED: `testing/test_merge_zones_rework.py`]
 - NOT done here: re-running the H2063 merge (that workspace is on the NA165
   box) - the owner's step 3.
+
+## [NA173] 2026-09-06 - audit of what the code set for the cameras in the F2 and C0 runs, and how they were grouped
+
+Eight read-only agents (four readers, four skeptics re-deriving every claim
+from the files; 158 claims, 146 confirmed, 12 corrected on line numbers or
+wording, 0 refuted) over the code, the two workspaces and the reference.
+The facts that were not already in the entries above:
+
+- **Priors the code set explicitly, both runs.** Position, orientation and
+  every accuracy came from the SUPPLIED log rows (X/Y/Alt, 10/10/1 m; yaw,
+  pitch pre-composed with the OLD mounts 10/20/30 deg for camlower / cammid
+  / zeuss, roll; 15/15/15 deg) - the georeference stage never ran. The code
+  chose the params template (`{D1F2A3B4}` for F2, `{0E9850E2}` for C0),
+  rewrote its two CRS entries to UTM 57 South, pinned the project and output
+  CRS to EPSG:32757 (`absCs="1"` on every input is the on-disk proof),
+  asserted the GUID is installed, and applied AlignmentParams.xml's 35 keys
+  by `-set` BEFORE the import: `sfmEnableCameraPrior=true`,
+  `sfmCameraPriorWeight=10.0`, `sfmCameraPriorWeightOrientation=2.0` (D3),
+  `sfmCameraPriorAccuracyYaw/Pitch/Roll=10.0` (globals; the per-row 15 won,
+  `ifuuInh=0`), `sfmDistortionModel=Division`,
+  `sfmMergeGeoreferencedComponents=false`, `sfmForceComponentRematch=false`,
+  position-accuracy globals 5/5/0.5 under the obfuscated keys. The merge set
+  `sfmMergeGeoreferencedComponents=true` + `sfmEnableCameraPrior=true` and
+  imported the union log with `{D1F2A3B4}` (its `rslog.txt` names the file).
+  **No numeric calibration prior** (focal, k1..k4, principal point) reached
+  RealityScan in either run: `RS_LEGACY_XMP_IDENTITY=0` skips the sidecar
+  repair, `b_xmp_priors` is False, the log has no FocalLength column, and
+  `camera_registry.calibration_xmp` never wrote k1..k4 for the rig cameras
+  anyway. Each camera self-calibrated. [VERIFIED: AlignZone.bat, the
+  interface, AlignmentParams.xml sha in `align_inputs.json`, the .rsproj]
+- **Grouping, both runs: NOT grouped.** The group commands ran (cammid 2/2,
+  camlower 3/3, zeuss|herc 1/1; C0 cammid 2/2 only; `logs/prior_groups_*.cmds`,
+  "Applying calibration/lens prior groups" in every output log), and the
+  readback is one focal per CAMERA everywhere: F2 78/78, 64/64, 16/16 distinct;
+  C0 13/13, 32/32. New instrument: the merge peel's 316 XMPs carry
+  `xcr:CalibrationGroup="-1"` and `xcr:DistortionGroup="-1"` on every file
+  (113/70/53 distinct FocalLength35mm) - the group echo of the fused scene
+  is "ungrouped". The saved .rsproj records no group; the identity CSV
+  format has no group column. The 2026-08-08 fixture measured the same
+  under BOTH `-selectImage` forms, so the regexp form is not the cause.
+  Candidates left: the commands are inert from the delegated CLI, or the
+  import's `ifKGrp=2` re-groups afterwards (rs-reference 13 A3 has the
+  discriminating probe: `-exportReport` with the shipped
+  ComponentAccuracyReport.html, whose `$(groupCount)` /
+  `$(ungroupedInputCount)` echo grouping headless). [MEASURED]
+- **C0 zone_2's calibration is degenerate**: 32 cammid cameras solved at
+  focal 14,133-28,556 px with k1 -27..-7 on 3840 px images (zone_1's 13
+  solved sanely at 2,858-2,884 px), under position-only priors. 32/32
+  registered hid it; a focal sanity band per family belongs in the census.
+  [MEASURED: `NA173_C0probe_RS/aligned_components/zone_2/identity/zone_2_c0.csv`]
+- **The align fingerprint was blind to the prior-group file** - it records
+  the log, the params, the settings XML, min component size, repo sha and
+  the executable, not the `.cmds` that grouped (or failed to group) the
+  cameras. Fixed the same day: `align_inputs.json` gains `prior_groups`
+  (path, sha256, bytes; provenance only, not a retry-changing input).
+- **Log hygiene**: the D1 merge and assembly RealityScan session logs had
+  been copied only into the C0 probe's `rs_logs/`; copied to
+  `NA173_H2014g_RS/_agent/logs/rs_logs/26_09_06_{6,7,8}.log` as well. The
+  zone-session logs cap at 100 events (the C0 logs, 163-170 events, are the
+  only complete align sessions on record).
+- **Reference corrections**: 02 row for `-setPriorCalibrationGroup` said
+  "never exercised through the CLI here" (it runs on every align); 07's
+  table still listed the orientation hardness at 10.0 (2.0 since D3).

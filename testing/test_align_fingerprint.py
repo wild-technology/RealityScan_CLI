@@ -104,3 +104,25 @@ def test_write_is_atomic_shaped(tmp_path):
     assert os.path.basename(p) == FINGERPRINT_NAME
     assert not os.path.exists(p + ".tmp")
     json.load(open(p, encoding="utf-8"))
+
+
+def test_prior_groups_file_is_recorded_as_provenance(tmp_path):
+    """The 2026-09-06 audit found nothing on disk saying which calibration/
+    lens grouping an align asked for: the fingerprint now carries the
+    generated command file (path, sha, bytes) - provenance, not a
+    retry-changing input."""
+    nav, flp, ap = _inputs(tmp_path)
+    cmds = _mk(tmp_path, "prior_groups_zone_1.cmds",
+               "-deselectAllImages" + chr(10) + "-setPriorCalibrationGroup 2" + chr(10))
+    fp = build_fingerprint(nav, flp, ap, 50, prior_groups=cmds)
+    assert fp["prior_groups"]["path"].endswith("prior_groups_zone_1.cmds")
+    assert len(fp["prior_groups"]["sha256"]) == 64
+    assert build_fingerprint(nav, flp, ap, 50)["prior_groups"] is None
+    out = tmp_path / "zone_1"
+    out.mkdir()
+    write_fingerprint(str(out), fp)
+    assert read_fingerprint(str(out))["prior_groups"]["sha256"] == fp["prior_groups"]["sha256"]
+    other = build_fingerprint(nav, flp, ap, 50, prior_groups=_mk(
+        tmp_path, "prior_groups_other.cmds", "-setPriorCalibrationGroup 3" + chr(10)))
+    assert diff_fingerprints(fp, other) == []
+    assert matches_current(str(out), other)

@@ -10,7 +10,7 @@ beside any image. The owner's instruction ("D1: design and execute an end to
 end comprehensive test of the CSV workflow. End to end means zones too and
 merging. Ideally no xmp are written") is the sign-off quote in both charters;
 every charter answer was DERIVED by the agent and is listed below for veto.
-Suite: **934 passed, 1 skipped** (`python -m pytest testing -q`, this box). Nothing pushed.
+Suite: **935 passed, 1 skipped** (`python -m pytest testing -q`, this box). Nothing pushed.
 
 ### Done
 
@@ -50,6 +50,17 @@ Suite: **934 passed, 1 skipped** (`python -m pytest testing -q`, this box). Noth
   anywhere from its unique image count to its camera sum and counts only
   the shortfall below unique as loss (`cameras_lost` no longer includes
   folded copies). Tests carry the H2063 and F2 numbers.
+- **Priors and grouping audit** (8 read-only agents, 158 claims, 0 refuted;
+  FINDINGS `[NA173] 2026-09-06` audit entry): both runs set only CRS, the
+  params template, AlignmentParams.xml's 35 keys and the group commands;
+  every pose prior came from the supplied log; no numeric calibration prior
+  reached RealityScan; NOT grouped (one focal per camera everywhere, the
+  merge peel's 316 XMPs all `CalibrationGroup="-1"`). Discriminating probe
+  written up in rs-reference 13 A3 (`-exportReport` with the shipped
+  ComponentAccuracyReport.html echoes `$(groupCount)`). C0 zone_2's
+  calibration is degenerate (focal 14-29k px) - a focal sanity band per
+  family is a census gap. `align_inputs.json` now records the
+  prior-group command file.
 - **D1 decision narrowed** (`docs/DECISIONS.md`): CSV lane proven end to end;
   arm (i) of C6 measured (prior groups alone -> every camera its own focal);
   arms (ii)/(iii) still to run; the scale oracle now reads the identity CSVs

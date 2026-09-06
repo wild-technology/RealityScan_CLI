@@ -781,7 +781,7 @@ composed inside the `.bat` and cmd can never split it
 
 ### `-setPriorCalibrationGroup` / `-setPriorLensGroup` / `-lockPoseForContinue`
 
-Never exercised through the CLI here — the equivalent state is written into `<stem>.xmp`
+Exercised through the delegated CLI on every align since 2026-08-14 (modules/prior_groups.py writes a command file AlignZone.bat replays; F2 and the C0 probe on 2026-09-06 ran it) with NO measured effect so far — every echo reads `CalibrationGroup="-1"` (A5, decision D1); the equivalent state is otherwise written into `<stem>.xmp`
 sidecars by `camera_registry.py` before the images are added. `-lockPoseForContinue` maps to
 `inpPosePriorRelative` (`0` Unknown / `1` Draft / `2` Exact) plus
 `inpPosePriorRelativeGroup`, which is the **relative** pose lock and a different setting

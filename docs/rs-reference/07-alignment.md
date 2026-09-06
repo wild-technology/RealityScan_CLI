@@ -1750,7 +1750,7 @@ distance-from-centroid, validated both directions (known-good 1.045 vs stem 1.02
 | Setting | Value | Basis |
 |---|---|---|
 | `sfmEnableCameraPrior` | `true` | required for georeferenced components [VERIFIED-as-decision] |
-| `sfmCameraPriorWeight` / `…WeightOrientation` | `10.0` / `10.0` | proven on this data class (NA167 zone_13 93.4 %); fallback 1.0 never exercised [VERIFIED-as-in-use; OPEN: never A/B'd] |
+| `sfmCameraPriorWeight` / `…WeightOrientation` | `10.0` / `2.0` (orientation lowered from 10.0 on 2026-09-01, D3; 03 sec.3 row) | proven on this data class at 10/10 (NA167 zone_13 93.4 %); the 2.0 hardness has run F2 and the C0 probe (2026-09-06) but is not A/B'd; fallback 1.0 never exercised [VERIFIED-as-in-use; OPEN: never A/B'd] |
 | flight-log position accuracies | **10 / 10 / 1 m** | Bow 2×2: tight (1/1/0.1) fragments and mis-scales [VERIFIED] |
 | flight-log orientation | **ON at 15° YPR** | dose-response (5° fragments, 15° gains); removing it destroyed two H2024 zones [VERIFIED-as-decision, attribution flagged] |
 | `sfmDistortionModel` | `Division` | best Z3 registration; both optics solved division; global and all-or-nothing [VERIFIED, with the PD-6 attribution caveat] |

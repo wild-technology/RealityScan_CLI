@@ -64,16 +64,30 @@ def _file_identity(path: str | None) -> dict | None:
             "bytes": os.path.getsize(path)}
 
 
+def file_identity(path: str | None) -> dict | None:
+    """Public spelling of _file_identity for callers that add a provenance
+    entry after the fingerprint was built (the prior-group command file is
+    generated later in the align than the fingerprint)."""
+    return _file_identity(path)
+
+
 def build_fingerprint(flight_log: str | None,
                       flight_log_params: str | None,
                       align_settings_xml: str | None,
                       min_component_size: int,
-                      rs_executable: str | None = None) -> dict:
+                      rs_executable: str | None = None,
+                      prior_groups: str | None = None) -> dict:
     """Identity of everything that determines a zone's aligned output.
 
     align_settings_xml is the RS_ALIGN_PARAMS override when set, else the
     canonical Metadata/AlignmentParams.xml - i.e. whatever AlignZone.bat
-    will actually apply.
+    will actually apply. prior_groups is the generated calibration/lens
+    group command file AlignZone.bat replays (modules/prior_groups.py):
+    PROVENANCE, recorded so a fingerprint says which grouping was asked
+    for (the 2026-09-06 audit found nothing on disk did), but not a
+    retry-changing input - it is a deterministic function of the images
+    and cameras.json, so a change in it always comes with a change in one
+    of the compared fields.
     """
     frame = ("utm" if (flight_log and utm_zone_from_flight_log_name(flight_log))
              else "local_euclidean")
@@ -84,6 +98,7 @@ def build_fingerprint(flight_log: str | None,
         "flight_log": _file_identity(flight_log),
         "flight_log_params": _file_identity(flight_log_params),
         "align_settings": _file_identity(align_settings_xml),
+        "prior_groups": _file_identity(prior_groups),
         "min_component_size": int(min_component_size),
         "repo_sha": _repo_sha(),
     }
