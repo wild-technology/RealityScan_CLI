@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.align_fingerprint import (
     FINGERPRINT_NAME, build_fingerprint, diff_fingerprints,
-    matches_current, read_fingerprint, write_fingerprint)
+    matches_current, read_fingerprint, write_fingerprint, xmp_export_shape)
 
 
 def _mk(tmp_path, name, content):
@@ -141,3 +141,39 @@ def test_identity_capture_is_recorded_but_is_not_a_retry_change(monkeypatch, tmp
     monkeypatch.setenv("RS_LEGACY_XMP_IDENTITY", "1")
     assert build_fingerprint(nav, flp, ap, 50)["identity_capture"] == "xmp"
     assert diff_fingerprints(csv_fp, xmp_fp) == []
+
+
+def test_xmp_export_shape_records_what_the_harvest_wrote(tmp_path):
+    """-exportXMP takes an optional params file this repo never passes, so
+    the sidecar layout is the instance's stored export settings - and those
+    cannot be read back headless (rs-reference 03 sec.1.8). The produced
+    attribute set is the only record of the format that ran."""
+    assert xmp_export_shape(None) is None
+    empty = tmp_path / "identity_r0"
+    empty.mkdir()
+    assert xmp_export_shape(str(empty)) is None, "an empty lap is not a shape"
+    (empty / "00000.xmp").write_text(
+        '<x:xmpmeta><rdf:Description xcr:Version="4" '
+        'xcr:PosePrior="initial" xcr:CalibrationGroup="-1" '
+        'xcr:DistortionModel="perspective">'
+        '<xcr:Position>1 2 3</xcr:Position>'
+        '</rdf:Description></x:xmpmeta>', encoding="utf-8")
+    (empty / "00001.xmp").write_text("<x:xmpmeta/>", encoding="utf-8")
+    shape = xmp_export_shape(str(empty))
+    assert shape["files"] == 2 and shape["sample"] == "00000.xmp"
+    assert shape["attributes"] == [
+        "xcr:CalibrationGroup", "xcr:DistortionModel", "xcr:PosePrior",
+        "xcr:Position", "xcr:Version"]
+
+
+def test_xmp_export_shape_is_provenance_not_a_retry_change(tmp_path):
+    """A different export shape is a fact to notice, never a reason to
+    refuse a resume - same rule as prior_groups and identity_capture."""
+    nav, flp, ap = _inputs(tmp_path)
+    a = build_fingerprint(nav, flp, ap, 50)
+    b = build_fingerprint(nav, flp, ap, 50)
+    a["xmp_export"] = {"files": 3, "sample": "a.xmp",
+                       "attributes": ["xcr:Position"]}
+    b["xmp_export"] = {"files": 9, "sample": "b.xmp",
+                       "attributes": ["xcr:Position", "xcr:Rotation"]}
+    assert diff_fingerprints(a, b) == []

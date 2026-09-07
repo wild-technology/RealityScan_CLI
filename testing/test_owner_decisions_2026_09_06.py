@@ -303,6 +303,39 @@ def test_preflight_names_the_default_and_refuses_a_typo(tmp_path):
     assert any("identity_capture" in b for b in pf.preflight_charter(charter)["blocking"])
 
 
+@pytest.mark.parametrize("capture", ["xmp", ""])
+def test_pool_layout_with_the_xmp_lane_is_refused(tmp_path, capture):
+    """Hard rule 0, mechanically (2026-09-06). Pool layout hands RealityScan
+    an .imagelist and leaves the images in their canonical tree, so the XMP
+    harvest's sidecars land in the SOURCE imagery. Nothing refused the
+    combination until now - the NA173 charter avoided it by choosing the copy
+    layout by hand. The unset case is included because unset means xmp."""
+    charter = _ready(tmp_path)
+    charter.science["identity_capture"] = capture
+    charter.raw["pipeline"]["answers"]["b_zone_layout"] = "pool"
+    report = pf.preflight_charter(charter)
+    hits = [b for b in report["blocking"] if "pool" in b and "hard rule 0" in b]
+    assert hits, (capture, report["blocking"])
+    assert report["verdict"] == "not_ready"
+
+
+def test_pool_layout_with_the_csv_lane_is_allowed(tmp_path):
+    """The CSV capture writes only into the output tree, so pool is fine."""
+    charter = _ready(tmp_path)
+    charter.science["identity_capture"] = "csv"
+    charter.raw["pipeline"]["answers"]["b_zone_layout"] = "pool"
+    report = pf.preflight_charter(charter)
+    assert not any("hard rule 0" in b for b in report["blocking"]), report["blocking"]
+
+
+def test_copy_layout_with_the_xmp_lane_is_allowed(tmp_path):
+    charter = _ready(tmp_path)
+    charter.science["identity_capture"] = "xmp"
+    charter.raw["pipeline"]["answers"]["b_zone_layout"] = "copy"
+    report = pf.preflight_charter(charter)
+    assert not any("hard rule 0" in b for b in report["blocking"]), report["blocking"]
+
+
 def test_the_template_carries_the_key():
     from modules.run_charter import TEMPLATE
     assert "identity_capture" in TEMPLATE["science"]

@@ -161,6 +161,96 @@ def _csv(zone, comp, cams, scale=1.0):
     (d / f'{comp}.csv').write_text(chr(10).join(rows) + chr(10), encoding='utf-8')
 
 
+def _xmp(zone, round_k, cams, scale=1.0):
+    """One identity_r<K> harvest lap, in the shape AlignZone.bat's legacy
+    branch leaves behind: stem-named sidecars carrying xcr:Position in the
+    MODEL frame (rotated, shifted and scaled away from the nav, because the
+    oracle compares distance ratios and never absolute placement).
+
+    The other attributes are the ones a real zone-scene export carries
+    (measured on the NA173 F2 peel, 2026-09-06); they are inert to the
+    oracle and present so the fixture encodes the real file shape rather
+    than a minimal one.
+    """
+    d = zone / f'identity_r{round_k}'
+    d.mkdir(parents=True, exist_ok=True)
+    for name, (x, y, z) in cams:
+        mx, my = -(y - 8980000.0) * scale + 3.0, (x - 585000.0) * scale - 7.0
+        mz = (z + 850.0) * scale
+        (d / f'{name}.xmp').write_text(
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+            '<rdf:RDF><rdf:Description '
+            'xcr:Version="3" xcr:PosePrior="initial" '
+            'xcr:CalibrationPrior="initial" xcr:CalibrationGroup="-1" '
+            'xcr:DistortionGroup="-1" xcr:DistortionModel="perspective" '
+            'xcr:Coordinates="absolute" xcr:ExportCoordinateSystemType="2">'
+            f'<xcr:Position>{mx} {my} {mz}</xcr:Position>'
+            '</rdf:Description></rdf:RDF></x:xmpmeta>',
+            encoding='utf-8')
+    return d
+
+
+# ------------------------------------------- XMP identity lane (the default)
+#
+# The twins of the three CSV-lane cases below. Written 2026-09-06: the CSV
+# lane had a complete on-disk set (known-good, known-bad, membership) while
+# the DEFAULT lane - the destructive identity_r<K> harvest that runs whenever
+# RS_LEGACY_XMP_IDENTITY is not "0" - had none, so the standing oracle rule
+# (a known-good AND a known-bad before anything relies on it) was satisfied
+# for the opt-in lane and not for the default one. modules/scale_oracle.py's
+# successive-difference membership reader had no test at all.
+
+def test_xmp_lane_measures_a_sound_component(tmp_path):
+    """KNOWN-GOOD: a harvest whose spacing matches the nav reads 1.0."""
+    cams = _line_cameras()
+    zone = tmp_path / 'zone_1'
+    _xmp(zone, 0, cams, scale=1.0)
+    nav = scale_oracle.load_nav_positions(_nav(tmp_path / 'flight_log_57L_UTM.txt', cams))
+    stats = scale_oracle.scale_for_images([f'{n}.jpg' for n, _ in cams], str(zone), nav)
+    assert stats is not None and stats['cameras'] == 40
+    assert scale_oracle.verdict(stats)[0] == 'pass'
+    assert abs(stats['median'] - 1.0) < 1e-6
+
+
+def test_xmp_lane_catches_a_collapse(tmp_path):
+    """KNOWN-BAD: the real H2024 zone_3 collapse, read from a harvest."""
+    cams = _line_cameras()
+    zone = tmp_path / 'zone_1'
+    _xmp(zone, 0, cams, scale=0.236)
+    nav = scale_oracle.load_nav_positions(_nav(tmp_path / 'flight_log_57L_UTM.txt', cams))
+    stats = scale_oracle.scale_for_images([f'{n}.jpg' for n, _ in cams], str(zone), nav)
+    status, why = scale_oracle.verdict(stats)
+    assert status == 'fail' and '0.236' in why
+
+
+def test_xmp_lane_membership_is_successive_difference(tmp_path):
+    """The DEFAULT lane's membership reader, previously untested.
+
+    Lap 0 harvests every component still in the scene; the maximal one is
+    then exported and deleted, so lap 1 holds what remains.
+    members(c0) = stems(r0) - stems(r1), members(c1) = stems(r1).
+    """
+    cams = _line_cameras(80)
+    zone = tmp_path / 'zone_1'
+    _xmp(zone, 0, cams)                 # 80 stems: both components
+    _xmp(zone, 1, cams[50:])            # 30 stems: c0 has been peeled off
+    log = _nav(tmp_path / 'flight_log_57L_UTM.txt', cams)
+    members = scale_oracle.component_members(str(zone))
+    assert [len(m) for m in members] == [50, 30]
+    rows = scale_oracle.report(str(zone), log)
+    assert [r['component'] for r in rows] == [0, 1]
+
+
+def test_xmp_lane_empty_harvest_is_unmeasured_not_a_pass(tmp_path):
+    """An empty lap is the exhaustion terminal, never evidence of scale."""
+    cams = _line_cameras()
+    zone = tmp_path / 'zone_1'
+    (zone / 'identity_r0').mkdir(parents=True)
+    nav = scale_oracle.load_nav_positions(_nav(tmp_path / 'flight_log_57L_UTM.txt', cams))
+    assert scale_oracle.scale_for_images([f'{n}.jpg' for n, _ in cams], str(zone), nav) is None
+    assert scale_oracle.component_members(str(zone)) == []
+
+
 def test_csv_lane_measures_a_sound_component(tmp_path):
     cams = _line_cameras()
     zone = tmp_path / 'zone_1'
@@ -200,11 +290,6 @@ def test_xmp_harvest_still_wins_and_nothing_is_still_unmeasured(tmp_path):
     nav = scale_oracle.load_nav_positions(_nav(tmp_path / 'flight_log_57L_UTM.txt', cams))
     assert scale_oracle.scale_for_images([f'{n}.jpg' for n, _ in cams], str(zone), nav) is None
     _csv(zone, 'zone_1_c0', cams, scale=1.0)
-    harvest = zone / 'identity_r0'
-    harvest.mkdir()
-    for name, (x, y, z) in cams:      # an XMP lane at half scale beside the CSV
-        (harvest / f'{name}.xmp').write_text(
-            f'<x:xmpmeta><rdf:Description xcr:Position="{x * 0.5} {y * 0.5} {z * 0.5}"/></x:xmpmeta>',
-            encoding='utf-8')
+    _xmp(zone, 0, cams, scale=0.5)    # an XMP lane at half scale beside the CSV
     stats = scale_oracle.scale_for_images([f'{n}.jpg' for n, _ in cams], str(zone), nav)
     assert abs(stats['median'] - 0.5) < 1e-6

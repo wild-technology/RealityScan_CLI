@@ -20,6 +20,7 @@ from .realityscan_cli import RealityScanCLI, METADATA_DIR, set_project_save_env
 # Component/scene files as exported by RealityScan (legacy RealityCapture
 # extensions still accepted so older outputs keep working).
 COMPONENT_EXTENSIONS = ('.rsalign', '.rcalign')
+SCENE_EXTENSIONS = ('.rsproj', '.rcproj')
 
 
 def flight_log_params_template(metadata_dir: str, log_path: str | None,
@@ -38,7 +39,6 @@ def flight_log_params_template(metadata_dir: str, log_path: str | None,
     if log_path and not utm_zone_from_flight_log_name(log_path):
         return os.path.join(metadata_dir, "FlightLogParamsLocal.xml")
     return os.path.join(metadata_dir, "FlightLogParams.xml")
-SCENE_EXTENSIONS = ('.rsproj', '.rcproj')
 
 
 class RealityScanAlignment(RSModule):
@@ -319,6 +319,32 @@ class RealityScanAlignment(RSModule):
         # .bat harvest, sanitize, regeneration) targets the pool root
         # instead of the zone folder. Unset = legacy behavior.
         hygiene_root = os.environ.get('RS_ALIGN_POOL_DIR') or input_folder
+
+        # HARD RULE 0, mechanically. Pool layout + the XMP identity lane is a
+        # rule-0 violation BY CONSTRUCTION, not by accident: the pool root is
+        # the canonical source tree (run_plan derives it from b_input, or from
+        # raw/preprocessed images), and the harvest writes a sidecar beside
+        # every image there before moving the pose-bearing ones out. Whatever
+        # it fails to move stays in the owner's originals, and the
+        # calibration-sidecar repair then writes MORE. Nothing refused this
+        # combination until 2026-09-06; the charter's science.notes had to
+        # choose the copy layout by hand to avoid it. The CSV capture writes
+        # only into the output tree, so it is unaffected.
+        pool_root = os.environ.get('RS_ALIGN_POOL_DIR')
+        if pool_root and os.environ.get('RS_LEGACY_XMP_IDENTITY', '1') != '0':
+            self.logger.error(
+                'REFUSING zone %s: pool layout (RS_ALIGN_POOL_DIR=%s) with the '
+                'XMP identity lane would write sidecars into the SOURCE image '
+                'tree, which hard rule 0 forbids. The pool root is the '
+                'canonical imagery, not a copy this pipeline made. Either set '
+                'the charter to science.identity_capture: csv (the '
+                'non-destructive -exportRegistration capture, which writes '
+                'only into the output tree), or batch with '
+                'b_zone_layout: copy so the harvest targets zone copies.',
+                scene_name, pool_root)
+            return {'Success': False, 'Component Count': 0,
+                    'Registered Cameras': 0}, {'Success': False}
+
         pose_sidecars = 0
         for root, _dirs, files in os.walk(hygiene_root):
             for name in files:
@@ -607,6 +633,14 @@ class RealityScanAlignment(RSModule):
         # audit found no other record on disk of which grouping ran).
         current_fp['prior_groups'] = align_fingerprint.file_identity(
             groups_file if families else None)
+        # What the XMP harvest actually wrote. -exportXMP accepts an optional
+        # params file that nothing in this repo passes, so the sidecar layout
+        # is the instance's stored export settings, which cannot be read back
+        # headless (rs-reference 03 sec.1.8) - the produced attribute set is
+        # the only record of the format that ran. None on the CSV lane, which
+        # pins its format by GUID instead.
+        current_fp['xmp_export'] = align_fingerprint.xmp_export_shape(
+            os.path.join(output_folder, 'identity_r0'))
         try:
             align_fingerprint.write_fingerprint(output_folder, current_fp)
         except OSError as exc:

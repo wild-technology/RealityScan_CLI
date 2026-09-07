@@ -724,3 +724,58 @@ FIXED the same day (carry-forward defects, not design changes):
 4. `publish_nira.py` accepts `.rsInfo`, not only the RealityCapture-era `.rcinfo`,
    so the georeferencing sidecar is in the upload.
 Suite: 941 passed, 1 skipped.
+
+## [HARNESS] 2026-09-06 - NA165/H2060 fault set merged; XMP lane covered, pool+xmp refused, export shape recorded
+
+Merged `origin/na165-h2060-directives` (its `BUGS.md` documents twelve faults
+from a 19-agent pass). Eleven were live on this branch; B12 (the declared
+default recorded as an explicit answer) we had reached independently. Three
+conflicts, all resolved by keeping BOTH sides: geoall's required-flag check
+plus the typed settings lookup; main.py's unattended branch plus the gated
+interactive lookup and the stored-answer distinction; the batcher's gated
+lookup plus the shadow warning. Both branches had independently gated the
+same two prompt lookups (B8), which is the strongest corroboration in the
+set. Suite 941 -> 960. [VERIFIED: merge d955e21]
+
+Two of their guards deserve naming here because they close incidents this
+branch had only documented: a missing, header-only or wrong-width flight log
+now REFUSES before the module loop instead of aligning for hours to a
+component with no georeferencing (B1), and `RS_PROJECT_CRS` is popped per
+zone so one zone cannot inherit the previous zone's frame - the defect that
+labelled H2060's own deliverables 55N for a 2S dive (B6).
+
+Then, on the three things the XMP-default question left open:
+
+- **The default lane now has on-disk test cover.** The CSV lane had a
+  complete set (known-good at 1.0, known-bad at the real 0.236 collapse,
+  membership) while the DEFAULT harvest lane had none, so the oracle rule was
+  satisfied for the opt-in lane and not the default one, and
+  `scale_oracle.component_members`' successive-difference branch had no test
+  at all. Added the four twins in `testing/test_scale_gate.py`
+  (`_xmp` helper writes the real sidecar shape, not a minimal one), including
+  the empty-lap case: an exhausted harvest is UNMEASURED, never a pass.
+- **Pool layout + the XMP lane is now refused, in both places.** It was a
+  hard-rule-0 violation BY CONSTRUCTION - the pool root is the canonical
+  source tree and the harvest writes a sidecar beside every image there
+  before moving the pose-bearing ones out - and nothing refused it; the NA173
+  charter avoided it by choosing the copy layout by hand. `preflight` BLOCKS
+  before any GPU time and `__align_zone` refuses the zone at run time.
+  Unset counts as xmp, so the unset case is refused too.
+- **The XMP export format cannot be pinned, so the run now records what it
+  produced.** `-exportXMP` DOES take an optional params file and this repo
+  ships one (`Metadata/XMPExportParams.xml`, Configuration id
+  `{EC40D990-B2AF-42A4-9637-1208A0FD1322}`), but nothing passes it, whether
+  passing one is honoured is UNMEASURED, and there is no headless read-back
+  of the instance's XMP export settings - and a read-back would not prove
+  they were honoured, because the config layer stores unrecognised keys
+  verbatim (rs-reference 05 sec.9.7, 09 sec.2.3, 03 sec.1.6/1.8). So
+  `align_inputs.json` gains `xmp_export` = {files, sample, attributes} read
+  off a sidecar the run itself wrote: provenance, never compared. The CSV
+  lane records None because it pins its format by GUID instead. The cheap
+  probe that would close this properly (export bare vs with the params file,
+  diff the attribute set) is rs-reference 05's own Q15 and remains unrun.
+  [VERIFIED: rs-reference lookup, 2026-09-06]
+
+Also: the merge's automerge had moved `SCENE_EXTENSIONS` below a function in
+`realityscan_interface.py`; restored beside its sibling constant.
+Suite: 970 passed, 1 skipped.

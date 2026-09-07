@@ -382,6 +382,24 @@ class Preflight:
             else:
                 self.block(f"science.identity_capture {capture!r} is not 'csv' or 'xmp'")
 
+            # HARD RULE 0, before the run rather than after. Pool layout keeps
+            # the images in their canonical tree and hands RealityScan an
+            # .imagelist, so the XMP harvest's sidecars land in the SOURCE
+            # imagery - a rule-0 violation by construction, which nothing
+            # refused until 2026-09-06 (the NA173 charter had to pick the copy
+            # layout by hand to avoid it). The align stage refuses this at run
+            # time too; this is the cheap half, before any GPU time.
+            layout = (self.answers.get("b_zone_layout") or "").strip().lower()
+            if layout == "pool" and capture != "csv":
+                self.block(
+                    "b_zone_layout 'pool' with identity capture "
+                    f"{capture or 'unset (defaults to xmp)'!s}: the XMP harvest "
+                    "writes sidecars beside the POOL images, which are the "
+                    "source imagery hard rule 0 declares read-only. Set "
+                    "science.identity_capture: csv (writes only into the output "
+                    "tree), or b_zone_layout: copy so the harvest targets "
+                    "zone copies.")
+
     def check_pipeline(self) -> tuple[Optional[Session], bool]:
         stages = self.stages
         if not stages:

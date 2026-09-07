@@ -10,7 +10,7 @@ beside any image. The owner's instruction ("D1: design and execute an end to
 end comprehensive test of the CSV workflow. End to end means zones too and
 merging. Ideally no xmp are written") is the sign-off quote in both charters;
 every charter answer was DERIVED by the agent and is listed below for veto.
-Suite: **941 passed, 1 skipped** (`python -m pytest testing -q`, this box). Nothing pushed.
+Suite: **970 passed, 1 skipped** (`python -m pytest testing -q`, this box). Nothing pushed.
 
 ### Done
 
@@ -61,6 +61,22 @@ Suite: **941 passed, 1 skipped** (`python -m pytest testing -q`, this box). Noth
   calibration is degenerate (focal 14-29k px) - a focal sanity band per
   family is a census gap. `align_inputs.json` now records the
   prior-group command file.
+- **NA165/H2060 fault set merged** (`d955e21`, their `BUGS.md` is now in the
+  tree): eleven of twelve faults were live here. Headlines: a missing,
+  header-only or wrong-width flight log refuses BEFORE the module loop instead
+  of aligning for hours to an ungeoreferenced component; the coordinate system
+  is popped per zone (the defect that labelled H2060's exports 55N for a 2S
+  dive); one zone-sizing resolver with the invariants and a dead-band check;
+  a zero-registered-camera guard; the gated settings lookup in the two prompt
+  paths that still bypassed it; declination estimated always but applied only
+  when the heading source is magnetic.
+- **The XMP-default questions answered and closed** (FINDINGS `[HARNESS]`
+  2026-09-06, NA165 entry): the default lane now has its own on-disk
+  known-good, known-bad, membership and empty-lap tests; pool layout with the
+  XMP lane is REFUSED by preflight and again at run time as a hard-rule-0
+  violation by construction; and because `-exportXMP`'s format cannot be
+  pinned or read back headless, `align_inputs.json` records the attribute set
+  the harvest actually produced.
 - **Pipeline variable audit** -> `docs/PIPELINE_VARIABLES.md` (routed from
   CLAUDE.md): every variable classified baked / detected / owner / inherited
   with its file:line and whether it crosses the stage boundary, the

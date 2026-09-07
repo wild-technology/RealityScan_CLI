@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 
@@ -69,6 +70,37 @@ def file_identity(path: str | None) -> dict | None:
     entry after the fingerprint was built (the prior-group command file is
     generated later in the align than the fingerprint)."""
     return _file_identity(path)
+
+
+def xmp_export_shape(identity_dir: str | None) -> dict | None:
+    """What the XMP harvest ACTUALLY wrote, as provenance.
+
+    `-exportXMP` takes an optional params file and this repo has never
+    passed one (rs-reference 09 sec.2.3), so the sidecar layout is whatever
+    the instance's stored XMP export settings hold - where the CSV lane
+    pins its format by GUID. There is no headless read-back of those
+    settings, and reading them back would not prove they were honoured
+    (rs-reference 03 sec.1.6/1.8), so the only honest record is the OUTPUT:
+    the attribute set of a sidecar the run itself produced. Recorded, never
+    compared - a different attribute set is a fact to notice, not a reason
+    to refuse a retry.
+
+    Returns {files, sample, attributes} or None when no harvest exists.
+    """
+    if not identity_dir or not os.path.isdir(identity_dir):
+        return None
+    names = sorted(f for f in os.listdir(identity_dir)
+                   if f.lower().endswith(".xmp"))
+    if not names:
+        return None
+    try:
+        with open(os.path.join(identity_dir, names[0]),
+                  encoding="utf-8", errors="replace") as fh:
+            text = fh.read(65536)
+    except OSError:
+        return None
+    attrs = sorted(set(re.findall(r"(xcr:[A-Za-z0-9_]+)", text)))
+    return {"files": len(names), "sample": names[0], "attributes": attrs}
 
 
 def build_fingerprint(flight_log: str | None,
