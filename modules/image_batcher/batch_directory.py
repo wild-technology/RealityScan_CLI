@@ -51,7 +51,7 @@ class BatchDirectory(RSModule):
             cli_short='b_t',
             cli_long='b_target_images',
             type=int,
-            default_value=3000,
+            default_value=6500,  # 3000 -> 6500, owner directive 2026-09-06
             description='Target number of images per zone (zones will be split/merged to approach this)',
             prompt_user=True
         )
@@ -61,7 +61,18 @@ class BatchDirectory(RSModule):
             cli_short='b_min',
             cli_long='b_min_zone',
             type=int,
-            default_value=1000,  # <-- changed from 500 to 1000
+            # 1000 -> 4000. The owner directive (2026-09-06) said 5000; it is
+            # 4000 because of the DEAD BAND. __adaptive_zone_creation splits
+            # only when zone_size > max_size and merges an undersized zone only
+            # when combined_size <= max_size, so whenever 2*min > max a pair of
+            # sub-minimum zones can NEITHER merge NOR split and stays below the
+            # floor permanently. 2*4000 == 8000 == max_size is the boundary
+            # that closes the band; 5000/8000 would have opened one 2000 wide,
+            # and with initial_k = ceil(21023/6500) = 4 the base zones average
+            # 5,256 - only 5% above a 5000 floor, so landing inside the band
+            # was likely, not hypothetical. validate_parameters() now refuses
+            # the inconsistent case instead of leaving it to the zone table.
+            default_value=4000,
             description='Minimum images in a zone (smaller zones will be merged)',
             prompt_user=False
         )
@@ -71,7 +82,14 @@ class BatchDirectory(RSModule):
             cli_short='b_max',
             cli_long='b_max_zone',
             type=int,
-            default_value=4000,
+            # 4000 -> 8000, owner directive 2026-09-06. NOTE this caps the BASE
+            # zone: overlap donation runs afterwards (__create_batch_folders)
+            # and is never re-capped, so the DELIVERED zone reaches
+            # max * (1 + overlap/100) - 9,600 at the 20% default. The delivered
+            # sizes are now reported explicitly rather than left to be
+            # discovered in the align logs (FINDINGS 2026-08: a 7,842-image
+            # zone shipped against a 6,000 cap for exactly this reason).
+            default_value=8000,
             description='Maximum images in a zone (larger zones will be split)',
             prompt_user=False
         )
@@ -166,12 +184,36 @@ class BatchDirectory(RSModule):
             cli_short='b_x',
             cli_long='b_xmp_priors',
             type=bool,
-            default_value=False,
+            # False -> True, owner directive 2026-09-06.
+            #
+            # WHAT IT ACTUALLY BUYS, stated plainly because the history here is
+            # bad: on the DEFAULT identity path (RS_LEGACY_XMP_IDENTITY unset
+            # or "1") realityscan_interface.ensure_calibration_sidecars()
+            # already recreates a calibration sidecar for every known camera on
+            # every exit path, so this flag does not decide WHETHER sidecars
+            # exist - it decides whether they exist BEFORE the first align
+            # instead of after it. The delta is the numeric content:
+            # FocalLength35mm and DistortionModel.
+            #
+            # TWO STANDING CAVEATS, neither retracted:
+            #  - NA167 zone_13 A/B measured this prior content REDUCING
+            #    registration 96.3% -> 89.6%.
+            #  - cameras.json gives zeuss/cinema/sony DistortionModel=brown3
+            #    while Metadata/AlignmentParams.xml sets a GLOBAL
+            #    sfmDistortionModel=Division. Which wins is UNMEASURED
+            #    (docs/rs-reference/05). On a single-family dive the grouping
+            #    half of the prior is a no-op, so the contradiction is the only
+            #    thing the flag introduces.
+            # Enabled because the owner asked for it; validate per-rig.
+            default_value=True,
             description=('Write per-camera XMP calibration priors into the zones. '
-                         'Off by default: a naming bug meant historical runs never '
-                         'actually loaded them, and the NA167 zone_13 A/B showed the '
-                         'current prior content REDUCING registration (96.3% -> 89.6%). '
-                         'Validate per-rig before enabling.'),
+                         'ON by default (owner directive 2026-09-06). Caveats: the '
+                         'NA167 zone_13 A/B showed this prior content REDUCING '
+                         'registration (96.3% -> 89.6%), and cameras.json '
+                         'DistortionModel may contradict the global '
+                         'sfmDistortionModel in AlignmentParams.xml. Copy layout '
+                         'only - pool layout shares one canonical image tree, '
+                         'which is read-only, so sidecars are skipped there.'),
             prompt_user=False
         )
 
@@ -229,11 +271,17 @@ class BatchDirectory(RSModule):
         # out - which would have let a re-run with a new ceiling silently
         # reuse zones built without one, the exact fail-open the guard was
         # written to close (final review, must-fix #1).
+        # batch_xmp_priors added 2026-09-06 when it became a default: it does
+        # not change zone MEMBERSHIP, but it changes what is on disk inside the
+        # zone tree, and __copy_files skips any destination that already exists
+        # BY NAME. Without it here, flipping the flag reuses a tree built
+        # without sidecars and writes none - the same fail-open shape as the
+        # overlap ceiling below, and invisible in the logs.
         keys = ('batch_target_images_per_zone', 'batch_min_zone_size',
                 'batch_max_zone_size', 'batch_initial_overlap_percent',
                 'batch_density_weight', 'batch_kde_bandwidth',
                 'batch_overlap_max_distance_m', 'batch_use_z',
-                'batch_zone_layout')
+                'batch_zone_layout', 'batch_xmp_priors')
         input_dir = self.__get_input_dir()
         return {
             'flight_log': os.path.basename(flight_log_path or ''),
@@ -984,12 +1032,26 @@ class BatchDirectory(RSModule):
         if layout == 'pool':
             prior_param = (self.params or {}).get('batch_xmp_priors')
             if prior_param is not None and prior_param.get_value():
-                # No zone tree exists to hold sidecars, and the owner
-                # directive that created pool mode also retires them.
-                raise ValueError('batch_xmp_priors is incompatible with '
-                                 "batch_zone_layout='pool' (no zone image "
-                                 'tree; XMP sidecars are retired - '
-                                 'docs/FLIGHTLOG_ARCHITECTURE.md)')
+                # WARN AND SKIP, never raise. This used to be a ValueError,
+                # which run() catches into {'Success': False} and main.py turns
+                # into sys.exit(1) - so once batch_xmp_priors became a default
+                # (True, owner directive 2026-09-06) that raise would have
+                # killed EVERY pool run before a single zone was written, for a
+                # default the operator never typed. The incompatibility is real
+                # but it is a property of the layout, not an operator error:
+                # pool zones hold no images, so the only place a sidecar could
+                # go is beside the canonical source image, and that tree is
+                # read-only (CLAUDE.md hard rule 0). Skipping is the correct
+                # resolution; saying so loudly is the obligation.
+                self.logger.warning(
+                    'batch_xmp_priors is ON but zone layout is POOL - NO XMP '
+                    'calibration sidecars will be written. Pool zones hold '
+                    'only an .imagelist, and the canonical image tree is '
+                    'read-only (hard rule 0), so there is nowhere to put them. '
+                    'Calibration priors still reach the solve in-session via '
+                    'prior_groups.py (-setPriorCalibrationGroup / '
+                    '-setPriorLensGroup). Use copy layout if you specifically '
+                    'need the per-image FocalLength/DistortionModel numerics.')
         elif flight_log_df is not None and any(
                 os.path.isabs(str(n)) for n in flight_log_df.index[:50]):
             # A full-path master log zoned into COPY mode would write zone
@@ -1136,54 +1198,181 @@ class BatchDirectory(RSModule):
         """
         if cli_value is not None:
             return cli_value
-        return self.settings.get('batch', key, fallback)
+        # _default_for, NOT get: `get` is ungated, so this helper used to
+        # inherit a previous campaign's stored answers even under
+        # RS_NO_SETTINGS_INHERITANCE - the batcher was the one module the
+        # strict agent lane could not actually make strict.
+        # Duck-typed: a SettingsStore-shaped test double only has to provide
+        # `get` (the convention realityscan_env's docstring states), so fall
+        # back to it rather than requiring the private method.
+        gated = getattr(self.settings, '_default_for', None)
+        stored = (gated('batch', key, fallback) if callable(gated)
+                  else self.settings.get('batch', key, fallback))
+        # "Baked into code" only holds while nothing shadows the code default.
+        # _prompt_int persists its resolved answer into section 'batch' on
+        # EVERY run, including unattended EOF ones, so one run is enough to
+        # freeze a value here forever after - and the operator is never told.
+        # That is how stored min_zone_size=300 (from NA173) beat --b_min 2000,
+        # and how batch.max_zone_size=8000 beat a 6,000 cap. It is not this
+        # function's job to pick the winner (an operator's remembered answer is
+        # a legitimate default), but it IS its job to say when the two differ.
+        if stored != fallback:
+            self.logger.warning(
+                "rs_settings.json [batch] %s = %r is SHADOWING the code "
+                "default %r for this run. The stored answer wins. Delete that "
+                "key, or pass the flag explicitly, if you meant the code "
+                "default to apply.", key, stored, fallback)
+        return stored
 
-    def _prompt_int(self, key: str, message: str, fallback: int,
-                    cli_value=None) -> int:
-        """Integer prompt whose last-entered value persists as the next
-        run's default (rs_settings.json, section "batch").
+    # Both prompts now DELEGATE to the shared typed lookup
+    # (SettingsStore.ask_int / ask_float) rather than reimplementing the
+    # precedence rule. They were byte-for-byte parallel implementations of
+    # `ask` that had already drifted: they read the store ungated, so
+    # RS_NO_SETTINGS_INHERITANCE did not reach the batcher. Keeping the
+    # methods (rather than calling the store at every site) preserves the
+    # 'batch' section name and the existing call signatures.
 
-        EOF-safe: unattended runs (hidden consoles report isatty()=True
-        with an EOF stdin) silently take the stored/fallback value - the
-        same convention as merge_zones/grow_zone ask(). An explicit
-        ``cli_value`` outranks the stored value (see _stored_default)."""
+    def _prompt_typed(self, key, message, fallback, caster, type_name,
+                      lo=None, hi=None, cli_value=None):
+        """One implementation behind both numeric prompts.
+
+        Delegates to SettingsStore.ask_int/ask_float when the store provides
+        them (the real one does), so a production run uses the single shared
+        lookup. Falls back to the local loop for SettingsStore-shaped test
+        doubles, which by convention implement only ``get`` - both branches go
+        through _stored_default, so the PRECEDENCE rule stays in one place
+        either way.
+        """
+        shared = getattr(self.settings,
+                         'ask_int' if caster is int else 'ask_float', None)
+        if callable(shared):
+            kwargs = {'message': message}
+            if caster is float:
+                kwargs.update(lo=lo, hi=hi)
+            return shared('batch', key, cli_value, fallback, **kwargs)
+
         stored = self._stored_default(key, fallback, cli_value)
         while True:
             try:
                 raw = input(f"{message} [{stored}]: ").strip()
             except EOFError:
                 raw = ''
-            if not raw:
-                value = int(stored)
-                break
             try:
-                value = int(raw)
-                break
-            except ValueError:
-                print("Please enter an integer.")
-        self.settings.set('batch', key, value)
-        return value
-
-    def _prompt_float(self, key: str, message: str, fallback: float,
-                      lo: float = None, hi: float = None,
-                      cli_value=None) -> float:
-        stored = self._stored_default(key, fallback, cli_value)
-        while True:
-            try:
-                raw = input(f"{message} [{stored}]: ").strip()
-            except EOFError:
-                raw = ''
-            try:
-                value = float(stored) if not raw else float(raw)
-            except ValueError:
-                print("Please enter a number.")
+                value = caster(stored) if not raw else caster(raw)
+            except (TypeError, ValueError):
+                print(f"Please enter {type_name}.")
                 continue
-            if lo is not None and value < lo or hi is not None and value > hi:
+            if (lo is not None and value < lo) or (hi is not None and value > hi):
                 print(f"Please enter a value between {lo} and {hi}.")
                 continue
             break
         self.settings.set('batch', key, value)
         return value
+
+    def _prompt_int(self, key: str, message: str, fallback: int,
+                    cli_value=None) -> int:
+        """Integer setting: CLI > stored 'batch' answer > code default."""
+        return self._prompt_typed(key, message, fallback, int, 'an integer',
+                                  cli_value=cli_value)
+
+    def _prompt_float(self, key: str, message: str, fallback: float,
+                      lo: float = None, hi: float = None,
+                      cli_value=None) -> float:
+        """Float setting: CLI > stored 'batch' answer > code default."""
+        return self._prompt_typed(key, message, fallback, float, 'a number',
+                                  lo=lo, hi=hi, cli_value=cli_value)
+
+    # ------------------------------------------------------------------
+    # THE zone-sizing lookup. Every consumer calls this one function.
+    # ------------------------------------------------------------------
+    def _resolve_zone_sizing(self, interactive_reprompt: bool = False):
+        """(target, min, max, overlap) for this run, from ONE place.
+
+        Owner directive 2026-09-06: sizing must resolve identically whether a
+        run takes the code defaults or custom values. Before this there were
+        three disagreeing sources:
+
+        1. ``run()`` read ``self.params[...]`` directly after prompting min and
+           max but NOT target - so target skipped the stored-answer layer that
+           min/max went through;
+        2. the interactive "(r)eject and set new params" branch OVERWROTE min
+           and max with ``target*0.2`` and ``target*1.5``, discarding whatever
+           the operator or the code default had said and silently inventing a
+           new pair (at target 6500 that is min 1300 / max 9750 - nothing like
+           the 4000/8000 policy);
+        3. ``validate_parameters`` read the params a fourth time.
+
+        All four now come through here, so a custom value and a default value
+        travel the same road and the invariants are checked once.
+        """
+        target = self._prompt_int(
+            'target_images', 'Target images per zone',
+            self.params['batch_target_images_per_zone'].get_value(),
+            cli_value=self._explicit_param('batch_target_images_per_zone')
+            if not interactive_reprompt else None)
+        min_size = self._prompt_int(
+            'min_zone_size', 'Minimum zone size',
+            self.params['batch_min_zone_size'].get_value(),
+            cli_value=self._explicit_param('batch_min_zone_size')
+            if not interactive_reprompt else None)
+        max_size = self._prompt_int(
+            'max_zone_size', 'Maximum zone size',
+            self.params['batch_max_zone_size'].get_value(),
+            cli_value=self._explicit_param('batch_max_zone_size')
+            if not interactive_reprompt else None)
+        overlap = self._prompt_float(
+            'overlap_percent', 'Overlap percentage',
+            self.params['batch_initial_overlap_percent'].get_value(),
+            0.0, 100.0,
+            cli_value=self._explicit_param('batch_initial_overlap_percent')
+            if not interactive_reprompt else None)
+
+        target, min_size, max_size = self._coerce_zone_sizing(
+            int(target), int(min_size), int(max_size))
+
+        # Write the resolved triple back onto the Parameters so that anything
+        # still reading self.params (the fingerprint, the output dict) sees
+        # exactly what the zoning used - the fingerprint recording a different
+        # number from the run is how a wrong zoning became "legitimate
+        # provenance" in the NA168 incident.
+        self.params['batch_target_images_per_zone'].set_value(target)
+        self.params['batch_min_zone_size'].set_value(min_size)
+        self.params['batch_max_zone_size'].set_value(max_size)
+        self.params['batch_initial_overlap_percent'].set_value(float(overlap))
+        return target, min_size, max_size, float(overlap)
+
+    def _coerce_zone_sizing(self, target: int, min_size: int, max_size: int):
+        """Enforce min <= target <= max and close the dead band, loudly.
+
+        validate_parameters REFUSES an inconsistent triple up front. This is
+        the second line of defence for values that arrive later (an
+        interactive re-prompt, a stored answer from another campaign), where
+        refusing would throw away a completed clustering run. It repairs
+        instead, and says exactly what it changed.
+        """
+        if min_size > max_size:
+            self.logger.warning(
+                'Zone sizing: min (%d) exceeded max (%d) - swapping them.',
+                min_size, max_size)
+            min_size, max_size = max_size, min_size
+        if 2 * min_size > max_size:
+            # See the batch_min_zone_size declaration: a pair of sub-minimum
+            # zones can then neither merge nor split, permanently.
+            repaired = max(1, max_size // 2)
+            self.logger.warning(
+                'Zone sizing: 2 * min (%d) exceeds max (%d), which creates a '
+                'DEAD BAND where undersized zones can neither merge nor split. '
+                'Lowering min to %d.', min_size, max_size, repaired)
+            min_size = repaired
+        if target < min_size:
+            self.logger.warning('Zone sizing: target (%d) below min (%d) - '
+                                'raising target to min.', target, min_size)
+            target = min_size
+        if target > max_size:
+            self.logger.warning('Zone sizing: target (%d) above max (%d) - '
+                                'lowering target to max.', target, max_size)
+            target = max_size
+        return target, min_size, max_size
 
     def run(self):
         # Parameters are validated by the orchestrator before run()
@@ -1203,19 +1392,15 @@ class BatchDirectory(RSModule):
         self.logger.info(f"Recommended min zone size: {max(100, len(gdf) // 10)}")
         self.logger.info(f"Recommended max zone size: {max(1000, len(gdf) // 2)}")
 
-        self.params['batch_min_zone_size'].set_value(self._prompt_int(
-            'min_zone_size', 'Minimum zone size',
-            self.params['batch_min_zone_size'].get_value(),
-            cli_value=self._explicit_param('batch_min_zone_size')))
-        self.params['batch_max_zone_size'].set_value(self._prompt_int(
-            'max_zone_size', 'Maximum zone size',
-            self.params['batch_max_zone_size'].get_value(),
-            cli_value=self._explicit_param('batch_max_zone_size')))
+        # ONE lookup for all four sizing knobs (see _resolve_zone_sizing).
+        target_size, min_size, max_size, overlap_percent = \
+            self._resolve_zone_sizing()
+        self.logger.info(
+            'Zone sizing in force: target %d, min %d, max %d, overlap %.1f%% '
+            '(delivered zones may reach %d images).',
+            target_size, min_size, max_size, overlap_percent,
+            int(max_size * (1 + overlap_percent / 100.0)))
 
-        target_size = int(self.params['batch_target_images_per_zone'].get_value())
-        min_size = int(self.params['batch_min_zone_size'].get_value())
-        max_size = int(self.params['batch_max_zone_size'].get_value())
-        overlap_percent = float(self.params['batch_initial_overlap_percent'].get_value())
         density_weight = float(self.params['batch_density_weight'].get_value())
         kde_bw = float(self.params['batch_kde_bandwidth'].get_value())
         max_overlap_distance_m = float(
@@ -1287,19 +1472,19 @@ class BatchDirectory(RSModule):
                 self.logger.info("Batches accepted. Proceeding to copy files.")
                 break
             elif user_input == 'r':
-                while True:
-                    new_target = self._prompt_int('target_images', 'New target images per zone', target_size)
-                    if new_target >= 100:
-                        target_size = new_target
-                        break
-                    print("Please enter a value >= 100.")
-
-                overlap_percent = self._prompt_float(
-                    'overlap_percent', 'New overlap percentage', overlap_percent, 0.0, 100.0)
-
-                # Update min/max based on new target
-                min_size = max(100, int(target_size * 0.2))
-                max_size = int(target_size * 1.5)
+                # Re-resolve through the SAME function the first pass used.
+                # This branch used to prompt for target only and then DERIVE
+                # min = target*0.2 and max = target*1.5, silently discarding
+                # both the operator's values and the code defaults - at target
+                # 6500 that produced min 1300 / max 9750 against a declared
+                # 4000/8000 policy, and it bypassed every invariant check.
+                # Now a rejected batch re-asks for all four knobs and the
+                # result is coerced by the same rules as any other path.
+                target_size, min_size, max_size, overlap_percent = \
+                    self._resolve_zone_sizing(interactive_reprompt=True)
+                self.logger.info(
+                    'Re-zoning with target %d, min %d, max %d, overlap %.1f%%',
+                    target_size, min_size, max_size, overlap_percent)
 
                 if os.path.isdir(output_dir):
                     shutil.rmtree(output_dir)
@@ -1349,11 +1534,39 @@ class BatchDirectory(RSModule):
 
             avg_zone_size = total_in_batches / len(final_zones) if final_zones else 0
 
+            # DELIVERED sizes, per zone. max_zone_size caps the BASE zone;
+            # overlap donation runs afterwards and is never re-capped, so the
+            # count that actually reaches AlignZone.bat has never been reported
+            # anywhere. FINDINGS 2026-08 records a 7,842-image zone (6,535 base
+            # + 1,307 donated) shipping against a 6,000 cap precisely because
+            # nothing printed this. Also surface any zone left under the floor
+            # (the dead band is now refused in validate_parameters, but an
+            # isolated cluster with no merge partner can still land low).
+            delivered = sorted((len(z) for z in final_zones), reverse=True)
+            self.logger.info(
+                'DELIVERED zone sizes (base + donated overlap, the counts the '
+                'aligner receives): %s', ', '.join(str(n) for n in delivered))
+            if delivered and max_size and delivered[0] > max_size:
+                self.logger.warning(
+                    'Largest delivered zone is %d images against a max_zone of '
+                    '%d - the excess is donated overlap, which is not capped. '
+                    'Budget alignment memory against %d.',
+                    delivered[0], max_size, delivered[0])
+            undersized = [n for n in delivered if min_size and n < min_size]
+            if undersized:
+                self.logger.warning(
+                    '%d zone(s) are BELOW the minimum of %d (%s) - they had no '
+                    'merge partner within the max_zone budget. They will still '
+                    'be aligned; small zones fragment more readily.',
+                    len(undersized), min_size,
+                    ', '.join(str(n) for n in undersized))
+
             output = {
                 'Success': True,
                 'Number of Zones': len(final_zones),
                 'Target Zone Size': target_size,
                 'Average Zone Size': int(avg_zone_size),
+                'Delivered Zone Sizes': delivered,
                 'Final Overlap': f"{overlap_percent}%",
                 'Total Unique Images': len(gdf),
                 'Total Images in Batches': total_in_batches,
@@ -1388,6 +1601,50 @@ class BatchDirectory(RSModule):
         overlap = self.params['batch_initial_overlap_percent'].get_value()
         if not (0 <= overlap <= 100):
             return False, 'Overlap percent must be between 0 and 100'
+
+        # min <= target <= max, and the DEAD BAND. Nothing checked these before
+        # (only `target < 100`), so an inconsistent triple was discoverable
+        # only by reading the zone table afterwards - or not at all.
+        #
+        # The dead band: __adaptive_zone_creation splits a zone only when
+        # zone_size > max_size, and merges an undersized zone only when
+        # combined_size <= max_size. So when 2*min > max, a pair of
+        # sub-minimum zones can NEITHER merge (their sum exceeds max) NOR
+        # split (each is under max) - they stay below the floor for good, and
+        # nothing reports it. Refused rather than warned: an operator who
+        # types an inconsistent triple gets a silently degraded zoning that
+        # costs GPU-hours to discover.
+        min_size = None
+        max_size = None
+        if 'batch_min_zone_size' in self.params:
+            min_size = self.params['batch_min_zone_size'].get_value()
+        if 'batch_max_zone_size' in self.params:
+            max_size = self.params['batch_max_zone_size'].get_value()
+        if min_size is not None and max_size is not None:
+            if min_size > max_size:
+                return False, (f'Minimum zone size ({min_size}) exceeds maximum '
+                               f'({max_size}).')
+            if not (min_size <= target <= max_size):
+                return False, (f'Target zone size ({target}) is outside '
+                               f'[min {min_size}, max {max_size}].')
+            if 2 * min_size > max_size:
+                return False, (
+                    f'DEAD BAND: 2 * min_zone ({min_size}) = {2 * min_size} '
+                    f'exceeds max_zone ({max_size}). Two undersized zones '
+                    f'could then neither merge (sum > max) nor split (each < '
+                    f'max), so any zone landing under {min_size} would stay '
+                    f'there permanently and silently. Raise --b_max_zone to at '
+                    f'least {2 * min_size}, or lower --b_min_zone to at most '
+                    f'{max_size // 2}.')
+            # Overlap donation runs AFTER max_size is enforced and is never
+            # re-capped, so state the number the aligner will actually see.
+            delivered = int(max_size * (1 + (overlap or 0) / 100.0))
+            self.logger.info(
+                'Zone sizing: target %d, base range [%d, %d]. Overlap donation '
+                'at %.1f%% is applied AFTER the max cap, so the DELIVERED zone '
+                'may reach %d images - budget alignment against that number, '
+                'not %d.', target, min_size, max_size, overlap or 0,
+                delivered, max_size)
 
         input_dir = self.__get_input_dir()
         if not os.path.isdir(input_dir):

@@ -959,25 +959,30 @@ def main(argv: list[str] | None = None):
         "geoall", "rov_data_dir", args.rov_data_dir, DEFAULT_ROV_DATA_DIR)
     output_dir = settings.ask(
         "geoall", "output_dir", args.output_dir, DEFAULT_OUTPUT_DIR)
-    declination = float(settings.ask(
+    # ask_float, not float(ask(...)): the coercion belongs INSIDE the shared
+    # lookup so a stored answer of the wrong type is repaired in one place,
+    # rather than raising a bare ValueError out of whichever caller happens to
+    # reach it first. Owner directive 2026-09-06 - one settings lookup that all
+    # functions call. Precedence is unchanged: CLI > stored > code default.
+    declination = settings.ask_float(
         "geoall", "declination_deg", args.declination,
-        MAGNETIC_DECLINATION_DEG))
+        MAGNETIC_DECLINATION_DEG)
     accuracies = {
-        'pos_xy': float(settings.ask("geoall", "pos_accuracy_m",
+        'pos_xy': settings.ask_float("geoall", "pos_accuracy_m",
                                      args.pos_accuracy,
-                                     _ACCURACY_DEFAULTS['pos_xy'])),
-        'alt': float(settings.ask("geoall", "alt_accuracy_m",
+                                     _ACCURACY_DEFAULTS['pos_xy']),
+        'alt': settings.ask_float("geoall", "alt_accuracy_m",
                                   args.alt_accuracy,
-                                  _ACCURACY_DEFAULTS['alt'])),
-        'yaw': float(settings.ask("geoall", "orientation_accuracy_deg",
+                                  _ACCURACY_DEFAULTS['alt']),
+        'yaw': settings.ask_float("geoall", "orientation_accuracy_deg",
                                   args.orientation_accuracy,
-                                  _ACCURACY_DEFAULTS['yaw'])),
-        'assumed_pitch': float(settings.ask(
+                                  _ACCURACY_DEFAULTS['yaw']),
+        'assumed_pitch': settings.ask_float(
             "geoall", "assumed_pitch_deg", args.assumed_pitch,
-            _ASSUMED_MOUNT['pitch'])),
-        'assumed_pitch_acc': float(settings.ask(
+            _ASSUMED_MOUNT['pitch']),
+        'assumed_pitch_acc': settings.ask_float(
             "geoall", "assumed_pitch_accuracy_deg",
-            args.assumed_pitch_accuracy, _ASSUMED_MOUNT['p_acc'])),
+            args.assumed_pitch_accuracy, _ASSUMED_MOUNT['p_acc']),
     }
     accuracies['roll'] = accuracies['yaw']
 

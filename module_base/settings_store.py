@@ -306,6 +306,87 @@ class SettingsStore:
         self.set(section, key, value)
         return value
 
+    # ------------------------------------------------------------------
+    # TYPED lookups - the single resolution path for numeric settings
+    # ------------------------------------------------------------------
+    # `ask` returns whatever input() produced (a str) or whatever was stored
+    # (whatever type the last writer used), so every numeric caller had to
+    # coerce and range-check for itself. BatchDirectory grew its own parallel
+    # stack to do that (_stored_default/_prompt_int/_prompt_float) and, in
+    # copying `ask`, dropped the one thing that mattered most: it read
+    # `self.settings.get(...)` instead of `_default_for(...)`, so
+    # RS_NO_SETTINGS_INHERITANCE - the guard that stops an unattended run
+    # inheriting a previous campaign's answers - silently did not apply to the
+    # batcher at all. Owner directive 2026-09-06: one settings lookup that all
+    # functions call.
+    #
+    # Precedence, identical to `ask` and now shared by every numeric caller:
+    #     explicit CLI value  >  stored answer  >  caller's code default
+    # with the stored answer refused under RS_NO_SETTINGS_INHERITANCE.
+
+    def _ask_typed(self, section, key, cli_value, fallback, caster,
+                   type_name, lo=None, hi=None, message=None):
+        if cli_value is not None:
+            value = caster(cli_value)
+            self.set(section, key, value)
+            return value
+
+        stored = self._default_for(section, key, fallback)
+        if stored is None and inheritance_refused():
+            raise ValueError(
+                f'{NO_INHERIT_ENV} is set and no explicit value was given for '
+                f'"{section}.{key}". Pass it on the command line (or in the '
+                f'run charter) - stored answers from previous runs are '
+                f'refused on this lane.')
+        try:
+            default = caster(stored) if stored is not None else None
+        except (TypeError, ValueError):
+            default = caster(fallback) if fallback is not None else None
+
+        prompt = message or key
+        if sys.stdin is None or not sys.stdin.isatty():
+            if default is None:
+                raise ValueError(
+                    f'Non-interactive run and no default for "{section}.{key}".')
+            self.set(section, key, default)
+            return default
+
+        while True:
+            try:
+                raw = input(f"{prompt} [{default}]: ").strip()
+            except EOFError:
+                raw = ''
+            if not raw:
+                value = default
+            else:
+                try:
+                    value = caster(raw)
+                except (TypeError, ValueError):
+                    print(f"Please enter {type_name}.")
+                    continue
+            if value is None:
+                print(f"Please enter {type_name}.")
+                continue
+            if (lo is not None and value < lo) or (hi is not None and value > hi):
+                print(f"Please enter a value between {lo} and {hi}.")
+                continue
+            break
+        self.set(section, key, value)
+        return value
+
+    def ask_int(self, section: str, key: str, cli_value, fallback,
+                lo: int = None, hi: int = None, message: str = None) -> int:
+        """Integer setting resolved by the shared precedence rule."""
+        return self._ask_typed(section, key, cli_value, fallback, int,
+                               'an integer', lo, hi, message)
+
+    def ask_float(self, section: str, key: str, cli_value, fallback,
+                  lo: float = None, hi: float = None,
+                  message: str = None) -> float:
+        """Float setting resolved by the shared precedence rule."""
+        return self._ask_typed(section, key, cli_value, fallback, float,
+                               'a number', lo, hi, message)
+
     def prompt_bool(self, section: str, key: str, message: str, fallback: bool = None):
         default = self._default_for(section, key, fallback)
         suffix = " [y/n]" if default is None else (" [Y/n]" if default else " [y/N]")

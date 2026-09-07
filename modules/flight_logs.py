@@ -85,6 +85,94 @@ def find_flight_log(*directories: str | None) -> str | None:
     return None
 
 
+class FlightLogMissing(Exception):
+    """No usable flight log where the run requires one."""
+
+
+def describe_flight_log(path: str) -> dict:
+    """Shape of a flight log on disk: row count, column count, zone tag.
+
+    Cheap (reads the header plus counts lines) and never raises on content -
+    the caller decides what is acceptable.
+    """
+    info = {'path': path, 'exists': os.path.isfile(path), 'rows': 0,
+            'columns': 0, 'zone': utm_zone_from_flight_log_name(path),
+            'header': ''}
+    if not info['exists']:
+        return info
+    with open(path, encoding='utf-8-sig', errors='replace') as fh:
+        for i, line in enumerate(fh):
+            line = line.rstrip('\r\n')
+            if i == 0:
+                info['header'] = line
+                # ';' is what every writer in this repo emits; fall back to
+                # the other separators the RS reader accepts so a hand-made
+                # log is described rather than reported as one column.
+                for sep in (';', ',', '\t'):
+                    if sep in line:
+                        info['columns'] = len(line.split(sep))
+                        info['separator'] = sep
+                        break
+                else:
+                    info['columns'] = 1
+                continue
+            if line.strip():
+                info['rows'] += 1
+    return info
+
+
+def require_flight_log(*directories: str | None,
+                       context: str = 'this run',
+                       min_rows: int = 1,
+                       expect_columns: int | None = None) -> str:
+    """:func:`find_flight_log`, but REFUSES instead of returning None.
+
+    Owner directive 2026-09-06: "Code logic should REQUIRE the flightlog, if
+    it can't be found in user-supplied directory."
+
+    Existence is not the test. Three states are all "no usable flight log",
+    and all three have shipped:
+
+    * absent - the align stage warned "aligning WITHOUT georeferencing
+      priors" and spent the GPU-hours anyway, producing an unscaled,
+      unplaceable component that looks like a success;
+    * present but EMPTY - a header-only log is a reachable production state
+      (pool layout writes one when no row resolves), and every consumer
+      treats it as a valid log;
+    * present but the WRONG SHAPE - a 13-column log against the 14-column
+      {D1F2A3B4} format the params XML names. RealityScan does not fail on a
+      column-count mismatch, it drops the trailing columns silently, which
+      is the entire reason flightlog_format's gate exists.
+
+    ``expect_columns`` is checked only when given, so callers that do not
+    know which format will be used stay unaffected.
+    """
+    found = find_flight_log(*directories)
+    searched = ', '.join(d for d in directories if d) or '(no directories)'
+    if not found:
+        raise FlightLogMissing(
+            f'No flight log found for {context}. Searched: {searched}. '
+            'Expected flight_log*_UTM.txt (or legacy flight_log.txt). '
+            'A run without a trajectory has no georeferencing priors, no '
+            'metric scale and no placement - it is refused rather than '
+            'silently downgraded.')
+
+    info = describe_flight_log(found)
+    if info['rows'] < min_rows:
+        raise FlightLogMissing(
+            f'Flight log {found} holds {info["rows"]} data row(s), '
+            f'{min_rows} required for {context}. A header-only log imports '
+            'cleanly and georeferences nothing.')
+    if expect_columns is not None and info['columns'] != expect_columns:
+        raise FlightLogMissing(
+            f'Flight log {found} has {info["columns"]} columns but the '
+            f'declared import format expects {expect_columns}. RealityScan '
+            'does NOT fail on this - it silently drops the trailing columns '
+            '(the accuracy and FocalLength priors). Header: '
+            f'{info["header"][:160]!r}')
+    return found
+
+
 def utm_zone_from_flight_log_name(path: str) -> tuple[int, str] | None:
     """(zone number, band letter) parsed from a flight-log filename like
     ``flight_log_53N_UTM.txt`` / ``flight_log_NA167_H2075_53N_UTM.txt``,

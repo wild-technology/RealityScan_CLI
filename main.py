@@ -188,7 +188,21 @@ def parse_arguments(argv, params, logger) -> None:
         # won, and a zone came out at 7,842 images against a 6,000 cap.
         supplied = val is not None
         if val is None and p.prompt_user:
-            last_value = settings.get('main', p.cli_long, p.get_default_value())
+            # _default_for, NOT get. This is a PROMPT default - precisely the
+            # case RS_NO_SETTINGS_INHERITANCE exists to refuse - but it read
+            # the store ungated, so the strict agent lane never reached the
+            # orchestrator's own parameters. Every module knob (zone sizes,
+            # prior accuracies, output paths) inherited the previous
+            # campaign's answers even on a lane that had explicitly refused
+            # inheritance, which is the wizard-prefill incident class the flag
+            # was written for. Same fix as BatchDirectory._stored_default.
+            # Duck-typed for SettingsStore-shaped test doubles, which are only
+            # required to provide `get`.
+            _gated = getattr(settings, '_default_for', None)
+            last_value = (_gated('main', p.cli_long, p.get_default_value())
+                          if callable(_gated)
+                          else settings.get('main', p.cli_long,
+                                            p.get_default_value()))
             prompt = f'{p.get_description()}'
             if last_value is not None:
                 prompt += f' [{last_value}]'
@@ -227,6 +241,85 @@ def update_parameters(params, modules) -> None:
     for mod in modules.values():
         mod.set_params(params)
 
+def preflight_flight_log(modules, params, logger) -> None:
+    """Refuse the run NOW if the trajectory it needs cannot be produced.
+
+    Owner directive 2026-09-06: a run without a flight log must fail, not
+    warn. This has to happen BEFORE the module loop, not in a module's
+    validate_parameters(): main() calls validate_parameters() immediately
+    before each module runs (see the loop below), so a check living in
+    RealityScanAlignment fires only after Georeference, Preprocess and Batch
+    Directory have already finished. On a 21,000-frame dive that is hours of
+    CLAHE and ~25,000 file copies spent before the refusal.
+
+    What "required" means depends on which stages are enabled, because the
+    georeference stage is what CREATES the flight log:
+
+    * Georeference enabled  -> require its NAV SOURCE (the ROV datatable).
+      The flight log does not exist yet and must not be demanded.
+    * Georeference disabled -> require an actual flight log on disk, with at
+      least one data row, wherever the downstream stages will look for it.
+
+    Env escape hatch RS_ALLOW_NO_FLIGHT_LOG=1 for the deliberately log-less
+    case (a bare folder of images with no trajectory at all). It warns
+    loudly; it does not silently downgrade.
+    """
+    if os.environ.get('RS_ALLOW_NO_FLIGHT_LOG', '').strip().lower() in (
+            '1', 'true', 'yes', 'y'):
+        logger.warning(
+            'RS_ALLOW_NO_FLIGHT_LOG is set - the flight-log requirement is '
+            'DISABLED for this run. Any alignment will have no georeferencing '
+            'priors, no metric scale and no placement.')
+        return
+
+    from modules.flight_logs import FlightLogMissing, require_flight_log
+
+    def value(name):
+        p = params.get(name)
+        return p.get_value() if p is not None else None
+
+    if 'Georeference Images' in modules:
+        nav = value('geo_input_flight_log')
+        if not nav or not os.path.isfile(nav):
+            logger.error(
+                'PREFLIGHT FAILED: Georeference Images is enabled but its nav '
+                'source is missing: %r. That file (the ROV *_final_datatable '
+                '.csv) is what the flight log is BUILT from - without it there '
+                'is no trajectory for any later stage. Pass --g_flight_log.',
+                nav)
+            sys.exit(1)
+        logger.info('Preflight: nav source present (%s)', nav)
+        return
+
+    # No georeference stage: a flight log must already exist somewhere the
+    # downstream stages will actually look.
+    output_dir = value('output_dir')
+    candidates = [value('b_input') if 'b_input' in params else None,
+                  value('batch_input_image_dir'),
+                  value('rs_input_image_dir'),
+                  value('geo_input_image_dir')]
+    if output_dir:
+        candidates += [os.path.join(output_dir, 'raw_images'), output_dir]
+    explicit = value('batch_flight_log_path') or value('rs_flight_log_path')
+    if explicit:
+        if not os.path.isfile(explicit):
+            logger.error('PREFLIGHT FAILED: the flight log named explicitly '
+                         'does not exist: %s', explicit)
+            sys.exit(1)
+        candidates.insert(0, os.path.dirname(explicit))
+    try:
+        found = require_flight_log(*candidates, context='this run')
+    except FlightLogMissing as exc:
+        logger.error('PREFLIGHT FAILED: %s', exc)
+        logger.error('Set RS_ALLOW_NO_FLIGHT_LOG=1 only if a trajectory-less '
+                     'alignment is genuinely what you want.')
+        sys.exit(1)
+    except ValueError as exc:
+        logger.error('PREFLIGHT FAILED: %s', exc)
+        sys.exit(1)
+    logger.info('Preflight: flight log %s', found)
+
+
 def log_output_data(logger, output_data: dict[str, object], indent: int = 0) -> None:
     """
     Recursively logs output data.
@@ -254,6 +347,9 @@ def main(argv) -> None:
     params = initialize_parameters(modules)
     parse_arguments(argv, params, logger)
     update_parameters(params, modules)
+
+    # Fail BEFORE the module loop, not inside it (see the docstring).
+    preflight_flight_log(modules, params, logger)
 
     logger.info("Parameters:")
     for name, p in params.items():

@@ -100,6 +100,20 @@ def _module_with_stub(tmp_path, monkeypatch, params, results=None,
                 fh.write(b'project')
             with open(os.path.join(out_dir, f'{scene}_c0.rsalign'), 'wb') as fh:
                 fh.write(b'component')
+            # ...and the IDENTITY CAPTURE, which a successful AlignZone.bat
+            # always performs. Without it the stub simulated a half-failed
+            # align - components on disk, membership unknown - which the
+            # align stage now (2026-09-06) correctly reports as a FAILED zone,
+            # because a component with no manifest cannot be attributed,
+            # scaled or merged. The identity/ CSV layout is used because it is
+            # the one the reader resolves by name rather than by successive
+            # difference. One camera row is enough to make the census nonzero.
+            identity = os.path.join(out_dir, 'identity')
+            os.makedirs(identity, exist_ok=True)
+            with open(os.path.join(identity, f'{scene}_c0.csv'), 'w',
+                      encoding='utf-8') as fh:
+                fh.write('# stub registration export\n')
+                fh.write(f'{scene}_a.jpg,0,0,0\n')
         return result
 
     monkeypatch.setattr(module.cli, 'run_batch_script', fake_run)
@@ -135,6 +149,12 @@ def test_a_batched_root_is_expanded_per_zone(tmp_path, monkeypatch):
 
 def test_a_plain_image_folder_is_still_one_scene(tmp_path, monkeypatch):
     """The guard must not turn an ordinary folder of images into zones."""
+
+    # This fixture has no flight log ON PURPOSE - it is testing
+    # rollback/hygiene, not georeferencing. The align stage refuses a
+    # trajectory-less zone since 2026-09-06 (owner directive: the
+    # flight log is REQUIRED), so take the documented escape hatch.
+    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     images = tmp_path / 'my_images'
     (images / 'port').mkdir(parents=True)
     (images / 'port' / 'a.jpg').write_bytes(b'j')
@@ -266,6 +286,12 @@ def test_sidecar_repair_runs_before_the_failure_returns():
 def test_a_pre_existing_pose_sidecar_is_announced(tmp_path, monkeypatch):
     """Pointing the pipeline at a user-owned folder MOVES their pose
     sidecars out and never returns them - undocumented until now."""
+
+    # This fixture has no flight log ON PURPOSE - it is testing
+    # rollback/hygiene, not georeferencing. The align stage refuses a
+    # trajectory-less zone since 2026-09-06 (owner directive: the
+    # flight log is REQUIRED), so take the documented escape hatch.
+    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     images = tmp_path / 'my_images'
     images.mkdir()
     (images / 'a.jpg').write_bytes(b'j')
@@ -296,6 +322,12 @@ def test_a_pre_existing_pose_sidecar_is_announced(tmp_path, monkeypatch):
 def test_a_previous_runs_project_is_renamed_not_deleted(tmp_path, monkeypatch):
     """The rmtree took the saved .rsproj and every exported .rsalign -
     with no second copy anywhere in the default configuration."""
+
+    # This fixture has no flight log ON PURPOSE - it is testing
+    # rollback/hygiene, not georeferencing. The align stage refuses a
+    # trajectory-less zone since 2026-09-06 (owner directive: the
+    # flight log is REQUIRED), so take the documented escape hatch.
+    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     images = tmp_path / 'images'
     images.mkdir()
     (images / 'a.jpg').write_bytes(b'j')
@@ -336,6 +368,12 @@ def test_the_superseded_folder_is_not_rescanned_as_a_zone(tmp_path,
     (export names repeat, so the stale manifest's path resolves to the NEW
     file). rmtree could not do that - the rename-aside introduced it
     (audit-verification 2026-08-07)."""
+
+    # This fixture has no flight log ON PURPOSE - it is testing
+    # rollback/hygiene, not georeferencing. The align stage refuses a
+    # trajectory-less zone since 2026-09-06 (owner directive: the
+    # flight log is REQUIRED), so take the documented escape hatch.
+    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     import json as _json
 
     from modules import component_analysis                    # noqa: PLC0415
@@ -383,6 +421,12 @@ def test_a_stale_folder_without_deliverables_is_still_cleared(tmp_path,
                                                               monkeypatch):
     """The clean-slate premise the files_before/after diff needs must
     survive - only PROJECTS and COMPONENTS are worth keeping."""
+
+    # This fixture has no flight log ON PURPOSE - it is testing
+    # rollback/hygiene, not georeferencing. The align stage refuses a
+    # trajectory-less zone since 2026-09-06 (owner directive: the
+    # flight log is REQUIRED), so take the documented escape hatch.
+    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     images = tmp_path / 'images'
     images.mkdir()
     (images / 'a.jpg').write_bytes(b'j')

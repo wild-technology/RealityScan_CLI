@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -113,15 +114,44 @@ def test_pool_counts_and_drops_missing_rows(tmp_path):
     assert len(rows) == 2 and rows[1].split(';')[0].endswith('A.jpg')
 
 
-def test_pool_refuses_xmp_priors(tmp_path):
+def test_pool_warns_and_skips_xmp_priors(tmp_path, caplog):
+    """Pool + XMP priors WARNS and continues; it must never kill the run.
+
+    Behaviour change 2026-09-06. This used to raise ValueError, which run()
+    catches into {'Success': False} and main.py turns into sys.exit(1). That
+    was defensible while batch_xmp_priors defaulted to False - an operator who
+    typed the flag got told it was incompatible. It became indefensible the
+    moment the flag became a DEFAULT (owner directive): every pool run would
+    have died before writing a single zone, over a default nobody chose.
+
+    The incompatibility itself is real and unchanged - pool zones hold only an
+    .imagelist, so the only place a sidecar could go is beside the canonical
+    source image, and that tree is read-only (hard rule 0). Skipping is the
+    right resolution; the obligation is to say so, which is what is pinned
+    here. Calibration priors still reach the solve via prior_groups.py.
+    """
     src = _source(tmp_path, ['A.jpg'])
     out = tmp_path / 'batched'
     out.mkdir()
     module = _module('pool')
     module.params['batch_xmp_priors'].set_value(True)
-    with pytest.raises(ValueError, match='batch_xmp_priors'):
-        module._BatchDirectory__create_batch_folders(
+
+    with caplog.at_level(logging.WARNING):
+        copied, missing = module._BatchDirectory__create_batch_folders(
             str(out), [['A.jpg']], str(src), None)
+
+    # The zone was still produced.
+    assert (copied, missing) == (1, 0)
+    assert (out / 'zone_1' / 'zone_1.imagelist').is_file()
+    # No sidecar was written anywhere - not into the zone, not into the source.
+    assert not list(out.rglob('*.xmp'))
+    assert not list(Path(src).rglob('*.xmp'))
+    # And the skip was announced, naming both the cause and the alternative.
+    warning = '\n'.join(r.message for r in caplog.records
+                        if r.levelno >= logging.WARNING)
+    assert 'batch_xmp_priors' in warning
+    assert 'POOL' in warning
+    assert 'prior_groups' in warning
 
 
 def test_copy_mode_refuses_fullpath_master(tmp_path):
