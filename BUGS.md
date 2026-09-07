@@ -327,6 +327,40 @@ Two implementation traps worth recording:
 
 ---
 
+## B12 — Every parameter looked "explicitly supplied" on an unattended run
+
+**Kind:** silent shadow. **Severity:** high.
+**Site:** `main.py` (`parse_arguments`, the EOF branch).
+
+On an EOF stdin — i.e. every unattended run — the prompt loop takes
+`last_value` and then sets `supplied = True`. But `last_value` falls back to
+`p.get_default_value()` when nothing is stored, so an **untouched declared
+default** was recorded as an explicit operator answer. The file's own comment
+claims the opposite ("Only the declared-default fallback below is unanswered"),
+which is precisely the case it got wrong.
+
+Two consumers read that lie:
+
+* `BatchDirectory._explicit_param`, whose entire job is to distinguish a typed
+  flag from an untouched default. With every parameter "explicit", the
+  stored-answer layer it guards was bypassed wholesale — the mechanism added
+  after the NA168 incident was inert on exactly the unattended runs it was
+  written for.
+* The new declination resolver, which treats an explicit value as the operator
+  overriding the estimate. An untouched `0.0` would have silently disabled
+  auto-detection on every unattended run — the fix in B11 would have been dead
+  code on this very dive.
+
+**Fix.** A stored answer is still an answer; the declared default is not.
+`supplied` is now true only when the value was typed or came from
+`rs_settings.json`.
+
+Found by asking, before launching, which `prompt_user` parameters the launcher
+did **not** supply — the answer was `magnetic_declination_deg`, which is what
+made the interaction visible.
+
+---
+
 ## Not fixed — recorded for the owner
 
 * **`geoall.py` writes 13 columns; `modules/georeference` writes 14.**

@@ -203,6 +203,11 @@ def parse_arguments(argv, params, logger) -> None:
                           if callable(_gated)
                           else settings.get('main', p.cli_long,
                                             p.get_default_value()))
+            # Was there a STORED answer at all, or is last_value just the
+            # declared default wearing its clothes? The distinction decides
+            # whether this counts as "the operator answered" below.
+            _stored = settings.get('main', p.cli_long, None)
+            _had_stored = _stored is not None
             prompt = f'{p.get_description()}'
             if last_value is not None:
                 prompt += f' [{last_value}]'
@@ -221,15 +226,32 @@ def parse_arguments(argv, params, logger) -> None:
                 # must always be EOF-safe).
                 logger.info(f'Non-interactive: {p.get_name()} = {last_value}')
                 val = last_value
+                # NOT an answer when last_value is merely the DECLARED
+                # DEFAULT. This branch used to mark every prompt_user
+                # parameter as explicitly supplied on any unattended run,
+                # because last_value falls back to p.get_default_value() when
+                # nothing is stored. Two things then read a lie:
+                #   - BatchDirectory._explicit_param, whose whole job is to
+                #     tell a typed flag from an untouched default, so the
+                #     stored-answer layer it guards was bypassed wholesale;
+                #   - the declination resolver (2026-09-06), which treats an
+                #     explicit value as the operator overriding the estimate -
+                #     an untouched 0.0 would have silently disabled
+                #     auto-detection on every unattended run.
+                # A STORED answer is still a real answer; the declared default
+                # is not.
+                supplied_by_eof = _had_stored
             except ValueError:
                 logger.warning(f'Invalid value for {p.get_name()}, using default {p.get_default_value()}')
                 val = p.get_default_value()
+                supplied_by_eof = False
+            else:
+                supplied_by_eof = True
             if val is not None:
                 settings.set('main', p.cli_long, val)
-                # Just persisted as this run's answer, so it IS one -
-                # typed, or the stored 'main' value taken on an EOF stdin.
-                # Only the declared-default fallback below is unanswered.
-                supplied = True
+                # Typed at the prompt, or a STORED value taken on an EOF
+                # stdin. The declared-default fallback is not an answer.
+                supplied = supplied_by_eof
         if val is None and not p.prompt_user:
             val = p.get_default_value()
         p.set_value(val, explicit=supplied)
