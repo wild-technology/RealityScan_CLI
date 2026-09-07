@@ -250,8 +250,13 @@ def test_batch_bounds_the_module_would_refuse_at_runtime_block(tmp_path):
 
 def test_batch_bounds_pass_is_listed_and_a_bad_type_blocks(tmp_path):
     originals, nav = _dataset(tmp_path)
+    # A CONSISTENT triple: since the NA165/H2060 merge the batcher's own
+    # validator enforces min <= target <= max and refuses the 2*min > max dead
+    # band (B3), so a lone target with the 4000/8000 defaults is rejected -
+    # which is the check working, not the fixture.
     good = {"b_input": str(originals), "b_flight_log_path": str(nav),
-            "b_target_images": "2000"}
+            "b_target_images": "2000", "b_min_zone": "500",
+            "b_max_zone": "3000"}
     report = preflight_charter(_charter(tmp_path, originals, nav,
                                         stages=("batch", "align"), answers=good))
     assert any("module's own validation" in c for c in report["checked"])

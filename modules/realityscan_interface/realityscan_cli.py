@@ -66,10 +66,10 @@ import time
 from dataclasses import dataclass, field
 
 try:
-    from module_base.settings_store import SettingsStore
+    from module_base.settings_store import SettingsStore, realityscan_env
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
-    from module_base.settings_store import SettingsStore
+    from module_base.settings_store import SettingsStore, realityscan_env
 
 _THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 SCRIPTS_DIR = os.path.join(_THIS_DIR, 'RS_CLI', 'Scripts')
@@ -281,6 +281,37 @@ class RealityScanCLI:
             or self.settings.get('realityscan', 'instance_name')
             or DEFAULT_INSTANCE_NAME
         )
+
+        # EXPORT the machine constants here, in the one class that owns
+        # RealityScan execution (hard rule 1). realityscan_env() was the single
+        # source of truth for RS_INSTANCE / RS_HEADLESS / RS_CACHE_DIR, but its
+        # only callers were the standalone drivers (merge_zones, run_models,
+        # grow_zone, finish_model, export_deliverables) - NEVER main.py and
+        # never this module. So a run driven through main.py reached
+        # startRealityScan.bat with RS_CACHE_DIR unset, and the .bat's
+        # RS_CACHE_ARGS stayed empty.
+        #
+        # That is not a benign default. appCacheCustomLocation PERSISTS across
+        # instances (measured on this dive, FINDINGS [NA165 H2060]), so an
+        # instance that sets nothing inherits whatever the last one chose -
+        # which on this box means the cache can silently land on C:, the one
+        # volume the run charter forbids, and a mid-size component wants ~72 GB
+        # of it. Setting it explicitly per run is the only way to know where it
+        # went.
+        #
+        # Precedence is preserved: realityscan_env returns any value already in
+        # the environment unchanged, so an explicit export still wins.
+        try:
+            for key, value in realityscan_env(self.settings).items():
+                os.environ[key] = str(value)
+        except Exception as exc:                                 # noqa: BLE001
+            # Never let settings resolution stop a run from starting; the
+            # .bat layer has its own fallbacks.
+            self.logger.warning(
+                'Could not resolve RealityScan machine constants (%s: %s) - '
+                'the .bat defaults apply, and the cache location is then '
+                'whatever the previous instance set.',
+                type(exc).__name__, exc)
 
     # ------------------------------------------------------------------
     # Executable discovery

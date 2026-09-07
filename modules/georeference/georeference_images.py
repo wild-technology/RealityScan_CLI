@@ -11,6 +11,7 @@ from PIL import Image
 
 from ..file_metadata_parser import parse_timestamp
 from .. import camera_registry
+from .. import declination
 from .. import image_exts
 
 
@@ -588,6 +589,12 @@ class GeoreferenceImages(RSModule):
                 reader = csv.reader(csvfile, delimiter=',')
                 header = next(reader)
                 idx_map = {name: index for index, name in enumerate(header)}
+                # Remembered for declination.heading_reference(): the presence
+                # of kalman_yaw_deg identifies a gyrocompass-derived (already
+                # TRUE north) heading, which must NOT receive a declination
+                # correction. Column names are the reliable signal; the
+                # filename is only a fallback.
+                self._nav_columns = list(header)
                 for row in reader:
                     data_rows.append({
                         "TIME": datetime.strptime(row[idx_map['Timestamp']], self.TIMESTAMP_FORMAT),
@@ -914,7 +921,49 @@ class GeoreferenceImages(RSModule):
             os.remove(flight_log_filename)
 
         accepted_images = [img for img in image_data if img.get("ACCEPTED", False)]
+
+        # DECLINATION: estimate always, apply only when the source is magnetic
+        # (owner directive 2026-09-06; see modules/declination.py for why a UTM
+        # zone alone cannot supply this and why most of this project's nav must
+        # NOT be corrected). The estimate keys off the MEDIAN accepted position
+        # and timestamp - both already computed by this point - not off the
+        # zone, because a zone is a 6-degree longitude band with no latitude.
         decl_deg = self.params['magnetic_declination_deg'].get_value()
+        operator_decl = None
+        decl_param = self.params.get('magnetic_declination_deg')
+        if decl_param is not None and decl_param.is_explicit():
+            operator_decl = decl_param.get_value()
+        try:
+            lats = sorted(i['LAT'] for i in accepted_images
+                          if i.get('LAT') is not None)
+            lons = sorted(i['LONG'] for i in accepted_images
+                          if i.get('LONG') is not None)
+            times = sorted(i['TIMESTAMP'] for i in accepted_images
+                           if i.get('TIMESTAMP') is not None)
+            med_lat = lats[len(lats) // 2] if lats else None
+            med_lon = lons[len(lons) // 2] if lons else None
+            med_time = times[len(times) // 2] if times else None
+            self.declination_record = declination.resolve(
+                med_lat, med_lon, med_time,
+                nav_path=self.params['geo_input_flight_log'].get_value()
+                if 'geo_input_flight_log' in self.params else None,
+                columns=getattr(self, '_nav_columns', None),
+                operator_value=operator_decl,
+                logger_=self.logger)
+            decl_deg = self.declination_record['applied_deg']
+        except Exception as exc:                                  # noqa: BLE001
+            # Never let the estimator stop a georeference run: fall back to
+            # whatever the operator/parameter said, and say what happened.
+            self.logger.warning(
+                'Declination resolution failed (%s: %s) - using %.3f deg as '
+                'supplied.', type(exc).__name__, exc, decl_deg or 0.0)
+            self.declination_record = {
+                'applied_deg': decl_deg or 0.0, 'estimated_deg': None,
+                'reference': 'unknown', 'source': 'parameter',
+                'reason': f'{type(exc).__name__}: {exc}'}
+        self.stats['declination_applied_deg'] = self.declination_record['applied_deg']
+        self.stats['declination_estimated_deg'] = self.declination_record['estimated_deg']
+        self.stats['heading_reference'] = self.declination_record['reference']
 
         # Uncertainty knobs (provenance + defaults: PRIOR_ACCURACY_DEFAULTS
         # at module scope). Operator-settable via --g_pos_accuracy /

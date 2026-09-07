@@ -343,12 +343,30 @@ class RealityScanAlignment(RSModule):
                 os.path.join(output_folder, 'identity_r0'))
 
         if flight_log_path is None or not os.path.isfile(flight_log_path):
-            # Never fail the run, but never be silent about it either:
-            # aligning without a trajectory is a materially different run.
-            self.logger.warning(
-                'No flight log found for %s (looked for: %s) - aligning WITHOUT '
-                'georeferencing priors', input_folder, flight_log_path or 'none')
-            flight_log_path = ""
+            # REFUSE (owner directive 2026-09-06). This used to warn and align
+            # anyway, which is the most expensive fail-open in the pipeline:
+            # the zone spends its full GPU-hours, exits 0, and yields a
+            # component with no georeferencing priors, no metric scale and no
+            # placement - indistinguishable in the logs from a good one until
+            # the merge's scale gate rejects it hours later, or worse, doesn't.
+            # RS_ALLOW_NO_FLIGHT_LOG=1 restores the old behaviour for a
+            # deliberately trajectory-less run.
+            if os.environ.get('RS_ALLOW_NO_FLIGHT_LOG', '').strip().lower() in (
+                    '1', 'true', 'yes', 'y'):
+                self.logger.warning(
+                    'No flight log for %s (looked for: %s) - aligning WITHOUT '
+                    'georeferencing priors because RS_ALLOW_NO_FLIGHT_LOG is '
+                    'set. No metric scale, no placement.',
+                    input_folder, flight_log_path or 'none')
+                flight_log_path = ""
+            else:
+                raise ValueError(
+                    f'No flight log for {input_folder} (looked for: '
+                    f'{flight_log_path or "none"}). Refusing to align without '
+                    'a trajectory - the zone would consume its full GPU budget '
+                    'and produce an unscaled, unplaceable component that exits '
+                    '0. Set RS_ALLOW_NO_FLIGHT_LOG=1 if that is genuinely '
+                    'intended.')
 
         if flight_log_params_path is None or not os.path.isfile(flight_log_params_path) or flight_log_path == "":
             flight_log_params_path = ""
@@ -605,6 +623,45 @@ class RealityScanAlignment(RSModule):
                 registered += component_manifest.load_manifest(mp).get('camera_count', 0)
             except Exception as exc:
                 self.logger.warning('Could not read manifest %s: %s', mp, exc)
+
+        # A zone that exported components but registered ZERO cameras is a
+        # FAILURE, not a success with a small number in it. Before this, the
+        # only signal was the info line below - and the merge stage already
+        # holds the correct invariant (merge_zones refuses to score an empty
+        # peel) while the align stage did not. FINDINGS records a 4,244-image
+        # zone that produced "Identity capture finished after 0 component(s)"
+        # with a clean exit and shut down normally; 19% of that dive registered
+        # nothing and nothing said so. Larger zones make this MORE likely, so
+        # it is the guard that has to exist before zone sizes go up.
+        #
+        # Note what this can and cannot see: `registered` is summed from the
+        # manifests, so it detects "no manifests" and "empty manifests" but is
+        # circular with respect to the harvest itself. It is a floor, not a
+        # proof.
+        if registered <= 0:
+            self.logger.error(
+                'Zone %s exported %d component file(s) but registered ZERO '
+                'cameras across %d manifest(s). Either the identity capture '
+                'produced nothing or every manifest is empty - in both cases '
+                'the components cannot be attributed, scaled or merged. '
+                'Failing the zone rather than reporting a clean exit.',
+                scene_name, len(component_files), len(manifest_paths))
+            return ({'Success': False, 'Component Count': len(component_files),
+                     'Registered Cameras': 0, 'Manifests': manifest_paths,
+                     'Error': 'zero registered cameras'},
+                    {'Success': scene_success, 'Scene Path': scene_path})
+
+        # The identity loop is bounded at MAX_IDENTITY_COMPONENTS laps and
+        # neither the .bat nor the reader says when it stopped BECAUSE of the
+        # ceiling rather than because the scene was exhausted. This dive's
+        # previous delivery was exactly 20 components - the literal ceiling -
+        # so "was it truncated?" is a live question, not a hypothetical.
+        if len(manifest_paths) >= self.MAX_IDENTITY_COMPONENTS:
+            self.logger.warning(
+                'Zone %s hit the identity ceiling of %d components. The scene '
+                'may hold MORE components that were never captured; anything '
+                'past the ceiling is missing from the merge inputs entirely.',
+                scene_name, self.MAX_IDENTITY_COMPONENTS)
 
         self.logger.info(
             'Zone %s: %d component(s) exported, %d cameras registered '
@@ -1062,6 +1119,20 @@ class RealityScanAlignment(RSModule):
                                      project_label)
             else:
                 os.environ.pop('RS_PROJECTS_DIR', None)
+
+            # CLEAR the per-zone CRS before each zone computes its own.
+            # __align_zone sets os.environ['RS_PROJECT_CRS'] only when the
+            # zone's flight log carries a UTM tag, and nothing ever unset it -
+            # so every zone after the first inherited whichever EPSG the
+            # PREVIOUS zone happened to have, and AlignZone.bat then actively
+            # pins it with -setProjectCoordinateSystem/-setOutputCoordinateSystem.
+            # A wrong-but-authoritative CRS is worse than an absent one: the
+            # geometry is correct while every export declares the wrong frame,
+            # which is exactly the defect this dive's own deliverables carry
+            # (H2060 exports labelled 55N for a 2S dive - AlignZone.bat:127).
+            # It also leaks in from the parent shell. Same discipline the
+            # author already applied to RS_PRIOR_GROUPS_FILE 60 lines below.
+            os.environ.pop('RS_PROJECT_CRS', None)
 
             # Each zone exports into its own subfolder: components stay
             # importable from their ORIGINAL export location (relocated
