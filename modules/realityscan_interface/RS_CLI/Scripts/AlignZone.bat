@@ -360,9 +360,46 @@ echo   writes sidecars beside the images under %harvest_dir% and STRIPS the
 echo   calibration priors of the last-peeled component; the Python caller
 echo   repairs those on every exit path. Decision D1 is open.
 echo Capturing per-component identity (destructive in-memory loop)
+:: Ceiling raised 20 -> 50 and made configurable (owner directive 2026-09-07).
+:: MEASURED on NA165/H2060 zone_1 (8,757 images): the loop exited at the old
+:: ceiling of 20 with identity_r19 still holding 915 pose sidecars and
+:: identity_r20 never written - i.e. it stopped because it ran out of LAPS,
+:: not because it ran out of components. Everything past c19 was dropped from
+:: the merge inputs with no record, and c19's own manifest then claimed all
+:: 915 remaining stems (its bbox spanned the whole zone, 181 x 487 m, against
+:: 3-90 m for every genuine component).
+:: RS_MAX_IDENTITY_COMPONENTS overrides it; realityscan_interface.py reads the
+:: SAME variable with the same DEFAULT. The defaults cannot drift; a malformed
+:: OVERRIDE still can, which is why it is validated below rather than trusted.
+:: Python sanitizes (falls back to 50 on a non-int or a value <= 0); cmd does
+:: not, and an unvalidated value reaches an UNQUOTED numeric comparison:
+::   "0"/"-5" -> the ceiling fires on lap 0 and NO component is ever exported
+::   "abc"    -> cmd compares as STRINGS, so the ceiling effectively never fires
+::   "5 0"    -> syntax error mid-run, hours in
+:: Only an all-digit, non-zero value is accepted; anything else warns loudly
+:: and keeps the default, so the two sides stay in step.
+:: Flat gotos, not nested parenthesised blocks: this script runs under a plain
+:: `setlocal` with NO delayed expansion, and a `set` inside a block whose value
+:: is read in the same block silently expands to the PARSE-time value. The rest
+:: of this file is goto-structured for the same reason.
+set "max_components=50"
+if not defined RS_MAX_IDENTITY_COMPONENTS goto :ceilingReady
+if "%RS_MAX_IDENTITY_COMPONENTS%" == "" goto :ceilingReady
+echo %RS_MAX_IDENTITY_COMPONENTS%| findstr /r /x "[1-9][0-9]*" >nul
+if errorlevel 1 goto :ceilingBadValue
+set "max_components=%RS_MAX_IDENTITY_COMPONENTS%"
+goto :ceilingReady
+:ceilingBadValue
+echo WARNING: RS_MAX_IDENTITY_COMPONENTS=%RS_MAX_IDENTITY_COMPONENTS% is not a positive
+echo   integer - ignoring it and using the default 50, which is what
+echo   realityscan_interface.py will also use. Left unsanitized this would have
+echo   reached an unquoted numeric comparison: 0 or a negative exports NOTHING,
+echo   a non-numeric makes cmd compare as strings so the ceiling never fires.
+:ceilingReady
+echo Identity component ceiling: %max_components%
 set /a comp_index=0
 :identityLoop
-if %comp_index% GEQ 20 goto :identityDone
+if %comp_index% GEQ %max_components% goto :identityCeiling
 if not exist "%output_dir%\identity_r%comp_index%" mkdir "%output_dir%\identity_r%comp_index%"
 call :run -deselectAllImages || goto :fail
 call :run -exportXMP || goto :fail
@@ -384,6 +421,32 @@ if not exist "%output_dir%\%scene_name%_c%comp_index%.rsalign" goto :identityDon
 call :run -deleteSelectedComponent || goto :fail
 set /a comp_index+=1
 goto :identityLoop
+
+:identityCeiling
+:: The loop ran out of LAPS, not components. Membership is
+:: stems(r<K>) - stems(r<K+1>), so without a final harvest the LAST exported
+:: component's manifest absorbs every stem still in the scene: on zone_1 that
+:: made c19 claim 915 cameras across a zone-spanning bbox, which then borders
+:: every other component in the merge's bbox graph and pollutes the plan.
+:: One more harvest costs a single -exportXMP and makes c<N-1> computable;
+:: it also leaves a NON-EMPTY identity_r<N> on disk as the durable evidence
+:: that truncation happened, which is exactly what nothing recorded before.
+:: comp_index == max_components here (that is the branch condition), but the
+:: LAST EXPORTED component is c<max_components - 1> - the increment happens
+:: after the export. Naming c%comp_index% would send an operator looking for a
+:: .rsalign that does not exist and reading a clean ceiling stop as a failed
+:: export.
+set /a last_captured=%comp_index%-1
+echo WARNING: identity ceiling of %max_components% reached - harvesting the
+echo   remainder so the last component's membership stays computable.
+echo   Components c0..c%last_captured% were captured; anything past c%last_captured% is NOT.
+echo   Raise RS_MAX_IDENTITY_COMPONENTS and re-run the zone to capture them.
+if not exist "%output_dir%\identity_r%comp_index%" mkdir "%output_dir%\identity_r%comp_index%"
+call :run -deselectAllImages || goto :fail
+call :run -exportXMP || goto :fail
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Get-ChildItem -LiteralPath '%harvest_dir%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%comp_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
+if errorlevel 1 ( echo ERROR: ceiling harvest move failed & goto :fail )
+
 :identityDone
 echo Identity capture finished after %comp_index% component(s)
 

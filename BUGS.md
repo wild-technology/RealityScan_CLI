@@ -382,3 +382,75 @@ made the interaction visible.
 * **The registration census is circular.** "N cameras registered (census from M
   manifests)" is summed from the manifests it is meant to validate. B5's guard
   is a floor, not a proof.
+
+---
+
+## B13 — The identity loop stopped on its lap cap and corrupted the last manifest
+
+**Kind:** fail-open + silent corruption. **Severity:** blocker.
+**Sites:** `AlignZone.bat` `:identityLoop`, `realityscan_interface.py`
+`MAX_IDENTITY_COMPONENTS`.
+
+**Measured on NA165/H2060 zone_1** (8,757 images), not inferred:
+
+* 20 `.rsalign` exported — the literal value of the cap
+* `identity_r19` still held **915** pose sidecars
+* `identity_r20` was **never written**
+
+That combination can only mean the loop ran out of **laps**, not components.
+Everything past `c19` was dropped from the merge inputs with no record. The
+audit had said this was undecidable from the artifacts; it is now decided.
+
+**The second-order damage is worse than the truncation.** Membership is
+`stems(r<K>) − stems(r<K+1>)`. With `r20` absent, `c19` absorbed all 915
+remaining stems and its manifest claimed a bbox of **181 × 487 m** against
+3–90 m for every genuine component. `merge_zones` gates merge candidates on
+bbox overlap within a 10 m margin, so a zone-spanning component borders
+*everything* — it would have polluted the merge plan globally, not cosmetically.
+
+**Fix.** Cap 20 → **50**, overridable by `RS_MAX_IDENTITY_COMPONENTS`, with a
+new `:identityCeiling` branch that performs one final `-exportXMP` harvest
+before finishing. That keeps the last component's membership computable and
+leaves a **non-empty** `identity_r<N>` as durable evidence of truncation — a
+clean exhaustion still leaves an empty one, so the two remain distinguishable.
+Python reads the same variable with the same default.
+
+**Why 50 is enough for zone_1, arithmetically:** `-setMinComponentSize 50` and
+915 residual stems bound it at `floor(915/50) = 18` further components, so
+zone_1 cannot exceed 38. The observed tail decay (~10 %/lap: 175 → 173 → 147)
+puts the real figure near 30–31, reached by genuine exhaustion.
+
+**Three subsidiary faults fixed with it:**
+
+1. *The `.bat` did not validate the override.* Python sanitises; cmd does not,
+   and the value reaches an unquoted `if %comp_index% GEQ %max_components%`.
+   `0`/negative exports **nothing**; a non-numeric makes cmd compare as
+   **strings** so the ceiling never fires; an embedded space is a syntax error
+   hours in. Now validated with `findstr /r /x "[1-9][0-9]*"`.
+2. *Off-by-one in the warning.* `comp_index == max_components` in that branch,
+   but the last exported component is `c<max−1>` — the message sent an operator
+   hunting a `.rsalign` that does not exist.
+3. *Nested parenthesised blocks.* The first draft of the validation used them;
+   this script runs under a plain `setlocal` with **no delayed expansion**, so
+   a `set` read in the same block expands to its parse-time value. Rewritten
+   goto-style to match the rest of the file.
+
+**No test would have caught the original defect** — nothing in 53 test modules
+referenced the ceiling. Six new tests pin it, the most important being that the
+`.bat` literal and `DEFAULT_MAX_IDENTITY_COMPONENTS` agree: that is the only
+check that can catch writer/reader drift.
+
+### Not fixed, recorded
+
+* `CalibCellAlign.bat` still hardcodes `GEQ 20` with no ceiling harvest, while
+  its header claims it is "identical to AlignZone.bat". Not in the production
+  path (`RS_ALIGN_SCRIPT` is unset) but now *below* the Python warning
+  threshold, so a calibration-ladder truncation would be silent on both sides.
+* `MergeZoneComponents.bat` caps the peel at 40 with `-setMinComponentSize 1`,
+  and `merge_zones.peel_counts_from` is an unbounded loop that cannot tell a cap
+  from exhaustion. **This is the next wall**, at the merge stage, on a dive whose
+  zones have just been shown to fragment past 20.
+* The raised ceiling is a warning, not a gate: a zone that truncates still
+  returns `Success: True`. Per-zone check after each align — if
+  `zone_N_c49.rsalign` or a non-empty `identity_r50/` exists, that zone was
+  truncated.

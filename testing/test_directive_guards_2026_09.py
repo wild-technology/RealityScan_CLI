@@ -232,3 +232,106 @@ def test_missing_model_is_reported_not_silently_zeroed(monkeypatch):
     monkeypatch.setitem(sys.modules, 'pygeomag', None)
     with pytest.raises(decl.DeclinationUnavailable):
         decl.wmm_declination(-14.211, -169.046, dt.datetime(2024, 9, 18))
+
+
+# --------------------------------------------------------------------------
+# B13 - the identity-component ceiling (raised 20 -> 50, 2026-09-07)
+# --------------------------------------------------------------------------
+# Nothing in the suite would have caught the original defect: the loop stopped
+# on its lap cap, the last component's manifest silently absorbed every
+# remaining stem, and no test referenced the ceiling at all. These pin the
+# contract, and above all pin the .bat and the Python reader to the SAME
+# number - drift there either drops captured components or reads directories
+# that were never written.
+
+import re as _re
+
+_ALIGN_BAT = os.path.join(
+    REPO_ROOT, 'modules', 'realityscan_interface', 'RS_CLI', 'Scripts',
+    'AlignZone.bat')
+
+
+def _bat_text():
+    with open(_ALIGN_BAT, encoding='ascii', errors='replace') as fh:
+        return fh.read()
+
+
+def test_bat_and_python_ceilings_agree():
+    """The ONLY check that can catch future drift between the writer and the
+    reader. The .bat writes identity_r<K>; the Python side consumes it."""
+    from modules.realityscan_interface.realityscan_interface import (
+        RealityScanAlignment)
+    match = _re.search(r'^set "max_components=(\d+)"', _bat_text(), _re.M)
+    assert match, 'AlignZone.bat no longer declares a max_components default'
+    assert int(match.group(1)) == \
+        RealityScanAlignment.DEFAULT_MAX_IDENTITY_COMPONENTS
+
+
+def test_ceiling_is_configurable_and_sanitised(monkeypatch):
+    """Python falls back to the default on anything non-positive or unparseable.
+    The .bat validates separately (findstr /r /x "[1-9][0-9]*") because cmd
+    string-compares a non-numeric value and would never fire the ceiling."""
+    from modules.realityscan_interface.realityscan_interface import (
+        RealityScanAlignment)
+    module = RealityScanAlignment(QUIET)
+    default = RealityScanAlignment.DEFAULT_MAX_IDENTITY_COMPONENTS
+
+    monkeypatch.delenv('RS_MAX_IDENTITY_COMPONENTS', raising=False)
+    assert module.MAX_IDENTITY_COMPONENTS == default
+
+    monkeypatch.setenv('RS_MAX_IDENTITY_COMPONENTS', '120')
+    assert module.MAX_IDENTITY_COMPONENTS == 120
+
+    for bad in ('0', '-5', 'abc', '', '5 0'):
+        monkeypatch.setenv('RS_MAX_IDENTITY_COMPONENTS', bad)
+        assert module.MAX_IDENTITY_COMPONENTS == default, bad
+
+
+def test_bat_validates_the_override_before_using_it():
+    """An unvalidated override reaches an UNQUOTED `if %comp_index% GEQ %max%`:
+    0 or negative exports nothing at all, non-numeric makes cmd compare as
+    strings so the ceiling never fires, and an embedded space is a syntax
+    error hours into a run."""
+    text = _bat_text()
+    assert 'findstr /r /x "[1-9][0-9]*"' in text
+    assert ':ceilingBadValue' in text
+
+
+def test_ceiling_branch_harvests_the_remainder():
+    """The half of the fix that matters as much as the number. Membership is
+    stems(r<K>) - stems(r<K+1>); without a final harvest the last exported
+    component absorbs every remaining stem. That is what gave zone_1's c19 a
+    915-camera claim over a zone-spanning bbox."""
+    text = _bat_text()
+    ceiling = text.split(':identityCeiling', 1)
+    assert len(ceiling) == 2, 'no :identityCeiling branch'
+    block = ceiling[1].split(':identityDone', 1)[0]
+    assert '-exportXMP' in block, 'ceiling branch does not harvest the remainder'
+    assert 'identity_r%comp_index%' in block
+    assert '-save' not in block, 'the identity loop must never save'
+
+
+def test_natural_exhaustion_does_not_use_the_ceiling_branch():
+    """A genuinely exhausted scene must reach :identityDone directly, so an
+    EMPTY identity_r<N> keeps meaning 'exhausted' and a NON-EMPTY one keeps
+    meaning 'truncated'. That distinction is the durable evidence."""
+    text = _bat_text()
+    # Split on the LABEL DEFINITION (line-initial ':identityCeiling'), not on
+    # the goto that references it - the goto is the first statement inside the
+    # loop, so splitting on the bare token cuts at the reference and leaves an
+    # empty body. (This test failed on its own slicing before the code.)
+    loop = _re.split(r'^:identityLoop$', text, maxsplit=1, flags=_re.M)[1]
+    loop = _re.split(r'^:identityCeiling$', loop, maxsplit=1, flags=_re.M)[0]
+    # The empty-harvest terminal must go STRAIGHT to :identityDone.
+    assert 'if not defined have_poses goto :identityDone' in loop
+    # ...and so must the mid-lap "no .rsalign was written" terminal.
+    assert 'goto :identityDone' in loop
+
+
+def test_ceiling_warning_names_the_last_captured_component():
+    """comp_index == max_components in that branch, but the last EXPORTED
+    component is c<max-1>; naming c<comp_index> sends an operator hunting a
+    .rsalign that does not exist."""
+    text = _bat_text()
+    assert 'set /a last_captured=%comp_index%-1' in text
+    assert 'c%last_captured%' in text

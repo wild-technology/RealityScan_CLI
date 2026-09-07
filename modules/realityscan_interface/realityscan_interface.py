@@ -673,11 +673,32 @@ class RealityScanAlignment(RSModule):
         scene_data = {'Success': scene_success, 'Scene Path': scene_path}
         return component_data, scene_data
 
-    # Bounded per-component identity loop: zones fragment into 2-5
-    # components; 20 is a generous ceiling against a pathological scene.
-    # Legacy-harvest reader only - the CSV reader enumerates what is on
-    # disk and needs no ceiling.
-    MAX_IDENTITY_COMPONENTS = 20
+    # Bounded per-component identity loop. Legacy-harvest reader only - the
+    # CSV reader enumerates what is on disk and needs no ceiling.
+    #
+    # 20 -> 50 (owner directive 2026-09-07). The old comment said "zones
+    # fragment into 2-5 components; 20 is a generous ceiling against a
+    # pathological scene" - that estimate does not survive contact with this
+    # site. MEASURED on NA165/H2060 zone_1 (8,757 images): TWENTY components
+    # exported and identity_r19 still held 915 pose sidecars, so the loop
+    # stopped on the lap limit, not on an empty scene. The previous delivered
+    # run's "20 components" was almost certainly the same ceiling rather than
+    # a real component count.
+    #
+    # MUST STAY IN STEP with AlignZone.bat's max_components: the .bat writes
+    # identity_r<K> and this reader consumes it, so a mismatch either drops
+    # captured components or reads directories that were never written. Both
+    # read RS_MAX_IDENTITY_COMPONENTS with this same default.
+    DEFAULT_MAX_IDENTITY_COMPONENTS = 50
+
+    @property
+    def MAX_IDENTITY_COMPONENTS(self) -> int:
+        raw = os.environ.get('RS_MAX_IDENTITY_COMPONENTS', '').strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            return self.DEFAULT_MAX_IDENTITY_COMPONENTS
+        return value if value > 0 else self.DEFAULT_MAX_IDENTITY_COMPONENTS
 
     def capture_component_identities(self, input_folder, output_folder,
                                      scene_name, flight_log_path):
