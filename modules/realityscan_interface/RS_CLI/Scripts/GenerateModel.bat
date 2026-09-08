@@ -108,10 +108,20 @@ call :try_filter -selectLargeTrianglesRel %large_tri_threshold%
 if not defined step_skipped call :run -renameSelectedModel "%model_tag%_Cleanup2" || goto :fail
 
 echo [4/8] Keeping only the largest connected component
+:: The invert MUST go through :try_filter, exactly as steps [2/8] and [3/8]
+:: do. Calling :try_remove directly leaves the removal unguarded, and the
+:: hazard is the one audit #4 already recorded for :try_delete_model: when a
+:: selection op no-ops, RealityScan leaves the PREVIOUS selection live. Here
+:: the previous selection is -selectLargestModelComponent - the entire good
+:: mesh - so a no-op invert followed by -removeSelectedTriangles deletes the
+:: model instead of its offcuts. A single-connected-component mesh is the
+:: COMMON case (it is what steps [2/8]-[3/8] are trying to produce), and it
+:: is precisely the case where the invert selects nothing.
+:: Routing through :try_filter checks the invert's own result first and sets
+:: step_skipped instead of removing, which is the correct no-op.
 call :run -selectLargestModelComponent || goto :fail
-call :run -invertTrianglesSelection || goto :fail
 set "step_skipped="
-call :try_remove
+call :try_filter -invertTrianglesSelection
 if not defined step_skipped call :run -renameSelectedModel "%model_tag%_Cleanup3" || goto :fail
 
 echo [5/8] Closing holes and cleaning to a manifold model

@@ -3331,6 +3331,62 @@ from that run.
   "appears to be" without looking. [NA165] (2026-09-06)
   ESTABLISHED
 
+- **A no-op selection leaves the PREVIOUS selection live - GenerateModel's
+  step [4/8] handed the whole mesh to -removeSelectedTriangles.** Steps [2/8]
+  and [3/8] route their select through `:try_filter`, which checks whether the
+  selection came back EMPTY before removing. Step [4/8] called `:try_remove`
+  directly:
+
+      call :run -selectLargestModelComponent   <- selects the good mesh
+      call :run -invertTrianglesSelection      <- UNGUARDED
+      call :try_remove                          <- removes what is selected
+
+  When the invert no-ops - which is exactly what happens on a
+  single-connected-component mesh, i.e. the case steps [2/8]-[3/8] are trying
+  to PRODUCE - the live selection is still `-selectLargestModelComponent`'s,
+  and the removal takes the model instead of its offcuts. Same failure class
+  audit #4 already recorded for `:try_delete_model`. Fixed by routing the
+  invert through `:try_filter` like its siblings; all three filter steps now
+  share one guarded shape. Owner-spotted 2026-09-07; exercised 24x on
+  NA165/H2063 the same day without incident. [NA165] (2026-09-07)
+  ESTABLISHED
+
+- **`scale_oracle` looked for the identity CSV one directory too deep, and
+  'unmeasured' hid it.** The two producers differ:
+  `AlignZone.bat` writes `<zone>/identity/<c>.csv` while the .rsalign lands in
+  `<zone>/latest_components/`, a SIBLING; `MergeZoneComponents.bat` writes
+  `identity_r0/` BESIDE its export. Callers pass `dirname(rsalign)` for both,
+  so the zone case needed the parent and never found it. Every one of 40
+  inputs scored `unmeasured`.
+  The reason this went unnoticed for a whole campaign is the failure MODE:
+  an unmeasurable component is reported `unmeasured`, which silently DISARMS
+  the deliverable gate rather than tripping it, so a gate reading nothing
+  looks exactly like a gate finding nothing wrong. A safety check whose
+  broken state is indistinguishable from its passing state is not a check.
+  Now searches beside, then the parent, then the harvest; covered by
+  `testing/test_scale_oracle_paths.py`. [NA165] (2026-09-07)
+  ESTABLISHED
+
+- **The export CRS is INHERITED unless the flight log is passed, and the
+  warning is easy to read past.** `export_runner.py` derives the export CRS
+  from the flight-log name (`flight_log_2L_UTM.txt` -> EPSG:32702) and sets
+  RS_OUTPUT_CRS - but only when given `--flight-log`. Without it, it logs
+  `no --flight-log: export CRS will be inherited, NOT set` and the export
+  takes whatever the RealityScan instance last held. On NA165/H2063 that was
+  the previous campaign's `epsg:32653`, and it appears in all 24 `.rsInfo`
+  files. It printed that warning 24 times and was still missed.
+  IMPACT, measured, because the obvious inference is wrong: the exported
+  geometry was CORRECT anyway. `exportCoordinateSystemType="3"` is geocentric
+  ECEF, which does not consult the projected CRS, so the meshes verified to
+  within 0.1-5.8 m of their own nav in every component checked. The damage is
+  to the METADATA only - the `.rsInfo` claims a zone the data is not in.
+  Two lessons worth more than the fix: pass `--flight-log` so the label is
+  right; and when a georeferencing check fails, verify the MEASUREMENT before
+  believing it - the first alarm here compared one component's mesh against a
+  DIFFERENT component's cameras and produced a convincing 800 m "error" that
+  did not exist. [NA165] (2026-09-08)
+  ESTABLISHED
+
 - **A merge that cannot resume will eventually cost you the whole run.**
   `merge_zones` wrote `merge_report.json` after every cluster but had no way
   to READ it back, so any interruption meant re-merging every input from

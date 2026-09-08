@@ -164,10 +164,27 @@ def component_position_cloud(components_dir: str, component: str) -> list[tuple]
     component's cameras, so no directory convention is needed. Harvest
     second, NOT instead: MergeZoneComponents.bat still peels one component
     per identity_r<K>, so a fused export's identity_r0 IS its cloud.
+
+    TWO identity/ locations, because the two producers differ and callers
+    pass `dirname(rsalign)` for both (measured NA165/H2063 2026-09-07):
+
+        AlignZone.bat      <zone>/identity/<c>.csv
+                           <zone>/latest_components/<c>.rsalign   <- SIBLING
+        MergeZoneComponents.bat
+                           <attempt>/identity_r0/                 <- beside
+
+    So an unfused zone component's CSV sits one level ABOVE the directory
+    holding its .rsalign. Looking only beside it found nothing and every
+    input scored 'unmeasured' - which silently disarms the deliverable gate
+    rather than failing, so nothing pointed at the missing directory.
+    Checked in order: beside, then the parent, then the harvest.
     """
-    csv_path = os.path.join(components_dir, 'identity', component + '.csv')
-    if os.path.isfile(csv_path):
-        return list(parse_identity_csv(csv_path).values())
+    for base in (components_dir, os.path.dirname(components_dir)):
+        if not base:
+            continue
+        csv_path = os.path.join(base, 'identity', component + '.csv')
+        if os.path.isfile(csv_path):
+            return list(parse_identity_csv(csv_path).values())
     return solved_position_cloud(os.path.join(components_dir, 'identity_r0'))
 
 
