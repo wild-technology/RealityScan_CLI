@@ -10,6 +10,7 @@ from .. import align_fingerprint
 from .. import camera_registry
 from .. import component_manifest
 from .. import flightlog_format
+from .. import prior_census
 from .. import prior_groups
 from ..flight_logs import (ensure_frame_match, find_flight_log,
                            epsg_for_utm_zone,
@@ -452,26 +453,52 @@ class RealityScanAlignment(RSModule):
         # Walk hygiene_root: in pool layout the zone folder holds only an
         # .imagelist, and -selectImage <regexp> only ever matches images
         # already in the scene, so the wider walk is safe.
+        # OWNER DIRECTIVE 2026-09-08: "enforce per-camera grouping and critical
+        # error". Both branches below used to CONTINUE - a generation failure
+        # logged an error and aligned anyway, and an unrecognised rig logged a
+        # warning and let RealityScan group by EXIF. Neither is survivable: the
+        # WCA JPGs are EXIF-identical (one Z CAM E2-F6 model string, no focal
+        # tag), so "grouped by EXIF alone" silently calibrates four physically
+        # different cameras as one, and an ungrouped solve self-calibrates per
+        # image, which frees focal length and therefore frees SCALE. NA165/H2060
+        # is what that costs: 35 of 43 components outside the 0.90-1.10 scale
+        # band, nothing mergeable, 19,241 images aligned into an assembly that
+        # merged nothing. Failing here costs minutes; not failing cost the dive.
         try:
             families = prior_groups.write_command_file(hygiene_root, groups_file)
         except Exception as exc:                                  # noqa: BLE001
-            self.logger.error('Prior-group generation failed for %s: %s - '
-                              'aligning WITHOUT explicit calibration groups',
-                              hygiene_root, exc)
-            families = 0
-        if families:
+            raise RuntimeError(
+                f'Prior-group generation FAILED for {hygiene_root}: {exc}. '
+                'Refusing to align without explicit calibration groups - an '
+                'ungrouped solve self-calibrates per image, which frees focal '
+                'length and therefore scale (owner directive 2026-09-08: '
+                'camera priors always win).') from exc
+        if not families:
+            # Leave the variable UNSET as well as raising, so a caller that
+            # traps this cannot go on to replay a stale file from a prior zone.
+            os.environ.pop('RS_PRIOR_GROUPS_FILE', None)
+            # An EMPTY tree is a different fault with its own, better message
+            # further down ("no images"). Raising the rig error here would
+            # rename that failure into a misleading one - the rig is not
+            # unrecognised, there is simply nothing to recognise.
+            if prior_groups.count_images(hygiene_root):
+                raise RuntimeError(
+                    f'No known camera family under {hygiene_root}, so no '
+                    'calibration groups can be assigned. Refusing to align: '
+                    'RealityScan would fall back to EXIF grouping, and the '
+                    'rigs this pipeline serves are EXIF-identical across '
+                    'physically different cameras. Add the family to '
+                    'modules/cameras.json (pattern + camera + mount) before '
+                    're-running.')
+            self.logger.warning(
+                'No images under %s - no calibration groups to assign; the '
+                'image-free zone guard below is the one that applies.',
+                hygiene_root)
+        else:
             os.environ['RS_PRIOR_GROUPS_FILE'] = groups_file
             self.logger.info('Applying prior calibration/lens groups for %d '
-                             'camera family/families (%s)', families, groups_file)
-        else:
-            # No recognised family: leave the variable UNSET so AlignZone
-            # skips the block entirely rather than replaying a stale file
-            # from a previous zone.
-            os.environ.pop('RS_PRIOR_GROUPS_FILE', None)
-            self.logger.warning(
-                'No known camera family under %s - aligning without explicit '
-                'calibration groups; cameras will be grouped by EXIF alone',
-                hygiene_root)
+                             'camera family/families (%s)', families,
+                             groups_file)
 
         # FAIL CLOSED on the registration-export format, the OUT direction
         # of the guard above. AlignZone.bat's identity capture reads each
@@ -645,6 +672,47 @@ class RealityScanAlignment(RSModule):
                      'Registered Cameras': 0, 'Manifests': manifest_paths,
                      'Error': 'zero registered cameras'},
                     {'Success': scene_success, 'Scene Path': scene_path})
+
+        # DID THE CALIBRATION PRIORS ACTUALLY LAND? The guard above proves
+        # cameras registered; it says nothing about whether they registered
+        # with the priors this pipeline spent the whole setup configuring.
+        # NA165/H2060 passed every existing check and still self-calibrated
+        # all 19,241 images (modules/prior_census.py carries the measurement).
+        # The ONLY place that failure is observable is the exported pose, so
+        # this reads the solve rather than trusting the configuration.
+        #
+        # It runs AFTER the registration guard on purpose: an empty harvest
+        # should be reported as "zero registered cameras", which is the more
+        # specific diagnosis, rather than as a prior failure.
+        #
+        # RS_SKIP_PRIOR_CENSUS exists for the deliberate no-prior control arm
+        # of a test ladder. It is not a way past a failing run - a run that
+        # trips this gate produces free per-camera focal length, therefore
+        # free scale, therefore components that cannot be merged, and
+        # re-running without fixing the delivery channel changes nothing.
+        if not os.environ.get('RS_SKIP_PRIOR_CENSUS'):
+            harvest = os.path.join(output_folder, 'identity_r0')
+            try:
+                prior_census.assert_priors_landed(
+                    harvest, context=f'zone {scene_name}',
+                    expected_groups=families)
+            except prior_census.PriorsNotApplied as exc:
+                self.logger.error('%s', exc)
+                return ({'Success': False,
+                         'Component Count': len(component_files),
+                         'Registered Cameras': registered,
+                         'Manifests': manifest_paths,
+                         'Error': 'calibration priors not applied'},
+                        {'Success': scene_success, 'Scene Path': scene_path})
+            except Exception as exc:                              # noqa: BLE001
+                # A census that cannot RUN is a broken instrument, not a
+                # verdict. Say so loudly and let the zone stand rather than
+                # failing a good align on a bug in the check itself.
+                self.logger.error(
+                    'Prior census could not be evaluated for %s (%s): %s. The '
+                    'zone is NOT being failed on this, but whether the '
+                    'calibration priors applied is UNVERIFIED.',
+                    scene_name, harvest, exc)
 
         # The identity loop is bounded at MAX_IDENTITY_COMPONENTS laps and
         # neither the .bat nor the reader says when it stopped BECAUSE of the

@@ -16,7 +16,49 @@
        one. -->
   <entry key="CoordinateSystemFlightLog" value="+proj=geocent +ellps=WGS84 +no_defs"/>
   <entry key="CoordinateSystemFlightLogType" value="local:1 - Euclidean"/>
-  <entry key="ifKGrp" value="2"/>
+  <!-- MEASURED 2026-09-08 (_agent/probe_ifkgrp, 120 contiguous NA165/H2060
+       zone_2 frames, one variable per cell). ifKGrp is the flight-log
+       import's "Automatically group camera calibration"; the value mapping
+       is UNDOCUMENTED and had never been probed. It was 2:
+
+         cell        cameras  ungrouped  distinct focals  focal range (mm)
+         ifKGrp=0         91         91               58     23.12 - 24.14
+         ifKGrp=1         95          0                1     25.09 flat
+         ifKGrp=2         93         93               55     29.50 - 30.42
+
+       Only 1 groups. 0 and 2 both leave every camera CalibrationGroup="-1",
+       i.e. free per-image self-calibration - and focal length and scale are
+       the same degree of freedom in a monocular solve, so a free focal is a
+       free scale. THAT is what cost NA165/H2060 its first pass: 19,241
+       images aligned, 1,700 distinct focals across 3,000 sampled cameras,
+       35 of 43 components outside the 0.90-1.10 scale band, no two
+       components mergeable, and an "assembly" that merged nothing.
+
+       A fourth cell settles WHY, and refutes the obvious reading. Run with
+       NO flight log at all - so the import cannot touch anything - the
+       prior groups from AlignZone.bat's -setPriorCalibrationGroup STILL do
+       not take: 16 cameras, 16 ungrouped, 12 distinct focals. So ifKGrp is
+       not "stomping" prior groups that would otherwise have worked; those
+       commands have never worked, exactly as FINDINGS 2026-08-08 recorded
+       ("silently NON-FUNCTIONAL from the delegated CLI") and as
+       CalibCellAlign.bat:93 says when it calls RS_CALIB_MODE=groups
+       RETIRED. This corrects the 2026-08-28 reading that the import
+       "appears to stomp prior groups".
+
+       The consequence is the useful part: the flight-log import's
+       auto-grouping is the ONLY working calibration-grouping channel this
+       pipeline has, and it was set to a value that does not group.
+
+       WHAT IS STILL UNKNOWN: whether 1 means "group all" or "group by
+       focal length". This dive carries ONE camera (zeuss) and one focal
+       column, so the two are indistinguishable here. On a MULTI-CAMERA rig
+       they are not - "group all" would calibrate the four EXIF-identical
+       WCA cameras as one, exactly the fault the prior groups exist to
+       prevent. Probe this before the next multi-camera dive; the prior
+       census (modules/prior_census.py, expected_groups) will catch it if
+       it happens, but catching it after a 14 h align is not the same as
+       knowing beforehand. -->
+  <entry key="ifKGrp" value="1"/>
   <entry key="csvFLIgn" value="true"/>
   <entry key="ifuuInh" value="0"/>
   <entry key="ifKmode" value="0x0"/>

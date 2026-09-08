@@ -286,10 +286,10 @@ def test_unmeasured_mount_takes_the_house_convention():
     # 45 deg down-look belongs to upper (wca_upper).
     assert module._get_camera_pitch_offset('C231C0001.jpg') == 0.0
     assert module._get_camera_pitch_offset('U231C0001.jpg') == 45.0
-    assert module._get_camera_pitch_accuracy('U231C0001.jpg') == 15.0
-    assert module._get_camera_pitch_accuracy('C231C0001.jpg') == 15.0
+    assert module._get_camera_pitch_accuracy('U231C0001.jpg') == 10.0
+    assert module._get_camera_pitch_accuracy('C231C0001.jpg') == 10.0
     assert module._get_camera_pitch_offset('P231C0001.jpg') == 0.0
-    assert module._get_camera_pitch_accuracy('P231C0001.jpg') == 15.0
+    assert module._get_camera_pitch_accuracy('P231C0001.jpg') == 10.0
 
 
 def test_voyis_families_never_take_the_assumed_mount():
@@ -348,7 +348,10 @@ def test_measured_cameras_are_unaffected(tmp_path):
     _header, rows = _rows(result['Output Flight Log'])
     for row in rows:
         f = row.split(';')
-        assert f[8] != '' and f[11] == '15.000000'
+        # f[11] is Pitch Accuracy. 10.000000 since the 2026-09-08 owner
+        # directive; this asserts the value reaches the WRITTEN LOG, not
+        # merely the table - the column is the only thing RealityScan reads.
+        assert f[8] != '' and f[11] == '10.000000'
 
 
 # ---------------------------------------------------- format visibility

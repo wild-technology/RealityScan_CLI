@@ -47,14 +47,18 @@ from modules.georeference.georeference_images import (  # noqa: E402
 )
 
 # family -> (lever arm (fwd, lat, down), pitch offset deg, pitch accuracy deg)
+# p_acc: 10.0 for every family EXCEPT zeuss, whose 30.0 stands because its
+# mount is assumed rather than measured (owner directive 2026-09-08). Lever
+# arms and pitch offsets are MEASURED geometry and are untouched by that
+# directive - if one of those moves, it is a regression, not a re-tuning.
 EXPECTED = {
     'zeuss': ((0.5, 0.0, 0.5), 30.0, 30.0),
     'legacy_camupper': ((1.0, 0.0, 0.0), 70.0, 10.0),
     'legacy_cammid': ((1.0, 0.0, 1.0), 20.0, 10.0),
-    'legacy_camlower': ((1.0, 0.0, 1.0), 10.0, 5.0),
-    'wca_port': ((1.0, 0.0, 1.0), 0.0, 15.0),
-    'wca_cinema': ((1.0, 0.0, 0.0), 0.0, 15.0),
-    'wca_upper': ((1.0, 0.0, 0.0), 45.0, 15.0),
+    'legacy_camlower': ((1.0, 0.0, 1.0), 10.0, 10.0),
+    'wca_port': ((1.0, 0.0, 1.0), 0.0, 10.0),
+    'wca_cinema': ((1.0, 0.0, 0.0), 0.0, 10.0),
+    'wca_upper': ((1.0, 0.0, 0.0), 45.0, 10.0),
 }
 
 SAMPLE = {
@@ -154,7 +158,7 @@ def test_next_cruise_digits_get_real_geometry(geo):
     """M5 regression: this used to be a zero lever arm at 10 deg confidence."""
     assert geo._get_camera_offsets('C245C0007_x.jpg') == (1.0, 0.0, 0.0)
     assert geo._get_camera_pitch_offset('C245C0007_x.jpg') == 0.0
-    assert geo._get_camera_pitch_accuracy('C245C0007_x.jpg') == 15.0
+    assert geo._get_camera_pitch_accuracy('C245C0007_x.jpg') == 10.0
 
 
 def test_unmeasured_starboard_is_counted_not_silently_zeroed(geo):
@@ -202,19 +206,28 @@ def test_geoall_covers_wca_at_all(geo):
     assert geoall.get_camera_offsets('P231C0003_x.jpg') == (1.0, 0.0, 1.0)
 
 
-def test_geoall_orientation_accuracy_is_the_measured_value():
-    """3 deg FRAGMENTS the solve (PD-0); 15 deg is the measured DEFAULT.
+def test_geoall_orientation_accuracy_is_the_owner_directed_value():
+    """5 deg since the 2026-09-08 owner directive (was 15).
+
+    PD-0 measured 3-5 deg claimed orientation FRAGMENTING the solve where
+    15 deg gained registration, so this value is tighter than the recorded
+    evidence supports. It is a deliberate owner call, made with that
+    evidence in hand, on the argument that the prior is also the
+    pre-selection gate. The test pins whatever the directive says so a
+    drift back is visible; it does not endorse the number.
 
     Was a source grep for the literal `yaw_acc = 15.0`; the value now comes
     from the shared PRIOR_ACCURACY_DEFAULTS table geoall imports, so the
     check is on the default it actually writes (audit 2026-08-07)."""
-    assert geoall._ACCURACY_DEFAULTS['yaw'] == 15.0
-    assert geoall._ACCURACY_DEFAULTS['roll'] == 15.0
+    assert geoall._ACCURACY_DEFAULTS['yaw'] == 5.0
+    assert geoall._ACCURACY_DEFAULTS['roll'] == 5.0
     # No second table anywhere in geoall: the 3-vs-15 divergence M4 exists
-    # to prevent came from exactly such a private copy.
+    # to prevent came from exactly such a private copy. Every historical AND
+    # current literal is barred, so re-introducing a copy fails whichever
+    # value it carries.
     src = open(os.path.join(REPO_ROOT, 'geoall.py'), encoding='utf-8').read()
-    assert 'yaw_acc = 3.0' not in src
-    assert 'yaw_acc = 15.0' not in src
+    for literal in ('yaw_acc = 3.0', 'yaw_acc = 5.0', 'yaw_acc = 15.0'):
+        assert literal not in src, literal
 
 
 # ------------------------------------------------- cameras.json parity (belt)
@@ -325,9 +338,9 @@ def test_cameras_json_defaults_match_the_shared_accuracy_table():
     # down-look lives on wca_upper - both are measured values, neither is
     # the assumed 10.0.
     assert geoall.get_camera_pitch_offset('C231C0001.jpg') == 0.0
-    assert geoall.get_camera_pitch_accuracy('C231C0001.jpg') == 15.0
+    assert geoall.get_camera_pitch_accuracy('C231C0001.jpg') == 10.0
     assert geoall.get_camera_pitch_offset('U001C0001.jpg') == 45.0
-    assert geoall.get_camera_pitch_accuracy('U001C0001.jpg') == 15.0
+    assert geoall.get_camera_pitch_accuracy('U001C0001.jpg') == 10.0
 
 
 def test_cameras_json_voyis_entries_registered_and_gated():

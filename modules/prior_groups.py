@@ -97,6 +97,24 @@ def _path_tolerant(pattern: str) -> str:
     return out
 
 
+def count_images(image_root: str) -> int:
+    """Image files under `image_root`, by the same extension set the command
+    generator walks.
+
+    Exists so callers can tell the two ways `commands_for_tree` returns
+    nothing apart: an EMPTY tree (no images at all) and an UNRECOGNISED rig
+    (images present, none matching a family). Since 2026-09-08 the second is
+    a critical error and the first is not, so conflating them would report
+    an image-free zone as a registry problem.
+    """
+    total = 0
+    for _root, _dirs, files in os.walk(image_root):
+        for filename in files:
+            if os.path.splitext(filename)[1].lower() in ALL_IMAGE_EXTS:
+                total += 1
+    return total
+
+
 def commands_for_tree(image_root: str) -> list[str]:
     """Delegated commands that group every camera family PRESENT under
     `image_root`, most specific family first.

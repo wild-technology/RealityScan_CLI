@@ -26,11 +26,22 @@
       "--g_orientation_accuracy on the module and --pos-accuracy /",
       "--alt-accuracy / --orientation-accuracy on geoall.py.",
       "Position accuracy is END-TO-END PER-IMAGE UNCERTAINTY, not sensor",
-      "spec: claiming the sensor figure (1/1/0.1) measurably FRAGMENTS",
-      "solves (testing/PRIORS_DISTORTION_TEST_PLAN.md 'bow 2x2').",
-      "Orientation stays at HONEST 15 deg until the mounts are",
-      "ground-truthed: PD-0/PD-0b measured 3-5 deg claimed accuracy",
-      "FRAGMENTING the solve while 15 deg gained registration.",
+      "spec. 2026-09-08 OWNER DIRECTIVE: pos 10->5 m, yaw/roll 15->5 deg,",
+      "pitch 10 deg for every family EXCEPT zeuss (30 - its mount is",
+      "assumed, not measured). This TIGHTENS against recorded",
+      "counter-evidence and the owner made the call knowing it:",
+      "PRIORS_DISTORTION_TEST_PLAN 'bow 2x2' had the 1/1/0.1 sensor spec",
+      "fragmenting a known-good 665-image component, and PD-0/PD-0b had",
+      "3-5 deg claimed orientation fragmenting where 15 deg gained",
+      "registration. The argument FOR is PRUNING, not constraint: the",
+      "prior is also the pre-selection gate, and on a dense hover patch",
+      "(NA165/H2060 zone_2, 9,136 images in 44.7 x 41.8 m) a 10 m prior",
+      "spans 30 m at 3 sigma - nearly the whole zone - so almost every",
+      "pair survived gating and the align ran 14.2 h without converging.",
+      "WATCH: wall-clock down with registration rate held = pruning won;",
+      "component count up with registration rate down = over-constrained.",
+      "Alt stays 1.0 m: depth is a pressure sensor, already far better",
+      "than horizontal USBL, and the directive was about horizontal.",
       "",
       "assumed_mount (2026-08-31, owner-stated) is the house convention for",
       "a family with NO measured mount: the camera looks 10 deg down from",
@@ -52,13 +63,13 @@
       "assumed pitch restores the 2026-08-07 no-prior behaviour."
     ],
     "position_accuracy_m": {
-      "x": 10.0,
-      "y": 10.0,
+      "x": 5.0,
+      "y": 5.0,
       "alt": 1.0
     },
     "orientation_accuracy_deg": {
-      "yaw": 15.0,
-      "roll": 15.0
+      "yaw": 5.0,
+      "roll": 5.0
     },
     "assumed_mount": {
       "pitch_deg": 10.0,
@@ -88,7 +99,7 @@
       "focal_length_35mm": 23.0,
       "lens_distortion_group": "1",
       "lens_distortion_prior": "Approximate",
-      "distortion_model": "brown3"
+      "distortion_model": "division"
     },
     "port": {
       "calibration_group": "2",
@@ -105,7 +116,7 @@
       "focal_length_35mm": 16.0,
       "lens_distortion_group": "3",
       "lens_distortion_prior": "Approximate",
-      "distortion_model": "brown3"
+      "distortion_model": "division"
     },
     "starboard": {
       "calibration_group": "4",
@@ -146,7 +157,7 @@
       "focal_length_35mm": 20.0,
       "lens_distortion_group": "7",
       "lens_distortion_prior": "Approximate",
-      "distortion_model": "brown3"
+      "distortion_model": "division"
     },
     "starboard_1to1": {
       "_provenance": "NA168 H2080 upper, CROPPED to 1:1 (owner directive 2026-08-16). Physically the same unit as 'starboard', but the imagery is no longer the same sensor format: 5760x3240 -> 3190x3190, taken at x=1285,y=0 so the bottom 50 px are dropped. 35mm-equivalent focal scales with the SENSOR DIAGONAL, which the crop shortens from 6608.7 px to 4511.3 px (ratio 1.46491), so 16.0 -> 23.44 mm. Its OWN calibration/lens group (8; 1-4 rig, 5-6 Voyis, 7 Sony) because cropped and uncropped frames do not share intrinsics and must not be solved as one group. Distortion stays division (same fisheye glass). Uncropped 'starboard' is untouched - NA165/NA167 wca_upper and legacy_camupper still use it.",
@@ -160,7 +171,7 @@
   },
   "families": [
     {
-      "_comment": "The family is the MOUNT identity, the camera the OPTICAL identity - deliberately separate: the same Cinema unit sits 10 deg down under legacy camlower names and 0 deg (forward) under WCA names since the 2026-08-14 owner correction (45 deg before it), so keying geometry off the camera would silently change every legacy dataset by tens of degrees. Mount fields: fwd/lat/down = lever arm in metres (+ahead/+right/+below the vehicle reference point), pitch = camera down-tilt from the vehicle forward axis (deg), p_acc = claimed accuracy of that pitch prior (deg). A null mount means WARN, never zeros. WCA Port/Cinema lever arms VALIDATED on two independent metrically sound solves (bow c2, zone_2/PD-2b): C above P by +1.12 m and +1.03 m against the +1.00 m implied here; do NOT flatten them - the 0.22 m / 0.00 m FINDINGS figures came from the 0.175-scale hull and are scale-corrupted. WCA p_acc is 15 deg, not 3-5: tighter FRAGMENTS the solve (PD-0). timestamp_formats port the WCA/ZEUSS/WCA2025 constants; modules/file_metadata_parser.py accepts both forms for any family.",
+      "_comment": "The family is the MOUNT identity, the camera the OPTICAL identity - deliberately separate: the same Cinema unit sits 10 deg down under legacy camlower names and 0 deg (forward) under WCA names since the 2026-08-14 owner correction (45 deg before it), so keying geometry off the camera would silently change every legacy dataset by tens of degrees. Mount fields: fwd/lat/down = lever arm in metres (+ahead/+right/+below the vehicle reference point), pitch = camera down-tilt from the vehicle forward axis (deg), p_acc = claimed accuracy of that pitch prior (deg). A null mount means WARN, never zeros. WCA Port/Cinema lever arms VALIDATED on two independent metrically sound solves (bow c2, zone_2/PD-2b): C above P by +1.12 m and +1.03 m against the +1.00 m implied here; do NOT flatten them - the 0.22 m / 0.00 m FINDINGS figures came from the 0.175-scale hull and are scale-corrupted. WCA p_acc was 15 deg on the PD-0 evidence that tighter FRAGMENTS the solve; the 2026-09-08 owner directive sets every non-zeuss family to 10 deg. zeuss stays 30 - its mount is assumed, not measured. timestamp_formats port the WCA/ZEUSS/WCA2025 constants; modules/file_metadata_parser.py accepts both forms for any family.",
       "family": "wca_port",
       "pattern": "^p\\d+c",
       "camera": "port",
@@ -170,7 +181,7 @@
         "lat": 0.0,
         "down": 1.0,
         "pitch": 0.0,
-        "p_acc": 15.0
+        "p_acc": 10.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S",
@@ -187,7 +198,7 @@
         "lat": 0.0,
         "down": 0.0,
         "pitch": 0.0,
-        "p_acc": 15.0
+        "p_acc": 10.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S",
@@ -251,7 +262,7 @@
         "lat": 0.0,
         "down": 1.0,
         "pitch": 10.0,
-        "p_acc": 5.0
+        "p_acc": 10.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S",
@@ -330,7 +341,7 @@
         "lat": 0.0,
         "down": 1.0,
         "pitch": 0.0,
-        "p_acc": 15.0
+        "p_acc": 10.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S"
@@ -347,7 +358,7 @@
         "lat": 0.0,
         "down": 1.0,
         "pitch": 0.0,
-        "p_acc": 15.0
+        "p_acc": 10.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S"
@@ -364,7 +375,7 @@
         "lat": 0.0,
         "down": 0.0,
         "pitch": 45.0,
-        "p_acc": 15.0
+        "p_acc": 10.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S",
@@ -382,7 +393,7 @@
         "lat": 0.0,
         "down": 0.0,
         "pitch": 45.0,
-        "p_acc": 15.0
+        "p_acc": 10.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S",
