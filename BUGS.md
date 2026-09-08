@@ -599,3 +599,43 @@ Wiring B14's tracker, `progress_tracker` was initialised in
 it raised `NameError` on every attach-mode monitor. Now passed as a parameter
 with a self-initialising default. The suite caught it immediately; it would
 have taken down the monitor on the next attach-mode run.
+
+---
+
+## B16 — The merge peel cap was indistinguishable from exhaustion, at 40, with 43 components on disk
+
+**Kind:** fail-open → wrong arithmetic. **Severity:** blocker.
+**Sites:** `MergeZoneComponents.bat` peel loop; `merge_zones.peel_counts_from`.
+
+Same defect class as B13, and worse in effect. The peel loop stopped at
+`if %peel_index% GEQ 40` by jumping to `:after_export` — the **normal exit-0
+label** — echoing nothing and writing no marker. `peel_counts_from` walks
+`identity_r<K>` with an unbounded `while True` that breaks at the first missing
+or empty directory, so **a cap at 40 and a genuine exhaustion at 40 are
+byte-identical on disk.**
+
+Why it is worse than losing components: those per-component counts are exactly
+what `attribute_result` does its camera arithmetic with. A truncated peel does
+not merely drop components from the merge — it makes **every downstream
+attribution wrong**, silently, with a clean exit code.
+
+**Not hypothetical.** NA165/H2060 finished its aligns with **43 components**
+(33 + 6 + 4), already past the cap, before the merge was ever launched. And the
+peel runs with `-setMinComponentSize 1`, so it exports every fragment however
+small — the count climbs faster than the align's.
+
+**Fix.**
+* Cap 40 → **120**, overridable via `RS_MAX_PEEL_COMPONENTS`, validated with
+  `findstr /r /x "[1-9][0-9]*"` (cmd compares a non-numeric value as a *string*,
+  so an unsanitised override would silently never fire — same trap as B13.1).
+* New `:peelCeiling` branch that says what happened, names the last peeled
+  component, and writes **`PEEL_TRUNCATED.txt`** into the output directory.
+* `peel_counts_from` reads that marker and **raises** rather than returning a
+  short list. Scoring a truncated peel is the failure mode; refusing is cheap.
+
+Flat gotos, not nested blocks — this script has no delayed expansion either.
+
+**Caught by the suite, again:** my first version of the test sliced the `.bat`
+on `:peelCeiling`, which matches the `goto` reference before the label
+definition, so it asserted against the loop body. The same mistake I made in
+the B13 test. Both now split on the line-initial label.

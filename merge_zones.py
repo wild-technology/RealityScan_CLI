@@ -785,6 +785,28 @@ def peel_counts_from(out_dir: str) -> list[int]:
             break
         sizes.append(n)
         k += 1
+
+    # A TRUNCATED peel and an exhausted one look identical here - the walk
+    # stops at the first missing directory either way. MergeZoneComponents.bat
+    # now writes PEEL_TRUNCATED.txt when it stops on its lap ceiling instead of
+    # on an empty scene, and these counts are exactly what attribute_result
+    # does its camera arithmetic with. An incomplete set does not merely lose
+    # components; it makes every attribution downstream wrong. Refuse rather
+    # than score it. Reachable, not hypothetical: NA165/H2060 finished its
+    # aligns with 43 components against the old cap of 40.
+    marker = os.path.join(out_dir, 'PEEL_TRUNCATED.txt')
+    if os.path.isfile(marker):
+        try:
+            with open(marker, encoding='utf-8', errors='replace') as fh:
+                detail = fh.read().strip()
+        except OSError:
+            detail = '(marker unreadable)'
+        raise RuntimeError(
+            f'The component peel in {out_dir} hit its ceiling instead of '
+            f'exhausting the scene ({detail}). The {len(sizes)} camera counts '
+            'it produced are INCOMPLETE, and the fusion attribution is built '
+            'on exactly those counts - scoring this attempt would silently '
+            'mis-assign cameras. Raise RS_MAX_PEEL_COMPONENTS and re-run.')
     return sizes
 
 

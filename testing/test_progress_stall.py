@@ -187,3 +187,73 @@ def test_epsilon_sits_above_the_measured_jitter():
     increment just before it was ~9e-5."""
     assert PROGRESS_STALL_EPSILON > 6e-6 * 10
     assert PROGRESS_STALL_EPSILON <= 1e-4
+
+
+# --------------------------------------------------------------------------
+# B16 - the merge peel ceiling must be distinguishable from exhaustion
+# --------------------------------------------------------------------------
+# Same defect class as the align identity ceiling (B13), but worse in effect:
+# the old cap jumped to :after_export, the NORMAL exit-0 label, and
+# peel_counts_from walks identity_r<K> with an unbounded loop that stops at the
+# first missing directory - so a cap at 40 and an exhaustion at 40 were
+# byte-identical on disk. Those counts are what the fusion attribution assigns
+# cameras with. NA165/H2060 finished its aligns with 43 components.
+
+_MERGE_BAT = os.path.join(
+    REPO_ROOT, 'modules', 'realityscan_interface', 'RS_CLI', 'Scripts',
+    'MergeZoneComponents.bat')
+
+
+def _merge_bat_text():
+    with open(_MERGE_BAT, encoding='ascii', errors='replace') as fh:
+        return fh.read()
+
+
+def test_peel_ceiling_is_above_this_dive_component_count():
+    """43 components across three zones already exceeded the old cap of 40."""
+    import re as _re
+    m = _re.search(r'^set "max_peel=(\d+)"', _merge_bat_text(), _re.M)
+    assert m, 'MergeZoneComponents.bat no longer declares a max_peel default'
+    assert int(m.group(1)) >= 60
+
+
+def test_peel_ceiling_does_not_fall_into_the_normal_exit():
+    """The whole defect: the cap used to `goto :after_export`, which is the
+    clean exit-0 path, so nothing distinguished it from a finished scene."""
+    text = _merge_bat_text()
+    assert 'goto :peelCeiling' in text
+    assert ':peelCeiling' in text
+    assert 'if %peel_index% GEQ 40 goto :after_export' not in text
+
+
+def test_peel_ceiling_writes_a_durable_marker():
+    """peel_counts_from cannot infer truncation from the directories alone, so
+    the .bat has to leave a signal it can read."""
+    import re as _re
+    # Split on the LABEL DEFINITION (line-initial), not the goto that
+    # references it - the goto appears first and slicing there yields the loop
+    # body instead of the ceiling block. Same trap as the AlignZone test.
+    text = _merge_bat_text()
+    block = _re.split(r'^:peelCeiling$', text, maxsplit=1, flags=_re.M)[1]
+    block = _re.split(r'^:after_export$', block, maxsplit=1, flags=_re.M)[0]
+    assert 'PEEL_TRUNCATED.txt' in block
+    assert 'last_peeled' in block
+
+
+def test_peel_counts_refuses_a_truncated_peel(tmp_path):
+    """Scoring a truncated peel would silently mis-assign cameras, so it must
+    raise rather than return a short list."""
+    import merge_zones
+    for k in range(3):
+        d = tmp_path / f'identity_r{k}'
+        d.mkdir()
+        for i in range(5):
+            (d / f'{i}.xmp').write_text('x', encoding='utf-8')
+    assert merge_zones.peel_counts_from(str(tmp_path)) == [5, 5, 5]
+
+    (tmp_path / 'PEEL_TRUNCATED.txt').write_text(
+        'peel_ceiling_hit=120 last_peeled=119', encoding='utf-8')
+    with pytest.raises(RuntimeError) as exc:
+        merge_zones.peel_counts_from(str(tmp_path))
+    assert 'INCOMPLETE' in str(exc.value)
+    assert 'RS_MAX_PEEL_COMPONENTS' in str(exc.value)
