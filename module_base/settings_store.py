@@ -338,6 +338,18 @@ class SettingsStore:
                 f'"{section}.{key}". Pass it on the command line (or in the '
                 f'run charter) - stored answers from previous runs are '
                 f'refused on this lane.')
+        # "Baked into code" only holds while nothing shadows the code default,
+        # and a stored answer silently outranking it is how min_zone_size=300
+        # from one cruise beat --b_min 2000 on another. This warning lived in
+        # BatchDirectory._stored_default, which stopped being reached in
+        # production the moment _prompt_typed began delegating here - so the
+        # observability it was added for existed only in the tests
+        # (review 2026-09-08). It belongs on the shared path.
+        if stored is not None and fallback is not None and stored != fallback:
+            print(f'NOTE {section}.{key}={stored!r} from rs_settings.json is '
+                  f'SHADOWING the code default {fallback!r} for this run. The '
+                  f'stored answer wins; delete that key, or pass the flag '
+                  f'explicitly, if you meant the default to apply.')
         try:
             default = caster(stored) if stored is not None else None
         except (TypeError, ValueError):

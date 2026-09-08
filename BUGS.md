@@ -532,3 +532,70 @@ kill produced. The value here is information at hour 12, not authority.
   census cap 24** have the same construction as the identity ceiling fixed in
   B13 — a cap indistinguishable from exhaustion. zone_1 alone produced 33
   components, so the NightGrow cap is already below the real count.
+
+---
+
+## B15 — Four review findings, 2026-09-08
+
+External review of `na165-h2060-directives`. All four reproduced against the
+code on disk; all four fixed. The first re-opened B12 through the one door B12
+did not close.
+
+### B15.1 — Strict mode re-marked the declared default as an operator answer
+
+**Kind:** silent shadow. **Severity:** high. **Site:** `main.py`, EOF branch.
+
+`last_value` came from the *gated* `_default_for`, but `_had_stored` came from
+the *ungated* `settings.get`. Under `RS_NO_SETTINGS_INHERITANCE=1` with a
+closed stdin and any leftover `main` entry in `rs_settings.json`:
+
+1. `_default_for` refuses the stored value and returns the declared default
+2. `_had_stored` is nonetheless `True`, because `get` still sees the key
+3. the declared default is marked **explicit** and written back over the stored
+   value
+
+Georeference then sees an explicit declination of 0.0 and **disables WMM
+auto-detection**. Invisible on NA165/H2060 — 0.0 is correct there for a
+gyrocompass — but the recorded provenance is wrong, and any magnetic-heading
+dive hits the full failure. Fix: `_had_stored` is now
+`stored is not None and not inheritance_refused()`.
+
+### B15.2 — The flight-log preflight over-rejected on two axes
+
+**Kind:** false refusal. **Severity:** normal. **Site:** `main.py`.
+
+* Any run *without* Georeference fell into the strict branch, so a documented
+  **Extract-only or Extract+Preprocess** run was refused for lacking a file
+  neither stage reads. Fix: return early unless Batch Directory or RealityScan
+  Alignment is enabled — those are the only two stages that consume a log.
+* An explicit `--b_flight_log_path` / `--r_flight_log` was checked for
+  existence and then had only its **dirname** passed to `require_flight_log`,
+  which re-globs for `flight_log*_UTM.txt`. A correctly named explicit file
+  that does not match the glob failed preflight while every downstream consumer
+  would have taken it verbatim. Fix: honour the explicit path directly, and
+  still apply the content check so the fix does not reopen the header-only hole.
+
+### B15.3 — The SHADOWING warning was test-only
+
+**Kind:** lost observability. **Severity:** nit. **Site:** `batch_directory.py`.
+
+Added in B2 to `_stored_default`, but once `_prompt_typed` began delegating to
+`SettingsStore.ask_int/ask_float`, production stopped reaching it — only
+`get`-only test doubles fell through to that branch. The whole point was to
+make a stored answer shadowing a code default *visible on a real run*. Hoisted
+into `SettingsStore._ask_typed`, the shared path.
+
+### B15.4 — Dead `b_input` membership test
+
+**Kind:** dead code. **Severity:** nit. **Site:** `main.py`.
+
+`params` is keyed by parameter name (`batch_input_image_dir`), never by CLI
+long option, so `'b_input' in params` was always false. Removed.
+
+### Self-inflicted, caught by the suite
+
+Wiring B14's tracker, `progress_tracker` was initialised in
+`_monitor_until_exit` but consumed in `_monitor_loop` — a different method, so
+it raised `NameError` on every attach-mode monitor. Now passed as a parameter
+with a self-initialising default. The suite caught it immediately; it would
+have taken down the monitor on the next attach-mode run.

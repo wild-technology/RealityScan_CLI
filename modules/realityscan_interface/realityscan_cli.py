@@ -1063,9 +1063,9 @@ class RealityScanCLI:
         stall_warned = False
         # Frozen-progress detection, orthogonal to the silence guard: this one
         # keys on the recovered completion fraction rather than on the progress
-        # line changing. One-shot, like stall_warned.
+        # line changing. Owned here and handed to _monitor_loop so a single
+        # workflow keeps one history across the whole run.
         progress_tracker = _ProgressTracker()
-        progress_stall_warned = False
         low_memory_warned = False
 
         cpu = _CpuSampler()
@@ -1090,7 +1090,8 @@ class RealityScanCLI:
             self._monitor_loop(process, progress_path, last_progress_line,
                                last_errors, last_activity, stall_warned,
                                low_memory_warned, cpu, trace, next_sample,
-                               started, peak, marker_instance)
+                               started, peak, marker_instance,
+                               progress_tracker)
         finally:
             if trace is not None:
                 trace.close()
@@ -1109,7 +1110,13 @@ class RealityScanCLI:
     def _monitor_loop(self, process, progress_path, last_progress_line,
                       last_errors, last_activity, stall_warned,
                       low_memory_warned, cpu, trace, next_sample, started,
-                      peak, marker_instance=None) -> None:
+                      peak, marker_instance=None, progress_tracker=None) -> None:
+        # Defaulted rather than required: attach mode and the tests call this
+        # directly, and a monitor that raises NameError is strictly worse than
+        # one that quietly builds its own tracker.
+        if progress_tracker is None:
+            progress_tracker = _ProgressTracker()
+        progress_stall_warned = False
         while process.poll() is None:
             time.sleep(PROGRESS_POLL_SECONDS)
 
