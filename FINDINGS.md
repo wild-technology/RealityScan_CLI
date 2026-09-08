@@ -5509,3 +5509,96 @@ unwrapped before the bake. The high-poly bake SOURCE stayed at 4 x 8K, which is
 better for bake quality than the 4K it was asked to become — but it is not what
 the instruction said, and the ~80 minutes spent across twenty components
 produced a layer nothing reads.
+
+## [NA165] 2026-09-08 - alignment cost is set by camera-graph BANDWIDTH, not image count
+
+Two zones of the same dive, 4% apart in image count, differed by orders of
+magnitude in cost. zone_1 (8,757 images, 217 x 496 m corridor) aligned in ~4 h.
+zone_2 (9,136 images, 44.7 x 41.8 m hover patch) ran 14.2 h without finishing.
+
+HOW DISCOVERED: built the r=3 m proximity graph from each zone flight log -
+positions only, no image decoding, ~13 s for all four zones - and measured
+edge count and median bandwidth (max |i-j| over spatial neighbours in
+acquisition order).
+
+    zone      images   area m2   density   edges@3m   med bw   n*bw^2 vs z1
+    zone_1     8,757   107,849      0.08    808,441       75          1.0x
+    zone_2     9,136     1,870      4.89  3,915,034    3,955      2,900x
+    zone_3     3,366       384      8.76    748,856    1,537        162x
+    zone_4     1,826     1,111      1.64    192,225      202          1.5x
+
+Cholesky on the bundle-adjustment normal equations goes as n * bandwidth^2, so
+a corridor (banded, bw 75) is near-O(N) while an isotropic blob is not.
+CAVEAT, stated because it matters: the proxy ORDERS the zones correctly but is
+NOT calibrated to wall clock - n*bw^2 gives 2,900x while n*median_degree^2
+gives 53x on the same data, a 55x disagreement, and only one zone has ever
+completed. Use it to rank, never to predict hours.
+
+Pairs-within-3m alone is NOT sufficient: zone_3 has FEWER pairs than zone_1
+(749k vs 808k) yet is far more expensive, because its bandwidth is 20x higher.
+
+## [NA165] 2026-09-08 - zone_1's 33 components are a MATCHING failure, not geometry, so it is a compromised reference
+
+zone_1's r=3 m proximity graph is a SINGLE connected component (8,757/8,757,
+zero singletons) yet RealityScan produced 33 separate components with a largest
+of 604 cameras and 1,102 images (12.6%) unregistered.
+
+Consequence, and it reframes the whole zone_2 question: zone_1's 4 h runtime is
+not evidence that a ~9,000-camera connected solve is tractable on this box. It
+is evidence RealityScan DECLINED to attempt one and solved 33 small blocks
+instead. zone_2 was attempting a single block 15x larger than anything zone_1
+ever solved.
+
+## [NA165] 2026-09-08 - blue-water frames yield almost NO features, not noise features
+
+The standing theory was that low-texture underwater frames get forced to the
+sfmMaxFeaturesPerImage cap (25,000) and fill the descriptor budget with noise.
+MEASURED, and it is the opposite.
+
+HOW DISCOVERED: full-resolution SIFT (nfeatures=25000) on frames selected by
+measured flatness, with keypoints localised against a tile-flatness mask.
+
+    frame                       full-res SIFT kp    water area
+    zone_2 flattest                        1,690        90.8%
+    zone_2 next flattest                     191        88.8%
+    zone_2 rich (carbonate structure)     25,000 (cap)   0.0%
+    zone_1 typical                        25,001 (cap)   0.0%
+
+A frame with 191 keypoints cannot register against anything. It is not a source
+of false matches; it is dead weight that geometric pre-selection still pairs
+with every spatial neighbour, paying full matching cost per pair before failing.
+
+NOTE the earlier sampled analysis reached the opposite conclusion ("essentially
+zero features land in flat water") because it measured at 1/8 scale, where
+water looks smooth. Scale matters for this question.
+
+Full census of both zones (17,893 frames, every frame, no sampling): ZERO
+undecodable, zero truncated, zero within-zone duplicates, uniform 3840x2160,
+all 17,893 XMP sidecars byte-identical. Content differs sharply though -
+median water fraction 0.075 (zone_1) vs 0.317 (zone_2); frames >50% water
+8.6% vs 33.7%; median Laplacian 1,330 vs 640.
+
+Culling the dead frames does NOT rescue such a zone: removing 12% at safe
+thresholds gives 1.7x, and removing HALF the zone by water content still leaves
+it 72x zone_1. The cost is the dense core, not the empty frames.
+
+## [NA165] 2026-09-08 - relative nav precision is ~0.09 m, but that figure cannot underwrite a spacing rule
+
+MEASURED from NA165_H2060_final_datatable.csv (33,881 rows): residual against
+an 11 s rolling median has p95 = 0.09 m; median 1 s step = 0.069 m; USBL-vs-
+Kalman offset median 0.35 m, p95 1.35 m. The flight log declares 10 m.
+
+Two consequences pull in opposite directions and BOTH matter:
+
+1. The declared 10 m prior is 10-30x looser than achieved relative precision,
+   and a 10 m prior at 3 sigma spans 30 m against a 44.7 m zone - so
+   pre-selection admits ~96% of all possible pairs instead of pruning to ~12%.
+2. That 0.09 m is a SMOOTHNESS statistic (residual against a rolling median),
+   not an absolute accuracy, and the median 1 s displacement (0.069 m) is BELOW
+   it. So frame-to-frame motion at typical speed is not reliably resolvable,
+   and a displacement-threshold decimation is partly sampling jitter. A greedy
+   accumulator additionally random-walks during station-keeping and spuriously
+   keeps frames in exactly the dense regions that matter.
+
+Owner directive 2026-09-08: do not decimate. Nothing in the repo establishes
+the absolute nav precision such a rule would need.
