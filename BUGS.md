@@ -644,7 +644,8 @@ the B13 test. Both now split on the line-initial label.
 
 ## B17 — The merge's pose export runs with no params file, breaking the measurement channel
 
-**Kind:** silent fallback → blocked stage. **Severity:** high. **Status:** OPEN.
+**Kind:** silent fallback → blocked stage. **Severity:** high. **Status:** STILL OPEN, but DEMOTED - see B18, which is the defect that
+actually cost the dive and which B17 was masking.
 **Sites:** `MergeZoneComponents.bat` peel; `Metadata/XMPExportParams.xml`.
 
 The merge ladder produced real components on NA165/H2060
@@ -685,3 +686,135 @@ gate on the export having produced pose-bearing files — the same fail-closed
 treatment `flightlog_format.assert_format_installed` gives the import
 direction. A params file that exists and is referenced by nothing is worth
 grepping for elsewhere; this may not be the only one.
+
+**Update 2026-09-08.** B17 is real but it is not why the NA165/H2060 merge
+produced nothing. The delivered `merge_report.json` shows all 43 clusters with
+`"attempts": []` and `"origin": "assemble_only - carried as-is"` — the ladder
+never attempted a fusion, so the peel that B17 describes was never reached in
+the final run. The reason no fusion was attempted is B18: the components had
+free, mutually inconsistent scale, so `--pair_gate overlap` found no
+overlapping bounding boxes and every cluster came out a singleton.
+
+So the ordering is: **fix B18, then re-test B17.** With components that share a
+scale the ladder will actually attempt fusions, and only then does the peel
+harvest get exercised again. Chasing `XMPExportParams.xml` first would have
+been debugging a stage the run was not reaching.
+
+Still-valid B17 leads, unchanged: the params file exists and nothing references
+it; and the H2024 precedent (FINDINGS 2026-07-27) established that RealityScan
+writes **no** XMP sidecars, reporting success, when the scene's images resolve
+through a junction — de-junctioning restored the whole chain there. Whether any
+NA165/H2060 path involves a reparse point has not been checked.
+
+---
+
+## B18 — The calibration priors never reached any solve, on any zone, ever
+
+**Kind:** silently non-functional command + wrong undocumented default.
+**Severity:** critical — it cost the dive. **Status:** FIXED 2026-09-08,
+verified by probe; the re-run is the confirmation.
+**Sites:** `Metadata/FlightLogParams{,Local}.xml` (`ifKGrp`);
+`modules/prior_groups.py`; `AlignZone.bat:151`.
+
+### What was measured
+
+3,000 pose XMPs sampled from `proc/aligned_components/zone_1/identity_r0`:
+
+    xcr:CalibrationGroup="-1"    3000 / 3000
+    xcr:DistortionGroup="-1"     3000 / 3000
+    distinct FocalLength35mm     1,700 across 3,000 cameras
+    range                        8.947 mm .. 4,640.580 mm   (prior: 23.0)
+
+That is per-image self-calibration. Every camera invented its own focal.
+
+### Why that is not a cosmetic complaint
+
+Focal length and scale are the same degree of freedom in a monocular solve, so
+a free focal is a **free scale**. The scale gate — which was never broken and
+was telling the truth the whole time — reported:
+
+    35 FAIL / 5 PASS / 3 UNMEASURED
+    zone_1_c0    0.0000006      zone_1_c30   2.00757
+    zone_4_c1    5.60837        zone_1_c32   2.00030   <- exactly 2x, the
+                                                          focal doubling
+
+And with scales that wrong, `--pair_gate overlap` compares bounding boxes that
+do not share a metric. Nothing overlapped, so nothing paired, so nothing
+merged: 43 singleton clusters, and an "assembly" that was 43 unmerged zone
+components stacked in one project. The 4.1x-more-imagery claim over the
+previous delivery stands; the word "merged" in it did not.
+
+### Cause
+
+`ifKGrp` in the flight-log import params — RealityScan's *"Automatically group
+camera calibration"* — shipped at `2` for the life of this repo. Its value
+mapping is undocumented (`docs/rs-reference/06` §557 marks it
+`[UNDOCUMENTED]`) and had never been probed. Measured on 120 contiguous zone_2
+frames, one variable per cell (`_agent/probe_ifkgrp`):
+
+| cell | cameras | ungrouped | distinct focals | focal range |
+|---|---|---|---|---|
+| `ifKGrp=0` | 91 | 91 | 58 | 23.12 – 24.14 mm |
+| **`ifKGrp=1`** | 95 | **0** | **1** | **25.09 mm flat** |
+| `ifKGrp=2` | 93 | 93 | 55 | 29.50 – 30.42 mm |
+
+Only `1` groups.
+
+### The correction that matters
+
+A fourth cell ran with **no flight log at all**, so nothing could override
+anything. The prior groups *still* did not take: 16 cameras, 16 ungrouped, 12
+distinct focals. So `-setPriorCalibrationGroup` was never working either —
+which `FINDINGS` 2026-08-08 established ("silently NON-FUNCTIONAL from the
+delegated CLI") and `CalibCellAlign.bat:93` has said in an error message ever
+since, while the main align path kept calling it.
+
+This supersedes the 2026-08-28 reading that the import "appears to stomp prior
+groups". Nothing was stomped. **The flight-log import's auto-grouping is the
+only working calibration-grouping channel this pipeline has**, and it was set
+to a value that does not group.
+
+### Why nothing caught it
+
+Every channel reported success. The delegated command returned 0.
+`prior_groups.write_command_file` logged "1 camera family". `AlignZone.bat`'s
+`:run` saw no error. The run exited clean and produced components. The failure
+was observable in exactly one place — the exported pose — and nothing looked
+there.
+
+That is the general lesson, and it is why the fix is not just a config change:
+**a prior that cannot be observed in the output is not a prior, it is a hope.**
+Configuring one is not evidence it applied.
+
+### Fix
+
+- `ifKGrp` 2 → 1 in both params templates, with the cell table recorded inline
+  so the value cannot be "tidied" back, plus a test pinning both the value and
+  the table (`testing/test_flight_log_params_template.py`).
+- `modules/prior_census.py` (new): reads what the SOLVE used out of the pose
+  XMPs after every zone align and refuses a run whose priors provably did not
+  land. Two independent tests — the group echo and the solved-focal spread —
+  because either alone has a blind spot, and an EMPTY harvest fails too, since
+  "unmeasured" is the state that let this ship.
+- An unrecognised rig, or a failed prior-group generation, is now a critical
+  error instead of a warning-and-continue.
+
+### Deliberately NOT done
+
+The census does not assert solved focal against the prior VALUE. The
+calibration ladder (FINDINGS 2026-08-09) measured full manufacturer priors at
+**45.4%** registration against **97.3%** control and **97.7%** groups-only, and
+run3 (2026-08-28) measured them corrupting metric scale by −2.55% while
+steering solved focal away from both the prior and RealityScan's own free
+solve. Grouping is the half that helps; the numeric value is the half that
+halves the dive. Enforcing it would enforce the arm measured to be harmful.
+
+### Open
+
+Whether `ifKGrp=1` means "group all" or "group by focal length" is
+**undetermined** — NA165/H2060 carries one camera and one focal column, so the
+two are indistinguishable here. On a multi-camera rig they are not: "group all"
+would calibrate the four EXIF-identical WCA cameras as one, which is the exact
+fault the prior groups were introduced to prevent. Probe before the next
+multi-camera dive. `prior_census`'s `expected_groups` will catch it, but
+catching it after a 14 h align is not the same as knowing beforehand.

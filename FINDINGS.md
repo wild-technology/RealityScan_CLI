@@ -5602,3 +5602,76 @@ Two consequences pull in opposite directions and BOTH matter:
 
 Owner directive 2026-09-08: do not decimate. Nothing in the repo establishes
 the absolute nav precision such a rule would need.
+
+## [NA165] 2026-09-08 - ifKGrp=1 is the ONLY working calibration-grouping
+## channel; -setPriorCalibrationGroup has never worked and the prior groups
+## were never applied on any zone of this dive
+
+- **MEASURED, the failure: every camera on NA165/H2060 self-calibrated.** 3,000
+  pose XMPs sampled from `proc/aligned_components/zone_1/identity_r0`:
+  `xcr:CalibrationGroup="-1"` on 3000/3000, `xcr:DistortionGroup="-1"` on
+  3000/3000, and **1,700 distinct `FocalLength35mm` values** spanning
+  **8.947 - 4,640.580 mm** against a 23.0 mm prior. Focal length and scale are
+  the same degree of freedom in a monocular solve, so this is a free scale:
+  the gate returned 35 FAIL / 5 PASS / 3 UNMEASURED, with `zone_1_c0` at
+  6.05e-07, `zone_4_c1` at 5.61, and `zone_1_c30`/`c32` at **2.00757 / 2.00030**
+  - exactly 2x, the focal doubling surfacing as a scale doubling. The scale
+  gate was never broken; it was reporting this correctly all along.
+  [NA165] (2026-09-08) ESTABLISHED
+
+- **CONSEQUENCE, previously unnoticed: the delivered "merge" merged nothing.**
+  `proc/merged/merge_report.json` carries 43 clusters, every one with
+  `"attempts": []` and `"origin": "assemble_only - carried as-is"`. With
+  components at mutually inconsistent scale, `--pair_gate overlap` compares
+  bounding boxes that share no metric, so nothing overlapped and every cluster
+  came out a singleton. The assembly is 43 unmerged zone components in one
+  project. This also DEMOTES B17: the peel harvest it describes was never
+  reached in the final run, so `XMPExportParams.xml` was never the thing to
+  chase first. [NA165] (2026-09-08) ESTABLISHED
+
+- **CAUSE: `ifKGrp`, undocumented, shipped at the value that does not group.**
+  120 contiguous zone_2 frames, one variable per cell, calibration sidecars
+  deliberately absent so the only prior channel under test is the import
+  (`_agent/probe_ifkgrp`):
+
+      cell        cameras  ungrouped  distinct focals  focal range
+      ifKGrp=0         91         91               58  23.12 - 24.14 mm
+      ifKGrp=1         95          0                1  25.09 mm flat
+      ifKGrp=2         93         93               55  29.50 - 30.42 mm
+
+  Only 1 groups; 0 and 2 both leave every camera at -1. `ifKGrp=2` was the
+  shipped template value for the life of this repo. Note the grouped solve
+  landed at 25.09 mm, NOT the 23.0 prior - consistent with the ladder finding
+  that RealityScan steers away from a claimed value; what matters for scale is
+  that it is ONE value. [NA165] (2026-09-08) ESTABLISHED
+
+- **CORRECTION to the 2026-08-28 reading that the import "appears to stomp
+  prior groups". It does not.** A fourth cell ran with NO flight log at all, so
+  the import could not touch anything: the prior groups still did not take -
+  16 cameras, 16 ungrouped, 12 distinct focals. `-setPriorCalibrationGroup` /
+  `-setPriorLensGroup` were never working, exactly as the 2026-08-08
+  calibration-CLI probe established and as `CalibCellAlign.bat:93` states in an
+  error message. The main align path called them anyway for every dive since.
+  The [RECON] 2026-09-03 entry that kept both sides of this disagreement and
+  "settled nothing" is now SETTLED in favour of `main`'s 2026-08-08 finding.
+  [NA165] (2026-09-08) ESTABLISHED
+
+- **Why it was invisible for so long, which is the transferable part.** Every
+  channel reported success: the delegated command returned 0,
+  `prior_groups.write_command_file` logged "1 camera family", `AlignZone.bat`'s
+  `:run` saw no error, the run exited clean and produced components. The
+  failure was observable in exactly ONE artefact - the exported pose - and
+  nothing read it. A prior that cannot be observed in the output is not a
+  prior. `modules/prior_census.py` now reads the solve after every zone align
+  and refuses a run whose priors did not land, treating an EMPTY harvest as a
+  failure rather than a pass. [NA165] (2026-09-08) ESTABLISHED
+
+- **OPEN: what `ifKGrp=1` actually means.** "Group all" and "group by focal
+  length" are indistinguishable on this dive - one camera family, one focal
+  column. On a multi-camera rig they are not: "group all" would calibrate the
+  four EXIF-identical WCA cameras as one, the exact fault prior groups were
+  introduced to prevent. Probe with a two-camera fixture before the next
+  multi-camera dive. This also reopens, in a useful direction, doc Q19 (the
+  `ifKGrp`/`ifKmode` value mappings): `ifKGrp`'s effect is now partially
+  mapped by measurement rather than by the GUI diff the question proposed.
+  [NA165] (2026-09-08) OPEN

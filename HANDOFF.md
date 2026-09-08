@@ -64,6 +64,32 @@ The delivered assembly was produced with `--assemble_only`, which carries each
 component as-is and never touches that channel. Components sit side by side;
 they are not fused.
 
+**SUPERSEDED 2026-09-08 — B17 is real but it was not the blocker.** The root
+cause is B18: the calibration priors never reached any solve. Measured on 3,000
+harvested cameras from zone_1, `xcr:CalibrationGroup="-1"` on every one and
+1,700 distinct solved focals spanning 8.9–4,640 mm against a 23 mm prior — free
+per-image self-calibration, therefore free scale (35 of 43 components outside
+0.90–1.10, two at exactly 2.00). With scales that inconsistent `--pair_gate
+overlap` found no overlaps, so the ladder attempted **no** fusions at all:
+`merge_report.json` shows all 43 clusters with `"attempts": []`. The peel B17
+describes was never reached in the final run.
+
+Cause: `ifKGrp` in the flight-log import params, shipped at `2`, mapping
+undocumented and never probed. Measured on 120 contiguous zone_2 frames —
+`ifKGrp=0` 91/91 ungrouped, **`ifKGrp=1` 0 ungrouped and ONE focal**,
+`ifKGrp=2` 93/93 ungrouped. A fourth cell with no flight log at all still came
+back 16/16 ungrouped, which proves `-setPriorCalibrationGroup` was never
+working either (FINDINGS 2026-08-08) and corrects the 2026-08-28 note that the
+import "stomps" prior groups — nothing was stomped; the import's auto-grouping
+is simply the only grouping channel that works here.
+
+Fixed: `ifKGrp` → 1 in both templates with the cell table recorded inline and
+pinned by test; `modules/prior_census.py` refuses any zone whose priors
+provably did not land, treating an empty harvest as a failure rather than a
+pass. **Order of work from here: B18 is fixed, so re-test B17** — with a shared
+scale the ladder will actually attempt fusions and the peel gets exercised
+again.
+
 ### DECISION 3 — zone_2 still has no remedy
 
 All four interventions measured and rejected (see the section below).
