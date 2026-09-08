@@ -1,6 +1,93 @@
 # HANDOFF — state of the July 2026 overhaul
 
-## 2026-09-08 — NA165/H2060 reprocess: zone_2 is intractable, 14 faults fixed, read this first
+## 2026-09-08 (06:15) — ASSEMBLY READY FOR REVIEW. Three decisions waiting.
+
+**Open this:**
+`D:\CoyoteThings\NA165_H2060\proc\merged\assembly\NA165_H2060_Assembly.rsproj`
+5.52 GB, **43 components, 11,587 cameras**, exit 0. Gate file:
+`proc\merged\EVALUATION_READY.txt`.
+
+**CRS is correct** — the project records exactly one coordinate system,
+`epsg:32702` / WGS 84 UTM zone 2S. That closes the 2026-09-02 loose end #2:
+the previous delivery labelled its exports 55N on a 2S dive. The align-time pin
+(project + output CRS from the flight log's zone tag, before import) held
+through to the assembly.
+
+**Against the previous delivery: 11,587 cameras vs 2,813, 43 components vs 20 —
+4.1× more registered imagery**, at 60.2 % of unique images.
+
+| zone | images | registered | % | components |
+|---|---:|---:|---:|---:|
+| zone_1 | 8,757 | 7,655 | 87.4 % | 33 |
+| zone_3 | 3,366 | 3,279 | **97.4 %** | 6 |
+| zone_4 | 1,826 | 653 | 35.8 % | 4 |
+| zone_2 | 9,136 | — | killed | — |
+
+### DECISION 1 — the scale gate blocks modelling of 38 of 43
+
+Only 5 components fall inside 0.90–1.10. The failures are two distinct
+populations and should not be treated alike:
+
+* **Near-miss, tight IQR** — zone_3's six are 0.70–1.26, clustered near 1.19,
+  IQR spreads ~0.1. Coherent geometry with what looks like a *systematic* ~20 %
+  bias. This includes the 2,128-camera block, the best thing on the dive.
+* **Degenerate** — zone_1's small fragments at 0.000–0.008. Collapsed solves,
+  the residue of the 33-way matching fragmentation.
+
+Only 4 of 43 were flagged "drift or a fold", so the wide-IQR pathology is rare.
+FINDINGS [NA165] 2026-08-31 already attributes this dive's scale failures to its
+**3.8 cm baseline geometry** (median 1 s step 0.069 m against a 9.85 m standoff
+— a baseline/depth ratio of 0.007), having tested and rejected the zoom
+hypothesis. The previous delivery shipped 20/20 models by **disabling the
+gate**. The systematic ~20 % offset in zone_3 is a separate, possibly
+correctable question and is worth its own look.
+
+### DECISION 2 — no cross-zone fusion, because the measurement channel is broken
+
+The merge ladder ran, produced real components (`cluster_0_a1_c0.rsalign`,
+982 MB) and then **correctly refused to score them**: the peel harvest returned
+empty while the .rsalign existed. `merge_zones` aborts rather than mis-assign
+cameras — the invariant working as designed.
+
+Diagnosis so far:
+* **Ruled out:** calibration sidecars blocking the export. zone_1's align
+  harvested 7,655 pose sidecars from the same tree with the same sidecars
+  present.
+* **Prime suspect:** `-exportXMPForSelectedComponent` runs with **no params
+  file**. `Metadata/XMPExportParams.xml` exists (`xmpMerge`, `xmpExGps`,
+  `xmpCamera=3`) and **nothing in the repo references it**, so the export
+  inherits the instance's current settings. Identical failure class to the one
+  already documented for `-exportRegistration`: an absent params reference does
+  not error, it falls back and produces the wrong thing with exit 0.
+
+The delivered assembly was produced with `--assemble_only`, which carries each
+component as-is and never touches that channel. Components sit side by side;
+they are not fused.
+
+### DECISION 3 — zone_2 still has no remedy
+
+All four interventions measured and rejected (see the section below).
+
+### Not run
+
+Modelling. `--auto_model false` by directive: the goal was a project to review
+before modelling.
+
+### Housekeeping
+
+* 7 commits on `na165-h2060-directives`, pushed, tree clean. **778 tests pass**;
+  the 11 failures are the no-console-stdin subprocess artifact.
+* `BUGS.md` holds 16 faults with reasoning. B14 (frozen-progress detection) was
+  live during zone_3 and correctly did **not** fire on a healthy-but-slow run —
+  `p` moved 1.32e-2 over the window against a 1e-4 threshold.
+* `_agent\logs\merge.log` was overwritten by the assemble run (a bad `sed` in my
+  launcher); its diagnostic content survives in BUGS.md.
+* `proc\batched_images_by_zone\zone_3d` is a decimated copy that must NOT be
+  used. `proc\superseded\` holds the pre-fix truncated zone_1.
+
+---
+
+## 2026-09-08 — NA165/H2060 reprocess: zone_2 is intractable, 14 faults fixed
 
 Branch `na165-h2060-directives` (4 commits, pushed, tree clean). Faults and
 reasoning in **`BUGS.md`**. Suite **773 passed / 1 skipped**; the 6 failures are

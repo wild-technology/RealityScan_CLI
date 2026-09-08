@@ -639,3 +639,49 @@ Flat gotos, not nested blocks — this script has no delayed expansion either.
 on `:peelCeiling`, which matches the `goto` reference before the label
 definition, so it asserted against the loop body. The same mistake I made in
 the B13 test. Both now split on the line-initial label.
+
+---
+
+## B17 — The merge's pose export runs with no params file, breaking the measurement channel
+
+**Kind:** silent fallback → blocked stage. **Severity:** high. **Status:** OPEN.
+**Sites:** `MergeZoneComponents.bat` peel; `Metadata/XMPExportParams.xml`.
+
+The merge ladder produced real components on NA165/H2060
+(`cluster_0_a1_c0.rsalign`, 982 MB; five in total) and then aborted:
+
+> `cluster_0 attempt 1: peel harvest returned EMPTY but …_c0.rsalign exists -
+> the measurement channel is broken (pose sidecars were never written or never
+> moved). Aborting the run instead of mis-scoring it.`
+
+That abort is **correct** — `merge_zones` refuses to score a peel it cannot
+measure, rather than mis-assigning cameras. The defect is upstream of it.
+
+**Ruled out:** the calibration sidecars written by `b_xmp_priors=True`
+occupying `<stem>.xmp`. zone_1's align harvested 7,655 pose sidecars from the
+same tree with the same sidecars present, so the export can write pose over
+them.
+
+**Prime suspect:** the peel calls `-exportXMPForSelectedComponent` with **no
+params file**. `Metadata/XMPExportParams.xml` exists and declares exactly the
+relevant keys — `xmpMerge=true`, `xmpExGps=true`, `xmpCamera=3` — and a
+repo-wide grep shows **nothing references it**. So the export inherits whatever
+XMP settings the instance currently holds.
+
+This is the same failure class the repo already documents for
+`-exportRegistration`: *"an unresolved id does not error, it falls back to the
+instance's current export settings and writes a different layout with exit code
+0."* Here it produced no `xcr:Position` content at all — 23,822 sidecars in the
+images root, zero pose-bearing — while `-exportXMPForSelectedComponent` itself
+returned success.
+
+**Consequence.** Cross-zone fusion cannot be scored, so the merge cannot run.
+`--assemble_only` is unaffected (it carries components as-is and never peels),
+which is how the NA165/H2060 assembly was delivered.
+
+**Next step**, cheapest first: pass `XMPExportParams.xml` to
+`-exportXMPForSelectedComponent` the way `AlignZone.bat` passes its params, and
+gate on the export having produced pose-bearing files — the same fail-closed
+treatment `flightlog_format.assert_format_installed` gives the import
+direction. A params file that exists and is referenced by nothing is worth
+grepping for elsewhere; this may not be the only one.
