@@ -454,3 +454,81 @@ check that can catch writer/reader drift.
   returns `Success: True`. Per-zone check after each align — if
   `zone_N_c49.rsalign` or a non-empty `identity_r50/` exists, that zone was
   truncated.
+
+---
+
+## B14 — The stall guard was mathematically incapable of firing
+
+**Kind:** fail-open. **Severity:** blocker.
+**Site:** `modules/realityscan_interface/realityscan_cli.py`, the progress
+monitor loop.
+
+NA165/H2060 zone_2 spent **11,880 s making provably zero progress** and the
+monitor logged nothing. There is a stall guard — `STALL_WARNING_SECONDS =
+7200` — and it never fired, in any of four run logs (grep count: 0).
+
+**Why.** The guard keys on the progress LINE changing, then narrows that to
+"not a `#timeout`". During the freeze RealityScan emitted a strict alternation:
+
+```
+<alg> 0.61 39859.34 25128.00 #progress    <- fraction unchanged
+<alg> 0.61 40459.34 25506.00 #timeout     <- 600 s later, ignored as activity
+<alg> 0.61 40468.86 25512.00 #progress    <- re-arms last_activity
+```
+
+The **elapsed counter advances on every line**, so the text is never equal to
+the previous text, and the non-`#timeout` records arrived at most **800 s**
+apart against a 7,200 s threshold. The timer re-armed forever.
+
+**The threshold is not the bug and cannot be tuned around it.** Any value that
+would have fired must sit below 800 s — and a healthy align is legitimately
+quiet for one 600 s `-writeProgress` heartbeat (measured: zone_1's longest
+genuine plateau was 600.0 s and 603.2 s across two runs).
+
+**Fix.** Track the *recovered* fraction instead of the line text. RealityScan
+computes `remaining = elapsed * (1 - p) / p` exactly, so
+`p = elapsed / (elapsed + remaining)` inverts it and resolves ~100× finer than
+the two decimals printed in the line — which read `0.61` for the entire 3.3 h
+freeze.
+
+* **Window 3,600 s of the operation's OWN elapsed clock**, never wall clock,
+  so this stays a non-progress test and not a timeout (hard rule 3). Measured
+  sweep: 900 s false-positives on a healthy zone_1 run; 1,800 s flags zone_2
+  while it was still genuinely advancing; **3,600 s clears zone_1 by 255–568×
+  and flags zone_2 2.2 h before the operator killed it**, while still clearing
+  zone_2's own longest *recovered* freeze (1,825 s) by 2.0×.
+* **Epsilon 1e-4**, not equality. All 35 values across the freeze differ at
+  1e-9 — they jitter over a 6.0e-6 span **non-monotonically**, i.e. estimator
+  noise around a constant. An equality test would never have fired. 1e-4 sits
+  17× above that jitter and below the smallest genuine increment observed just
+  before the freeze (~9e-5).
+* **`#timeout` records are fed IN**, deliberately. Excluding them as
+  "non-activity" is exactly what let the alternation re-arm the old guard.
+* **Keyed per `algId`**: a new operation restarts elapsed near zero and would
+  otherwise fabricate a huge delta against the previous one.
+
+**It warns; it does not abort.** Verified reasons: `AlignZone.bat` runs
+`-align` before its first `-save`, autosave is disabled at instance boot, and
+delegated commands are FIFO — so a save injected mid-align would queue behind
+it and capture nothing. An abort produces exactly the zero files the manual
+kill produced. The value here is information at hour 12, not authority.
+
+### Not fixed, recorded
+
+* **zone_1 is a compromised reference.** Its r=3 m proximity graph is a single
+  connected component, yet it solved 33 blocks of ≤604 cameras. Its 4 h runtime
+  is not evidence that a ~9,000-camera connected solve is tractable — it is
+  evidence RealityScan declined to attempt one. zone_2 was attempting a block
+  **15× larger than anything zone_1 ever solved**.
+* **The cost proxy is uncertain by ~55×.** `n·bandwidth²` gives zone_2/zone_1 =
+  2,900×; `n·median_degree²` gives 53×. Both refuse zone_2 and pass zone_1 and
+  zone_4; they disagree about zone_3, which has never been run undecimated, so
+  there is no ground truth. Do not quote 2,900× as a calibrated figure.
+* **`RealityScan.log` is session-scoped and has been overwritten three times.**
+  It is the one artifact that could have turned "cannot be determined from
+  outside" into an answer. Copy it into the per-zone output directory on every
+  exit path.
+* **Merge peel cap** (`MergeZoneComponents.bat`, `GEQ 40`) and **NightGrow
+  census cap 24** have the same construction as the identity ceiling fixed in
+  B13 — a cap indistinguishable from exhaustion. zone_1 alone produced 33
+  components, so the NightGrow cap is already below the real count.
