@@ -867,3 +867,149 @@ moved out of the image trees (`_agent/sidecars_setaside/`), so the "23,822
 sidecars, zero pose-bearing" count will not reproduce — the tree now starts
 empty. That makes the next peel a cleaner test, but it also means an empty
 `identity_r0` can no longer be blamed on ours being in the way.
+
+---
+
+## B19 — The align path never georegisters: no post-alignment fit to the priors
+
+**Kind:** missing step. **Severity:** high — it makes metric scale a matter of
+luck on every zone this pipeline has ever aligned. **Status:** DIAGNOSED, fix
+identified, confirmation pending.
+**Sites:** `RS_CLI/Scripts/AlignZone.bat` (the whole file — the defect is an
+absence).
+
+### The symptom that exposed it
+
+NA165/H2060 zone_3 reconstructs ~1.27x larger than its nav, reproducibly:
+1.26691 on the first pass and 1.2745 on a re-run with completely different
+calibration handling. Its five components disagree with each other by up to
+1.84x. Meanwhile zone_1, zone_2 and zone_4 come out near 1.0.
+
+### zone_3's geometry is CORRECT — only its size is wrong
+
+zone_2 and zone_3 SHARE 2,054 frames (the batcher donates overlap). The same
+photographs, solved twice, agree on **shape to 1.2–22.8 mm on scenes 3.5–22.7 m
+across** — 0.02–0.4% of the diagonal — while differing in SCALE by 1.2017–1.2391
+(zone_3 c0) and 0.7115–0.7184 (c1..c4). Same images, same nav rows (byte
+identical), same camera, one focal length. Only the gauge differs.
+
+So this is not matching, not the nav, not the imagery, and not calibration.
+
+### The mechanism
+
+Rescaling a solved component about its own centroid is an **exact gauge freedom
+of the reprojection term** — cameras and points scale together and every
+projected pixel is unchanged. The **position priors are therefore the only term
+in the objective that can see scale.**
+
+Sweeping the weighted prior chi-squared against a rescale factor k, with the
+rotation re-fitted at each k (per camera, so zones compare):
+
+| component | cams | k\* (priors' optimum) | chi2(k\*) | chi2(k=1) | unclaimed |
+|---|---|---|---|---|---|
+| zone_3 c0 | 2248 | **0.777** | 0.10 | 0.22 | **54.6%** |
+| zone_3 c1 | 656 | **1.524** | 0.03 | 0.15 | **82.0%** |
+| zone_3 c2 | 171 | 1.404 | 0.02 | 0.03 | 39.6% |
+| zone_3 c4 | 117 | 1.435 | 0.03 | 0.16 | 82.5% |
+| zone_2 c0 | 1831 | 0.986 | 0.04 | 0.04 | 0.8% |
+| zone_2 c5 | 329 | 0.984 | 0.04 | 0.04 | 0.8% |
+| zone_1 c0 | 551 | 1.019 | 0.30 | 0.31 | 2.7% |
+| zone_4 c0 | 219 | 1.008 | 0.21 | 0.21 | 0.1% |
+
+Every zone_3 component stopped at a scale **its own priors score as strictly
+worse**, leaving 40–83% of the residual unclaimed. And `1/0.777 = 1.287`, the
+measured error. **The priors held the right answer and it was never applied.**
+
+This also kills the "the priors were too loose" reading: k\* is essentially
+weight-independent (isotropic weighting gives 0.760 for c0 against 0.770 under
+5/5/1). Prior sigma sets the UNCERTAINTY on scale, not the LOCATION of its
+optimum. At any positive weight, a solver that consulted the priors about scale
+would have gone to k\*.
+
+### The absence
+
+    AlignZone.bat:225   -importFlightLog
+    AlignZone.bat:229   -align
+    AlignZone.bat:240   -save
+
+Zero occurrences of `-update` in the file. The reference records
+`-update` as *"a similarity/rigid fit to the scene's imported constraints,
+applied after reconstruction: it can rotate or **rescale** a component"* and
+*"the step that can **set scale**"*
+(`docs/rs-reference/02-command-reference.md`). `MergeZoneComponents.bat:183`
+calls it *"the step that actually georeferences"* and has always run it.
+
+**The merge path georeferences. The align path imports priors, solves, and
+saves whatever gauge the solver happened to pick.** Dive-wide corroboration:
+across all 46 components with n>=100, as-placed position sits within a median
+6.2% of the best RIGID (scale-1) fit of its own cloud to the priors, while
+leaving a median 22.8% residual reduction unclaimed that only rescaling would
+capture. That is the signature of rigid placement with no similarity fit.
+
+### Why it was invisible
+
+Most components land near scale 1.0 on their own, because a well-conditioned
+solve over varied geometry recovers roughly the right relative scale from the
+priors used during matching. The missing step only bites where the solve's own
+gauge drifts — and then nothing corrects it. zone_1/2/4 hid the defect; zone_3
+exposed it.
+
+### Open
+
+Why zone_3's gauge drifts and the others' do not is NOT established. Leading
+candidate: the gauge is fixed at SfM initialisation from a seed pair's
+baseline, and zone_3's nav residual over a 20 s window is 1.167 m against ~2 m
+of travel, so a short seed baseline carries ~50% relative error — the right
+order for both +27% and -34%. Not testable from finished output; needs a run.
+
+Unexplained and suggestive: in the re-run (one calibration group, one focal)
+zone_3's four small components converged on 0.6153–0.6644, where in the first
+pass (five distinct focals) they were scattered 0.70/0.88/1.18/1.19. Four
+nominally independent components landing within 5% of each other is not random
+and nobody has an account of it.
+
+### Fix
+
+Add the post-alignment georegistration the merge path already has. It should
+be gated and reported, not silent: a component that moves a long way under
+`-update` is telling you its solve had drifted, and that is worth recording
+rather than quietly correcting.
+
+**Do not close this until measured.** The confirming test is cheap and needs no
+re-align: load a saved zone project, `-exportRegistration` the maximal
+component, `-update`, export again, compare scale against nav. If the component
+moves to k\*, the diagnosis is confirmed.
+
+### Confirmation attempt, 2026-09-09 — NOT achieved, and why
+
+Three probes failed to produce a before/after measurement. All three failures
+were in the probe harness, not in the finding, and each is worth recording
+because the next person will hit them:
+
+1. **`-exportXMP` on a loaded project exports nothing.** It covers only "the
+   last alignment", and a `-load` leaves none in session. EXPORT_XMP (process
+   20584) ran, returned 0, took 18 s, and wrote no pose sidecar. This is
+   already in FINDINGS; I rediscovered it the slow way.
+2. **A bare `%RealityScan% -delegateTo` chain silently no-ops against a busy or
+   not-ready instance.** Every step "succeeded", both CSVs came back missing,
+   exit 0 — the same silent-success class as B18 and B17.
+3. **My `:run` error check was inert.** It tested `if exist "%ErrorsFile%"`,
+   but `ErrorsFile` is set by `AlignZone.bat`/`MergeZoneComponents.bat`
+   themselves, NOT by `SetVariables.bat`, so the variable was empty and the
+   guard never fired. A copied `:run` without its variables is decoration.
+4. **`RealityScan.exe` with a direct command chain detaches**, returning no
+   exit code and doing nothing observable — which is why this repo drives it
+   through the instance/delegate pattern with `-waitCompleted` at all.
+
+**The cheapest real confirmation is the fix itself:** add the post-alignment
+`-update` to `AlignZone.bat` and re-run zone_3 alone (~1.5 h). If its
+components move to k\* — c0 from 1.2745 toward 1.0 — B19 is confirmed and
+fixed in one step. That is a better use of the machine than more probe
+scaffolding.
+
+**Care required when adding it.** The reference also records `-update` as the
+step that "will rotate geometry to satisfy mis-converted constraints" — it
+trusts the nav. It should therefore log how far each component moved, and a
+large move should be reported rather than silently applied: a component that
+travels a long way under `-update` is evidence its solve drifted, which is
+information worth keeping, not hiding.
