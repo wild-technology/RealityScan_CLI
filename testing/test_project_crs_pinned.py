@@ -81,9 +81,15 @@ def test_alignzone_pins_BEFORE_importing_the_flight_log():
     # RealityScan's Help: set the project CRS first, THEN import. Pinning after
     # the import leaves the import running against the wrong project CRS, and
     # nothing reports it.
+    # The COMMANDS, not any mention of them. A bare substring search matches
+    # prose: the georegister-only block added for B19 explains which steps it
+    # skips and names -importFlightLog in a comment 2.5 kB above the real call,
+    # which failed this test while the actual ordering was untouched. Comments
+    # that name commands are normal in these .bat files, so the assertion has
+    # to be specific about what it is measuring.
     s = _read('AlignZone.bat')
-    pin = s.index('-setProjectCoordinateSystem')
-    imp = s.index('-importFlightLog')
+    pin = s.index('call :run -setProjectCoordinateSystem')
+    imp = s.index('call :run -importFlightLog')
     assert pin < imp, 'project CRS must be pinned before -importFlightLog'
 
 
