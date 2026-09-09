@@ -818,3 +818,52 @@ would calibrate the four EXIF-identical WCA cameras as one, which is the exact
 fault the prior groups were introduced to prevent. Probe before the next
 multi-camera dive. `prior_census`'s `expected_groups` will catch it, but
 catching it after a 14 h align is not the same as knowing beforehand.
+
+**Update 2026-09-09 — both stated hypotheses are DEAD, and the real fix is in.**
+
+1. *Reparse-point write path* (the H2024 root cause, where RealityScan writes
+   no sidecars and reports success): **ruled out by measurement.** Every path
+   this dive touches — the root, `proc`, `batched_images_by_zone`, each zone,
+   `zone_2/zeuss`, `aligned_components`, `merged`, `raw`, `rs_cache` — is a
+   real directory, and a recursive sweep of the image tree finds no reparse
+   point anywhere.
+
+2. *"Pass `XMPExportParams.xml` to `-exportXMPForSelectedComponent` the way
+   AlignZone.bat passes its params"* — the entry's own recommended next step:
+   **impossible.** The command takes no params argument.
+   `docs/rs-reference/05-metadata-xmp-and-sidecars.md` is explicit: it
+   *"accepts none and always uses the current settings"* — i.e. whatever the
+   instance's XMP export dialog happens to hold. Anyone following that
+   instruction would have spent the session discovering it.
+
+**But that sentence names the right lever, in the wrong place.** Those settings
+are INSTANCE STATE, and `XMPExportParams.xml` holds exactly the keys that
+govern it. Nothing in the repo referenced the file, so every peel export in
+this pipeline's history ran on inherited dialog state.
+
+Why that reproduces the symptom precisely: `xmpExGps` and `xmpCamera` decide
+whether POSE is written at all, and the harvest filters sidecars on the literal
+string `xcr:Position`. **A peel that writes sidecars WITHOUT position is
+byte-indistinguishable on disk from a peel that writes nothing** — which is
+exactly what NA165/H2060 showed ("23,822 sidecars in the images root, zero
+pose-bearing") while the command returned success.
+
+**Fix applied:** `MergeZoneComponents.bat` now applies every key from
+`XMPExportParams.xml` via `-set` before the first export, using the same loop
+`AlignZone.bat` uses for `AlignmentParams.xml`, and **fails closed on zero
+applied** — a silently-empty apply would leave the export on instance state
+and still exit 0, which is the original defect wearing a different hat. Six
+keys are applied, including the two pose-bearing ones. Tests pin the
+reference, the ordering, the zero-applied guard, the two keys, and that the
+`delims="` parse still matches the file's attribute order.
+
+**Status: fix in, UNCONFIRMED.** It cannot be confirmed until a merge actually
+attempts a fusion, and no merge on this dive ever has — the first pass produced
+43 singleton clusters because of B18. The zone_1/3/4 re-aligns now running are
+the precondition. **Do not close B17 until a peel returns a non-empty harvest.**
+
+One caution for whoever runs that merge: the calibration sidecars have been
+moved out of the image trees (`_agent/sidecars_setaside/`), so the "23,822
+sidecars, zero pose-bearing" count will not reproduce — the tree now starts
+empty. That makes the next peel a cleaner test, but it also means an empty
+`identity_r0` can no longer be blamed on ours being in the way.

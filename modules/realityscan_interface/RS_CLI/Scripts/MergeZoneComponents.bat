@@ -214,6 +214,65 @@ if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
     call :run -save "%RS_PROJECTS_DIR%\%RS_PROJECT_LABEL%_merged_%RS_PROJECT_DATE%.rsproj" || goto :fail
 )
 
+:: ---------------------------------------------------------------- B17
+:: -exportXMPForSelectedComponent takes NO params argument. The reference is
+:: explicit (docs/rs-reference/05-metadata-xmp-and-sidecars.md: it "accepts
+:: none and always uses the current settings"), so the ONLY way to control
+:: what it writes is to set those settings on the instance first - exactly
+:: what AlignZone.bat does for AlignmentParams.xml.
+::
+:: This is B17's actual fix. BUGS.md's recorded next step was to "pass
+:: XMPExportParams.xml to -exportXMPForSelectedComponent the way AlignZone.bat
+:: passes its params". That is impossible - the command has no params
+:: argument - but the file holds exactly the keys that govern the instance
+:: state, and NOTHING in the repo referenced it, so every peel export in this
+:: pipeline's history ran on whatever the instance's XMP export dialog
+:: happened to be left holding.
+::
+:: Why that produces B17's exact symptom: xmpExGps and xmpCamera decide
+:: whether POSE is written at all, and the harvest filters sidecars on the
+:: literal string xcr:Position. A peel that writes sidecars WITHOUT position
+:: is indistinguishable on disk from a peel that writes nothing - which is
+:: precisely what was observed on NA165/H2060 ("23,822 sidecars in the images
+:: root, zero pose-bearing") while the command itself returned success.
+::
+:: Two other B17 hypotheses are now dead and should not be re-chased:
+::   - reparse-point write path (the H2024 root cause): MEASURED 2026-09-09,
+::     no junction anywhere on this dive's image or output paths.
+::   - a missing params ARGUMENT: the command does not take one.
+::
+:: Fails closed on zero applied, for the same reason the align settings loop
+:: does: a silently-empty apply leaves the export on instance state and the
+:: run then succeeds with exit 0 while measuring nothing.
+set "XMPExportParams=%Metadata%\XMPExportParams.xml"
+if not exist "%XMPExportParams%" (
+    echo ERROR: %XMPExportParams% not found. The XMP export would inherit
+    echo   whatever settings the instance holds - that is the B17 defect.
+    goto :fail
+)
+echo Applying XMP export settings from %XMPExportParams%
+set /a applied_xmp=0
+for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%XMPExportParams%") do (
+    if not "%%B" == "" (
+        echo %%A| %SystemRoot%\System32\findstr.exe /b /r "[a-zA-Z]" >nul
+        if not errorlevel 1 (
+            echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"app" >nul
+            if not errorlevel 1 (
+                echo ERROR: app-global key "%%A" in %XMPExportParams%
+                goto :fail
+            )
+            %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+            set /a applied_xmp+=1
+        )
+    )
+)
+if %applied_xmp% EQU 0 (
+    echo ERROR: applied ZERO XMP export settings from %XMPExportParams%.
+    echo   Every key was skipped, so the export would run on instance state.
+    goto :fail
+)
+echo Applied %applied_xmp% XMP export setting(s)
+
 if /i "%merge_mode%" == "assemble" goto :after_export
 if defined RS_MERGE_HARVEST goto :harvest
 

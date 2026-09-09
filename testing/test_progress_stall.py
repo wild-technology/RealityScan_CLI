@@ -257,3 +257,98 @@ def test_peel_counts_refuses_a_truncated_peel(tmp_path):
         merge_zones.peel_counts_from(str(tmp_path))
     assert 'INCOMPLETE' in str(exc.value)
     assert 'RS_MAX_PEEL_COMPONENTS' in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# B17 - the peel export must not inherit instance XMP settings
+# --------------------------------------------------------------------------
+# -exportXMPForSelectedComponent takes NO params argument (docs/rs-reference/
+# 05: it "accepts none and always uses the current settings"), so the only
+# control over what it writes is the instance state, set beforehand. Nothing in
+# the repo referenced Metadata/XMPExportParams.xml, so every peel export ran on
+# whatever the XMP dialog was last left holding.
+#
+# Why that is B17's exact symptom rather than a tidiness complaint: xmpExGps
+# and xmpCamera decide whether POSE is written, and the harvest filters
+# sidecars on the literal string xcr:Position. A peel that writes sidecars
+# WITHOUT position is byte-indistinguishable on disk from one that writes
+# nothing - which is what NA165/H2060 showed while the command returned
+# success ("23,822 sidecars in the images root, zero pose-bearing").
+
+_XMP_PARAMS = os.path.join(
+    REPO_ROOT, 'modules', 'realityscan_interface', 'RS_CLI', 'Metadata',
+    'XMPExportParams.xml')
+
+
+def test_the_xmp_export_params_file_is_actually_referenced():
+    """The whole defect was a params file nothing pointed at."""
+    assert 'XMPExportParams.xml' in _merge_bat_text()
+
+
+def test_the_export_settings_are_applied_before_any_xmp_export():
+    """Order is the point: instance settings must be in place BEFORE the
+    first -exportXMPForSelectedComponent, or the first export still inherits."""
+    text = _merge_bat_text()
+    apply_at = text.index('Applying XMP export settings')
+    # The COMMAND, not any mention of it. The block inserted above explains the
+    # defect in prose and names the command several times, so a bare substring
+    # search lands on a comment and reports a false ordering violation.
+    first_export = text.index('call :run -exportXMPForSelectedComponent')
+    assert apply_at < first_export, \
+        'XMP export settings are applied AFTER an export already ran'
+
+
+def test_zero_applied_settings_is_a_hard_failure():
+    """A silently-empty apply is the same silent-success class as the align
+    settings loop (audit 2026-08-07): the export would run on instance state
+    and the workflow would still exit 0."""
+    import re as _re
+    text = _merge_bat_text()
+    block = _re.split(r'^if %applied_xmp% EQU 0 \($', text, maxsplit=1,
+                      flags=_re.M)
+    assert len(block) == 2, 'no zero-applied guard on the XMP settings loop'
+    assert 'goto :fail' in block[1].split(')')[0]
+
+
+def test_the_params_file_still_carries_the_pose_bearing_keys():
+    """xmpExGps and xmpCamera are the two that decide whether pose is written
+    at all. If either is dropped or turned off, the peel harvest goes empty
+    again and the merge cannot be scored - the B17 failure exactly."""
+    with open(_XMP_PARAMS, encoding='utf-8') as fh:
+        xml = fh.read()
+    assert '<entry key="xmpExGps" value="true"/>' in xml
+    assert '<entry key="xmpCamera" value="3"/>' in xml
+
+
+def test_every_key_in_the_params_file_would_be_applied_by_the_loop():
+    """Replicates the .bat's `delims=" tokens=2,4` parse. If the XML's
+    attribute order ever changes, the loop silently applies ZERO settings -
+    the exact trap that cost the align loop 7 of 35 settings."""
+    with open(_XMP_PARAMS, encoding='utf-8') as fh:
+        lines = fh.read().split('\n')
+    applied = []
+    for line in lines:
+        parts = line.split('"')
+        if len(parts) >= 5 and parts[1] and parts[1][0].isalpha() and parts[3]:
+            applied.append(parts[1])
+    assert len(applied) >= 6, f'loop would apply only {applied}'
+    assert 'xmpExGps' in applied and 'xmpCamera' in applied
+    # The Configuration header's quoted token is a brace-led GUID and must be
+    # rejected by the same letter test the .bat uses.
+    assert not any(a.startswith('{') for a in applied)
+
+
+def test_no_stray_control_characters_in_the_merge_bat():
+    r"""A form feed once got into the findstr path in this .bat while it was
+    being edited - an escaped backslash collapsed, so \f became 0x0C - and cmd
+    would have run that as a bad path with the error swallowed by >nul. Cheap
+    to assert, impossible to see by reading.
+
+    Both literals below are RAW. Writing them any other way reintroduces the
+    exact escape this test exists to catch, which is what happened on the
+    first attempt at writing it."""
+    with open(_MERGE_BAT, 'rb') as fh:
+        raw = fh.read()
+    stray = sorted({b for b in raw if b < 32 and b not in (9, 10, 13)})
+    assert not stray, f'stray control bytes in the .bat: {stray}'
+    assert rb'System32\findstr.exe' in raw
