@@ -299,3 +299,84 @@ def test_boot_gate_does_not_exit_from_inside_a_block():
                 f'exit /b inside a block: {line!r}'
         depth += line.count('(') - line.count(')')
         depth = max(depth, 0)
+
+
+# ---------------------------------------------------------------------------
+# B19 - the align path must georegister after solving
+# ---------------------------------------------------------------------------
+# AlignZone.bat was -importFlightLog -> -align -> -save with no -update, so it
+# imported priors, solved, and saved whatever gauge the solver happened to
+# pick. Rescaling a component about its centroid is an exact gauge freedom of
+# reprojection, so the position priors are the ONLY term that can see scale -
+# and nothing ever fitted the result to them.
+#
+# MEASURED on NA165/H2060 (2026-09-09), weighted prior chi2 swept against a
+# rescale factor k, per camera:
+#     zone_3 c0  k*=0.777  54.6% of the residual unclaimed  (1/0.777 = 1.287,
+#                                                            the measured error)
+#     zone_3 c1  k*=1.524  82.0%
+#     zone_2 c0  k*=0.986   0.8%
+#     zone_1 c0  k*=1.019   2.7%
+# Every zone_3 component sat at a scale its own priors scored as strictly
+# worse, while the other zones sat on their optimum. The shape was correct
+# throughout: zone_2 and zone_3 solve 2,054 shared frames to the same geometry
+# within 1.2-22.8 mm and differ only in scale.
+
+def test_align_zone_georegisters_after_aligning():
+    """The fix. Without it, metric scale is whatever the solver's gauge
+    produced and nothing corrects it."""
+    text = _bat('AlignZone.bat')
+    assert 'call :run -update' in text, (
+        'AlignZone.bat no longer georegisters after -align. Component scale '
+        'is then unfitted to the nav - see BUGS.md B19.')
+
+
+def test_georegistration_runs_AFTER_the_align_not_before():
+    """Order is the whole point: -update is a fit to the constraints applied
+    to a RECONSTRUCTION. Before -align there is nothing to fit."""
+    text = _bat('AlignZone.bat')
+    align_at = text.index('call :run -align || goto :fail')
+    update_at = text.index('call :run -update')
+    assert align_at < update_at, '-update must follow -align'
+
+
+def test_georegistration_runs_BEFORE_the_project_is_saved():
+    """The saved .rsproj and the exported components are the deliverable. A
+    georegistration applied after the save would correct nothing that anyone
+    downstream ever reads."""
+    text = _bat('AlignZone.bat')
+    update_at = text.index('call :run -update')
+    save_at = text.index('call :run -save "%output_dir%')
+    assert update_at < save_at, '-update must precede the project save'
+
+
+def test_georegistration_is_gated_on_having_constraints():
+    """With no flight log there is nothing to fit to. Guarding on the same
+    variable the import is guarded on keeps the two in step."""
+    text = _bat('AlignZone.bat')
+    update_at = text.index('call :run -update')
+    guard = text.rindex('if not "%flight_log_dir%" == ""', 0, update_at)
+    # the guard must be the one immediately enclosing the update, not the
+    # earlier one around -importFlightLog
+    assert text.index('call :run -importFlightLog') < guard < update_at
+
+
+def test_the_skip_switch_says_what_skipping_costs():
+    """RS_SKIP_GEOREG_UPDATE exists for a deliberate no-georeference control
+    arm. A switch that silently disables metric correctness has to say so, or
+    it becomes the next silent-success defect."""
+    text = _bat('AlignZone.bat')
+    assert 'RS_SKIP_GEOREG_UPDATE' in text
+    i = text.index('RS_SKIP_GEOREG_UPDATE set')
+    warning = text[i:i + 400]
+    assert 'NOT fitted' in warning and 'B19' in warning
+
+
+def test_the_measurement_and_the_risk_travel_with_the_change():
+    """-update TRUSTS the nav: the reference records it as the step that
+    'will rotate geometry to satisfy mis-converted constraints'. Someone
+    debugging a wrecked solve needs that warning next to the command, and
+    someone tempted to delete the step needs the numbers."""
+    text = _bat('AlignZone.bat')
+    assert 'k*' in text and '0.777' in text, 'the chi2 measurement was dropped'
+    assert 'mis-converted constraints' in text, 'the risk note was dropped'

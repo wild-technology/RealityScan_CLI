@@ -228,6 +228,60 @@ if not "%flight_log_dir%" == "" (
 echo Aligning images - this may take a long time
 call :run -align || goto :fail
 
+:: ---------------------------------------------------------- B19
+:: GEOREGISTER AFTER ALIGNING. Without this the align path imports priors,
+:: solves, and saves whatever gauge the solver happened to pick - it never
+:: fits the result to the constraints. The merge path has always done this
+:: (MergeZoneComponents.bat, "the step that actually georeferences"); the
+:: align path never did.
+::
+:: WHY IT MATTERS. Rescaling a component about its own centroid is an EXACT
+:: gauge freedom of the reprojection term - cameras and points scale together
+:: and every projected pixel is unchanged - so the position priors are the
+:: only thing in the objective that can see scale. Measured on NA165/H2060
+:: (2026-09-09), sweeping the weighted prior chi-squared against a rescale
+:: factor k, per camera:
+::
+::     component     k* (priors' optimum)   unclaimed residual
+::     zone_3 c0            0.777                 54.6%
+::     zone_3 c1            1.524                 82.0%
+::     zone_2 c0            0.986                  0.8%
+::     zone_1 c0            1.019                  2.7%
+::
+:: Every zone_3 component sat at a scale its OWN priors scored as strictly
+:: worse, and 1/0.777 = 1.287 - the measured 1.27x error. The priors held the
+:: right answer and nothing applied it. zone_3 reconstructed its shape
+:: correctly (it agrees with zone_2's solve of 2,054 shared frames to
+:: 1.2-22.8 mm) and only its SIZE was wrong.
+::
+:: Dive-wide corroboration: across all 46 components of >=100 cameras,
+:: as-placed position sat within a median 6.2% of the best RIGID (scale-1)
+:: fit to its own priors while leaving a median 22.8% residual reduction
+:: unclaimed that only rescaling could capture - rigid placement, no
+:: similarity fit.
+::
+:: THE RISK, and it is real. The reference records -update as the step that
+:: "will rotate geometry to satisfy mis-converted constraints": it TRUSTS the
+:: nav. On a dive whose flight log is in the wrong frame or whose CRS is
+:: mis-declared, this step will faithfully wreck a good solve. That is why
+:: the frame guard (ensure_frame_match) and the CRS pin above are
+:: preconditions for it, not decoration - and why a big correction here is
+:: worth reading as evidence the solve drifted rather than as a tidy-up.
+::
+:: Only runs when there ARE constraints: with no flight log there is nothing
+:: to fit to and -update would be a no-op at best. RS_SKIP_GEOREG_UPDATE=1
+:: disables it for a deliberate no-georeference control arm.
+if not "%flight_log_dir%" == "" (
+    if not defined RS_SKIP_GEOREG_UPDATE (
+        echo Georegistering components against the flight-log constraints
+        call :run -update || goto :fail
+    ) else (
+        echo RS_SKIP_GEOREG_UPDATE set - SKIPPING post-align georegistration.
+        echo   Component scale will be whatever the solver's gauge produced
+        echo   and is NOT fitted to the nav. See BUGS.md B19.
+    )
+)
+
 :: Flight-log import leaves its matched images ACTIVELY SELECTED, and
 :: selection-driven exports under -silent then silently export NOTHING
 :: (the "Export Selection" dialog is auto-answered; see FINDINGS.md,
