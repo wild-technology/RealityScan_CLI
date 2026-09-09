@@ -380,3 +380,69 @@ def test_the_measurement_and_the_risk_travel_with_the_change():
     text = _bat('AlignZone.bat')
     assert 'k*' in text and '0.777' in text, 'the chi2 measurement was dropped'
     assert 'mis-converted constraints' in text, 'the risk note was dropped'
+
+
+# ---------------------------------------------------------------------------
+# Georegister-only mode (B19 retrofit)
+# ---------------------------------------------------------------------------
+# B19's fix added -update after -align, but zones already aligned without it
+# are saved at whatever gauge the solver picked. -update is a POST-alignment
+# fit and needs no re-solve, so RS_GEOREG_ONLY loads a saved project and jumps
+# straight to it. Re-aligning instead would cost ~19 h on this dive (zone_2
+# alone is 13.3 h) AND re-roll the align's run-to-run variation - measured on
+# zone_3, where two runs on identical inputs differed by 1.75x in wall clock
+# and by one component - so the reviewed component structure would change for
+# reasons unrelated to the fix.
+#
+# The mode deliberately reuses everything after the branch rather than
+# duplicating the export and identity-harvest loop. This repo has been bitten
+# twice by one behaviour living in two places: the align identity ceiling
+# (B13) and the merge peel ceiling (B16) were the same defect, found months
+# apart.
+
+def test_georegister_only_mode_exists():
+    assert 'RS_GEOREG_ONLY' in _bat('AlignZone.bat')
+
+
+def test_georegister_only_loads_instead_of_building_a_scene():
+    text = _bat('AlignZone.bat')
+    branch = text.index('if defined RS_GEOREG_ONLY')
+    assert text.index('call :run -load "%RS_GEOREG_ONLY%"') > branch
+    # ...and the branch must come BEFORE the scene is built, or it would
+    # discard the loaded project.
+    assert branch < text.index('call :run -newScene')
+
+
+def test_georegister_only_skips_the_align():
+    """The whole point: keep the existing solve, redo only its fit to the
+    constraints. If the jump landed after -align the zone would re-solve and
+    the mode would cost hours instead of minutes."""
+    text = _bat('AlignZone.bat')
+    jump = text.index('goto :georegister')
+    align = text.index('call :run -align || goto :fail')
+    label = re.search(r'(?m)^:georegister\s*$', text)
+    assert label, 'the :georegister label is gone'
+    assert jump < align < label.start(), (
+        'the georegister jump must skip over -align')
+
+
+def test_the_normal_path_still_falls_through_into_georegistration():
+    """A label is a no-op when reached by fall-through, so a normal align must
+    still reach -update. If the label ever moves above -align, every ordinary
+    run silently stops georeferencing again - which is B19 restored."""
+    text = _bat('AlignZone.bat')
+    align = text.index('call :run -align || goto :fail')
+    label = re.search(r'(?m)^:georegister\s*$', text).start()
+    update = text.index('call :run -update')
+    assert align < label < update
+
+
+def test_georegister_only_does_not_reimport_the_flight_log():
+    """The loaded project already holds its constraints and its coordinate
+    system. Re-importing would overwrite what the scene was solved against."""
+    text = _bat('AlignZone.bat')
+    jump = text.index('goto :georegister')
+    label = re.search(r'(?m)^:georegister\s*$', text).start()
+    skipped = text[jump:label]
+    assert 'call :run -importFlightLog' in skipped
+    assert 'call :run -setProjectCoordinateSystem' in skipped

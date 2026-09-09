@@ -96,6 +96,36 @@ echo Starting RealityScan
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
+:: ------------------------------------------------- georegister-only mode
+:: RS_GEOREG_ONLY=<path to an existing .rsproj> loads that project and jumps
+:: straight to the georegistration below, skipping scene construction and
+:: -align entirely.
+::
+:: WHY THIS EXISTS. B19 was fixed by adding -update after -align, but three
+:: zones of NA165/H2060 were already aligned without it and are saved at
+:: whatever gauge the solver picked. -update is a POST-alignment fit; it needs
+:: no re-solve. Re-aligning those zones to gain it would cost ~19 h (zone_2
+:: alone is 13.3 h) and would re-roll the align's run-to-run variation, so the
+:: components the owner has already reviewed would come back subtly different.
+:: Loading and updating costs minutes and leaves the component structure alone.
+::
+:: It reuses everything after this point - update, export, identity harvest,
+:: save - rather than duplicating it. This repo has been bitten twice by the
+:: same logic living in two places (the align identity ceiling B13 and the
+:: merge peel ceiling B16 were the same defect, fixed months apart).
+::
+:: The loaded project already carries its imported flight-log constraints and
+:: its coordinate system, which is why the CRS pin, the prior groups, the
+:: settings loop and -importFlightLog are all skipped: redoing them would
+:: either be a no-op or would overwrite what the project was solved with.
+if defined RS_GEOREG_ONLY (
+    echo GEOREGISTER-ONLY: loading %RS_GEOREG_ONLY%
+    echo   Skipping scene construction and -align. The saved solve is kept;
+    echo   only its fit to the flight-log constraints is redone.
+    call :run -load "%RS_GEOREG_ONLY%" deleteAutosave || goto :fail
+    goto :georegister
+)
+
 echo Creating new scene
 call :run -newScene || goto :fail
 
@@ -228,6 +258,7 @@ if not "%flight_log_dir%" == "" (
 echo Aligning images - this may take a long time
 call :run -align || goto :fail
 
+:georegister
 :: ---------------------------------------------------------- B19
 :: GEOREGISTER AFTER ALIGNING. Without this the align path imports priors,
 :: solves, and saves whatever gauge the solver happened to pick - it never
