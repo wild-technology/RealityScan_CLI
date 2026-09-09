@@ -5675,3 +5675,63 @@ the absolute nav precision such a rule would need.
   `ifKGrp`/`ifKmode` value mappings): `ifKGrp`'s effect is now partially
   mapped by measurement rather than by the GUI diff the question proposed.
   [NA165] (2026-09-08) OPEN
+
+## [NA165] 2026-09-08 - the B18 fix CONFIRMED on zone_2: the freeze was the
+## free focal, not the density; scale in-band goes 10.6% -> 57.8% camera-weighted
+
+- **zone_2 completed where it previously could not.** Run 1 (ifKGrp=2, 10 m
+  priors) froze at recovered p=0.615012 after 11.07 h and was killed at 14.37 h
+  having delivered NOTHING. Run 2 (ifKGrp=1, 5 m priors) finished in 13.29 h,
+  exit 0: 20 components, 5,649 of 9,136 cameras registered (61.8%), and the
+  prior census PASSED - `groups {0: 5649}`, 9 distinct focal lengths across
+  20 components, against run 1's `-1` on every camera and 1,700 distinct
+  focals. [NA165] (2026-09-08) ESTABLISHED
+
+- **THE DIAGNOSTIC POINT, and it reframes the whole run-1 investigation: the
+  stall was UNDER-DETERMINATION, not size.** The two runs track each other
+  closely to p=0.60 (run 2 is 1.1-1.4x ahead, and at p=0.55 it was actually
+  0.90x SLOWER), so the tighter position prior is not what changed the
+  outcome. What changed is that run 2 walked through the barrier run 1 died
+  on - past p=0.615 at 8.79 h - and then converged explosively:
+
+      p=0.650 at 46,515 s      p=0.800 at 46,699 s
+      p=0.700 at 46,591 s      p=0.860 at 46,930 s
+
+  i.e. 0.65 -> 0.86 in 415 SECONDS after hours of crawling. A bundle with
+  9,136 free focal parameters could not close; grouped, it closed in minutes.
+  This SUPERSEDES the run-1 conclusion that zone_2 was intractable at 4.89
+  img/m^2. The density/bandwidth/edge-count cost model built during run 1
+  correlates with real work but was describing the SYMPTOM: all four
+  interventions weighed then (decimation, further splitting, content culling,
+  prior tightening) were attacking the wrong variable, and the owner's two
+  vetoes - "no decimation, dangerous" and "splitting is not the answer" -
+  were right for better reasons than were available at the time.
+  [NA165] (2026-09-08) ESTABLISHED
+
+- **MEASURED scale after the fix, and it is a large but PARTIAL win.** Median
+  solved/nav pairwise-distance ratio per component, zone_2 run 2:
+
+      c0  1831 cams  0.9973 PASS     c1   568  1.1550 fail
+      c3   415 cams  1.0257 PASS     c2   432  0.8118 fail
+      c5   329 cams  1.0059 PASS     c6   294  1.3163 fail
+      c4   333 cams  1.0968 PASS     c8   170  1.4387 fail
+      ...                            c17   85  1.8391 fail
+
+  8 of 20 components and 3,265 of 5,649 cameras (57.8%) inside 0.90-1.10.
+  Camera-weighted against the first pass across all zones - 5 of 43
+  components, 1,231 of 11,587 cameras - that is **10.6% -> 57.8%**, and the
+  largest single component (1,831 cameras, a third of the zone) came in at
+  0.9973. But 42% of registered cameras remain out of band and the failures
+  concentrate in the SMALL components (85-570 cameras), where there is least
+  geometry to pin scale. Grouping removed the systematic free-focal error; it
+  did not make every fragment metric. Do not report this as "scale fixed".
+  [NA165] (2026-09-08) ESTABLISHED
+
+- **Registration 61.8% is the honest weak spot.** zone_1's first pass managed
+  87.4% and zone_3 97.4%, both on far easier terrain, and both with the
+  broken priors - so those numbers are not a clean baseline either. Whether
+  61.8% reflects the terrain, the 5 m / 5 deg tightening (which runs against
+  PD-0), or a genuine ceiling for a 44.7 x 41.8 m hover patch is NOT
+  determined by this run. The zone_1/3/4 re-aligns now running use identical
+  settings on zones with known first-pass rates, which is the comparison that
+  will separate them. [NA165] (2026-09-08) OPEN
