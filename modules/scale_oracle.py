@@ -205,7 +205,26 @@ def scale_ratio(members: set, solved: dict, nav: dict,
                 samples: int = 4000, min_nav_distance: float = 3.0,
                 seed: int = 5) -> dict | None:
     """Median/IQR of solved/nav pairwise-distance ratio for one component."""
-    common = [s for s in members if s in solved and s in nav]
+    # SORTED, and that is load-bearing. `members` is a set, so iterating it
+    # yields a process-dependent order: Python randomises str hashing per
+    # process (PYTHONHASHSEED), so the same component measured by two separate
+    # invocations drew DIFFERENT pairs and returned a different median. The
+    # fixed `seed` above made that invisible - results were perfectly stable
+    # WITHIN one process and moved BETWEEN processes, so any repeatability
+    # check run in a single process reported zero spread and proved nothing.
+    #
+    # MEASURED 2026-09-09, NA165/H2060 zone_2 c0 (1,831 cameras), identical
+    # inputs on disk, seed unchanged:
+    #     PYTHONHASHSEED=0   0.994725   (3391 pairs)
+    #     PYTHONHASHSEED=1   0.995990   (3401 pairs)
+    #     PYTHONHASHSEED=2   0.998415   (3380 pairs)
+    #
+    # A few thousandths is nothing for a large component, but this gate decides
+    # which components are allowed into modelling, and one sitting near a band
+    # edge flips PASS/FAIL on nothing but the interpreter's hash seed. Two
+    # measurements of zone_2 taken minutes apart reported 57.8% and 51.9% of
+    # cameras in band for exactly this reason.
+    common = sorted(s for s in members if s in solved and s in nav)
     if len(common) < 30:
         return None
     rng = random.Random(seed)

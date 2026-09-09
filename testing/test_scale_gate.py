@@ -128,3 +128,109 @@ def test_sound_only_set_is_untouched():
 
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-v']))
+
+
+# ---------------------------------------------------------------------------
+# The scale verdict must not depend on the interpreter's hash seed
+# ---------------------------------------------------------------------------
+# scale_ratio built its candidate list by iterating a SET. Python randomises
+# str hashing per process, so the list order - and therefore which pairs
+# rng.sample drew - changed between invocations. The fixed seed=5 made this
+# invisible: results were perfectly stable WITHIN a process and moved BETWEEN
+# processes, so any repeatability check written the obvious way (call it five
+# times in a loop) reports zero spread and proves nothing.
+#
+# MEASURED 2026-09-09 before the fix, NA165/H2060 zone_2 c0, identical inputs:
+#     PYTHONHASHSEED=0   0.994725   PYTHONHASHSEED=1   0.995990
+#     PYTHONHASHSEED=2   0.998415
+# Two measurements of the same zone minutes apart reported 57.8% and 51.9% of
+# cameras in band. This gate decides which components reach modelling, so a
+# component near a band edge changed fate on nothing but the hash seed.
+#
+# The test therefore MUST cross a process boundary. An in-process assertion
+# cannot detect the defect it is guarding against.
+
+import subprocess  # noqa: E402
+
+_PROBE = '\n'.join([
+    'import sys, math, random',
+    'sys.path.insert(0, %r)' % REPO_ROOT,
+    'from modules.scale_oracle import scale_ratio',
+    # Deterministic synthetic scene: 300 cameras on a jittered line, with a
+    # scale that DRIFTS along the track (0.95 -> 1.12) rather than a uniform
+    # factor.
+    #
+    # The drift is the whole point. A uniform scale makes every pairwise ratio
+    # identical, so the median is insensitive to WHICH pairs get drawn - and
+    # the first version of this fixture did exactly that: under the pre-fix
+    # code the median came back 1.037000000000 under every hash seed, and only
+    # the pair COUNT moved (3979 / 3969 / 3975). The test would then have been
+    # catching the defect incidentally, through a bookkeeping number, instead
+    # of through the quantity that decides a component's fate. Real components
+    # drift; the fixture must too, or it does not exercise the failure.
+    'rng = random.Random(11)',
+    # Single %, not %%: only the sys.path line above goes through % formatting,
+    # so every other entry here is a plain literal.
+    'names = ["img_%05d_%s" % (i, "abcdefgh"[i % 8]) for i in range(300)]',
+    'nav = {}',
+    'solved = {}',
+    'for i, n in enumerate(names):',
+    '    x = i * 1.7 + rng.uniform(-0.3, 0.3)',
+    '    y = rng.uniform(-2.0, 2.0)',
+    '    z = rng.uniform(-0.5, 0.5)',
+    '    s = 0.95 + 0.17 * (i / 299.0)',
+    '    nav[n] = (x, y, z)',
+    '    solved[n] = (x * s, y * s, z * s)',
+    'st = scale_ratio(set(names), solved, nav)',
+    'print("%.12f %d %d" % (st["median"], st["pairs"], st["cameras"]))',
+])
+
+
+def _probe_under(hashseed: str) -> str:
+    import os as _os
+    env = dict(_os.environ, PYTHONHASHSEED=hashseed)
+    out = subprocess.run([sys.executable, '-c', _PROBE], capture_output=True,
+                         text=True, env=env, timeout=180)
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
+
+def test_scale_is_identical_across_interpreter_hash_seeds():
+    """The defect, caught the only way it can be caught."""
+    results = {hs: _probe_under(hs) for hs in ('0', '1', '2', '12345')}
+    assert len(set(results.values())) == 1, (
+        'scale_ratio depends on PYTHONHASHSEED - the candidate list is being '
+        'built from an unsorted set again: %r' % results)
+
+
+def test_the_probe_recovers_the_scale_it_was_given():
+    """Guards the guard: if the fixture stopped exercising the real code path,
+    the seed test above would pass on garbage.
+
+    The scale drifts 0.95 -> 1.12 along the track, so the median depends on
+    which pairs are drawn - which is precisely why the hash-seed test above
+    has any power. Measured against the PRE-FIX code on this fixture the
+    median moved 1.11828 / 1.12004 / 1.11884 / 1.11935 across four seeds; with
+    a uniform-scale fixture it did not move at all.
+
+    The band is deliberately loose. A per-POINT scale does not make the
+    pairwise ratio the average of the two endpoint scales: for widely
+    separated cameras the distance is dominated by the larger coordinate, so
+    the ratio skews toward the high end of the drift (~1.119 here, just above
+    the nominal 1.12 ceiling). Pinning a tight expectation would be pinning
+    that geometric accident, not the behaviour under test."""
+    median, pairs, cameras = _probe_under('0').split()
+    assert 0.90 <= float(median) <= 1.30, median
+    assert int(cameras) == 300
+    assert int(pairs) > 1000
+
+
+def test_scale_ratio_sorts_its_candidates():
+    """Cheap structural belt so the reason survives a refactor that keeps the
+    behaviour by accident."""
+    import inspect
+    from modules import scale_oracle
+    src = inspect.getsource(scale_oracle.scale_ratio)
+    assert 'sorted(' in src, (
+        'scale_ratio no longer sorts its candidate list; the hash-seed '
+        'dependence is back even if the subprocess test happens to pass')
