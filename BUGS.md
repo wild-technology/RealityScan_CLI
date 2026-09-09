@@ -1013,3 +1013,43 @@ trusts the nav. It should therefore log how far each component moved, and a
 large move should be reported rather than silently applied: a component that
 travels a long way under `-update` is evidence its solve drifted, which is
 information worth keeping, not hiding.
+
+---
+
+## B20 — The align fingerprint records the repo SHA but never compares it
+
+**Kind:** silent comparability. **Severity:** low, but it undermines an
+invariant this pipeline takes seriously. **Status:** OPEN.
+**Sites:** `modules/align_fingerprint.py` — `build_fingerprint` writes
+`repo_sha`, `diff_fingerprints` never reads it.
+
+`build_fingerprint` captures `repo_sha` alongside the flight log, params,
+alignment settings and min component size. `diff_fingerprints` then compares
+only the file content hashes in `_COMPARED`, plus `frame` and
+`min_component_size`. **A change to the pipeline code itself is recorded and
+then ignored.**
+
+Observed live, 2026-09-09: zone_3 was re-aligned immediately after
+`AlignZone.bat` gained the B19 `-update` step — a change that alters the
+geometry of every component it touches. The run announced:
+
+> `Re-run with IDENTICAL inputs (nav, frame, settings unchanged) for
+> ...\aligned_components\zone_3 - redoing the zone from scratch.`
+
+The inputs were not identical in any sense that matters. Nothing downstream
+was harmed here because the zone is redone from scratch either way, and
+because this particular comparison was deliberate and understood. The hazard
+is the general case: this module exists to enforce "never merge components
+built from different inputs", and a workflow-script change is exactly the kind
+of difference that invariant is meant to catch. Two zones aligned either side
+of a `.bat` edit will compare as identical.
+
+Note the fingerprint hashes `AlignmentParams.xml` but not `AlignZone.bat`,
+`MergeZoneComponents.bat`, or the prior-group command file — so the settings
+are covered and the code that applies them is not.
+
+**Fix options, owner's call on which:** compare `repo_sha` as MATERIAL (warns
+on every commit, which is noisy but correct for a metrology pipeline);
+or as INFORMATIONAL, printed but not blocking; or hash the workflow `.bat`
+files into `_COMPARED` so only changes to the scripts that actually run are
+material. The third is the most targeted and the least noisy.
