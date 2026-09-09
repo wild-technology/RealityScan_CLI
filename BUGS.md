@@ -1053,3 +1053,55 @@ on every commit, which is noisy but correct for a metrology pipeline);
 or as INFORMATIONAL, printed but not blocking; or hash the workflow `.bat`
 files into `_COMPARED` so only changes to the scripts that actually run are
 material. The third is the most targeted and the least noisy.
+
+### B19 addendum, 2026-09-09 — `-update` is not reliably corrective
+
+The fix is confirmed for the case it was diagnosed on and **must not be
+applied blind to existing zones**.
+
+    zone            dominant component      in band before -> after
+    zone_3          c0 = 71% of the zone     0.0%  ->  76.3%    HELPED
+    zone_4          c0 = 35% of the zone    34.9%  ->  16.7%    HURT
+
+zone_4's c0 was PASSING at 0.9377 and `-update` moved it to 1.1470.
+
+**It fits each component separately — measured, not assumed.** Comparing the
+georegistered solve against the original over the same cameras, each component
+took its own factor, perfectly uniform within itself (IQR width 0.0000):
+
+    c0 x1.2231    c1 x1.4506    c2 x2.3141    c3 x1.2382
+
+Not one global transform. And the frame did not change: both exports carry
+`ExportCoordinateSystemType 3`, `Coordinates absolute`, ECEF-magnitude
+positions, the same focal and the same calibration group. It is a genuine
+geometric rescale.
+
+**But it does not move a component to its priors' optimum.** zone_4 c0's prior
+chi-squared optimum was k\*=1.008 — essentially where it already sat — and
+`-update` multiplied it by 1.2231. So whatever `-update` minimises, it is not
+the weighted position-prior residual the B19 analysis used.
+
+**The pattern that fits both zones is conditioning.** A similarity fit's scale
+parameter is well determined by 2,334 cameras (zone_3 c0 -> 0.9771) and weakly
+determined by 105-219 cameras against USBL noise (all four zone_4 components
+moved the wrong way). zone_3's own small components corroborate it: c2 (171)
+improved to 1.0508 while c1 (654) went to 1.3137 — a coin flip.
+
+**Consequence for the retrofit.** zone_1's largest component is 9% of its zone
+and zone_2's is 32%, so both resemble zone_4 more than zone_3. Applying
+`RS_GEOREG_ONLY` in place could degrade them irrecoverably. The procedure is
+therefore: run into a SIBLING COPY, measure both, keep whichever scores
+better. zone_4 is decided — the original wins and the copy is discarded.
+
+**What this does NOT change.** B19's diagnosis stands: the align path never
+georegistered, the priors held the right answer, and adding the step rescued
+zone_3 from 0% to 76.3%. What is now known is that the step is a fit like any
+other, and an ill-conditioned fit can land anywhere. It belongs in the align
+path, where it runs on a freshly solved scene; it is not a repair tool to be
+sprayed at saved projects.
+
+**OPEN:** what `-update` actually minimises. It is not the position-prior
+chi-squared. Orientation priors, control points, or a robust/trimmed variant
+are all candidates. Until that is known, treat a large `-update` correction as
+a flag for inspection rather than a fix — which is what the B19 block in
+AlignZone.bat already says, and now has evidence behind it.
