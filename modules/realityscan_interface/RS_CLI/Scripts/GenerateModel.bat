@@ -111,6 +111,7 @@ echo Component: %component_name%
 echo Large-triangle threshold: %large_tri_threshold%
 
 echo Starting RealityScan
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -236,6 +237,7 @@ if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
 )
 
 echo Shutting down RealityScan instance %RS_INSTANCE%
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
@@ -259,6 +261,7 @@ goto :fail
 
 :fail
 echo ERROR: model workflow failed - see %ErrorsFile% and the RealityScan log
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
@@ -267,6 +270,7 @@ exit /b 1
 :: the step is SKIPPED, evidence preserved, workflow continues - a clean
 :: mesh with no marginal/large triangles must not abort the recipe.
 :try_filter
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*
@@ -294,6 +298,7 @@ exit /b 0
 :: :try_remove - tolerant -removeSelectedTriangles (empty selections may
 :: error; skipping is the correct outcome).
 :try_remove
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -removeSelectedTriangles
 if errorlevel 1 (
     echo ERROR: Failed to delegate -removeSelectedTriangles
@@ -358,6 +363,7 @@ exit /b 1
 :: (F-102). A select that RealityScan refuses outright (an empty component)
 :: is evidence, not an abort.
 :delete_verified
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -selectModel "%~1"
 if errorlevel 1 goto :deleteDelegateFailed
 ping -n 3 127.0.0.1 >nul
@@ -387,6 +393,7 @@ exit /b 0
 :: Single-line exits only: `exit /b N` inside a parenthesized block returns
 :: 0 to the caller (CLAUDE.md, Windows automation traps).
 :try_unwrap
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -unwrap "%UnwrapSimplified%"
 if errorlevel 1 goto :unwrapDelegateFailed
 ping -n 3 127.0.0.1 >nul
@@ -410,6 +417,7 @@ exit /b 1
 :: :run - delegate one operation, double-wait, abort on reported error
 :: (see AlignZone.bat for the rationale).
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

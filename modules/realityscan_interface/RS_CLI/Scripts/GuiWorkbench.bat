@@ -13,6 +13,7 @@ call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
 
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -40,6 +41,7 @@ exit /b 1
 
 :: run - delegate + double-wait + errors-file check (AlignZone pattern)
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

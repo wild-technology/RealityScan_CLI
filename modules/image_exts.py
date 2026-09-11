@@ -26,10 +26,51 @@ testing/VERIFICATION_BACKLOG.md.
 from __future__ import annotations
 
 import os
+import hashlib
+from pathlib import Path
+import shutil
 
 ALL_IMAGE_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.heif'})
 
 PROCESSABLE_IMAGE_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.heif'})
+
+
+def is_geometry_image(path: str | Path, accepted=ALL_IMAGE_EXTS) -> bool:
+    """Masks are image layers, never independent cameras or flight-log rows."""
+    path = Path(path)
+    return (path.suffix.lower() in accepted and '.mask.' not in path.name.lower()
+            and not any(part.lower() in ('.mask', '_mask') for part in path.parts[:-1]))
+
+
+def associated_masks(image: str | Path) -> list[Path]:
+    """Existing documented inline/folder mask layers for one geometry image."""
+    image = Path(image)
+    if not image.parent.is_dir():
+        return []
+    # Directory mtime on Windows may lag a new file, so it is not a safe cache
+    # invalidator. Bounded exact-name probes stay linear without stale misses.
+    candidates = {image.with_name(image.name + '.mask' + ext)
+                  for ext in ALL_IMAGE_EXTS}
+    for folder in (image.parent / '.mask', image.parent / '_mask'):
+        if folder.is_dir():
+            candidates.update(folder / (image.stem + ext) for ext in ALL_IMAGE_EXTS)
+    return sorted(path for path in candidates if path.is_file())
+
+
+def copy_associated_masks(image: str | Path, destination: str | Path) -> list[Path]:
+    """Copy binary layers unchanged, normalized to image.ext.mask.ext naming."""
+    destination = Path(destination)
+    outputs = []
+    for mask in associated_masks(image):
+        target = destination.with_name(destination.name + '.mask' + mask.suffix.lower())
+        if target.exists():
+            with mask.open('rb') as source, target.open('rb') as existing:
+                if hashlib.file_digest(source, 'sha256').digest() != hashlib.file_digest(existing, 'sha256').digest():
+                    raise ValueError(f'Conflicting masks for {destination}')
+        else:
+            shutil.copy2(mask, target)
+        outputs.append(target)
+    return outputs
 
 
 def skipped_by_extension(filenames, accepted) -> dict[str, int]:

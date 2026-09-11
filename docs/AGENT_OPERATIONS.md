@@ -8,6 +8,16 @@ on conflict. `/drive-run` is the executable path; `rs.py` is the surface.
 
 ## 0. Drive-start protocol — before the first write of any kind
 
+For the native project workflow added in September 2026, explicit project
+settings approvals and source/culling/density reviews supply the structured
+run contract. The controller adapts them into the same charter/planner/executor;
+it does not require an AI to reinterpret data or repeat already supplied owner
+answers. Automated detectors report evidence and ambiguity. Original data,
+protected instances, content fingerprints and unresolved scientific assumptions
+retain their guards. H2101 is a reference validation fixture, not an exception
+to these product rules. The numbered chat intake below remains the manual
+agent-driving procedure.
+
 1. Orient: the SessionStart hook output, then `HANDOFF.md`'s current
    section, `docs/DECISIONS.md`, `docs/PRODUCT_READINESS.md` if the task
    touches a listed item.

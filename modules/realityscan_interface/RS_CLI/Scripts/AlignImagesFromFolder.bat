@@ -123,6 +123,7 @@ if /i "%simplify_model%" == "y" set SIMPLIFY_MODEL_BOOL=1
 if "%simplify_model%" == "1" set SIMPLIFY_MODEL_BOOL=1
 
 echo Starting RealityScan
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -132,6 +133,7 @@ echo Adding images to project
 :: preprocessed_images subfolders adds 0 layer images and the flight-log
 :: import then fails err:18002 (observed live on NA156 H2023). Instant
 :: -set, FIFO-ordered before the queued addFolder, no wait needed.
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -set "appIncSubdirs=true"
 call :run -addFolder "%input_dir%" || goto :fail
 
@@ -144,7 +146,10 @@ echo Applying alignment settings from AlignmentParams.xml
 :: sfm*/lis* keys via instant delegated -set, FIFO-ordered before -align.
 for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%MetadataDir%\AlignmentParams.xml") do (
     echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"sfm" /c:"lis" >nul
-    if not errorlevel 1 %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+    if not errorlevel 1 (
+        call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
+        %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+    )
 )
 
 echo Aligning images
@@ -235,11 +240,13 @@ echo Saving project
 call :run -save "%output_dir%\%scene_name%.rsproj" || goto :fail
 
 echo Shutting down RealityScan instance %RS_INSTANCE%
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
 :fail
 echo ERROR: Workflow failed - see %ErrorsFile% and the RealityScan log
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
@@ -259,6 +266,7 @@ exit /b 1
 :: returned 0.
 :: ------------------------------------------------------------------
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

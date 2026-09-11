@@ -143,6 +143,7 @@ echo Selection Commands: %RS_GROW_SELECT_CMDS%
 if "%RS_GROW_LOCK_ANCHOR%" == "1" echo Lock Anchor: ON - unverified until U18
 
 echo Starting RealityScan
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -251,7 +252,10 @@ echo Applying alignment settings from AlignmentParams.xml
 :: same pattern as AlignZone.bat: never align on instance defaults.
 for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%AlignmentParams%") do (
     echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"sfm" /c:"lis" >nul
-    if not errorlevel 1 %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+    if not errorlevel 1 (
+        call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
+        %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+    )
 )
 
 echo Aligning - this may take a long time
@@ -289,6 +293,7 @@ call :run -deselectAllImages || goto :fail
 call :run -exportLatestComponents "%output_dir%" || goto :fail
 call :run -exportXMP || goto :fail
 :: Read-only pass: deliberately NO save.
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
@@ -324,11 +329,13 @@ if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
     call :run -save "%RS_PROJECTS_DIR%\%RS_PROJECT_LABEL%_%scene_stem%_%RS_PROJECT_DATE%.rsproj" || goto :fail
 )
 
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
 :fail
 echo ERROR: grow workflow failed - see %ErrorsFile% and the RealityScan log
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
@@ -343,6 +350,7 @@ exit /b 1
 :: the pass there.
 :selectFromList
 for /f "usebackq delims=" %%L in ("%~1") do (
+    call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
     %RealityScan% -delegateTo %RS_INSTANCE% -selectImage "%%~L" union
 )
 exit /b 0
@@ -384,6 +392,7 @@ exit /b
 :: -waitCompleted calls with a second grace between them (see
 :: AlignZone.bat for the full rationale).
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

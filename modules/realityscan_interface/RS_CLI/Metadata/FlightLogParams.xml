@@ -61,7 +61,9 @@
        census (modules/prior_census.py, expected_groups) will catch it if
        it happens, but catching it after a 14 h align is not the same as
        knowing beforehand. -->
-  <entry key="ifKGrp" value="1"/>
+  <!-- 2026-09-11 mixed-camera v02: 1 collapses native/explicit groups;
+       0 preserves them. Historical single-family evidence above is limited. -->
+  <entry key="ifKGrp" value="0"/>
   <entry key="csvFLIgn" value="true"/>
   <entry key="ifuuInh" value="0"/>
   <entry key="ifKmode" value="0x0"/>

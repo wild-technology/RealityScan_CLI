@@ -70,7 +70,7 @@ class ExtractImages(RSModule):
         video_timestamp_str = parse_timestamp_str(video_path)
 
         # If the timestamp could not be parsed, raise an error
-        if video_timestamp_str == "19700101T000000Z" or video_timestamp_str == "19700101000000":
+        if video_timestamp_str is None:
             raise ValueError("Could not parse timestamp from filename.")
 
         return video_timestamp_str
@@ -79,7 +79,7 @@ class ExtractImages(RSModule):
         video_timestamp = parse_timestamp(video_path)
 
         # If the timestamp could not be parsed, raise an error
-        if video_timestamp == datetime(1970, 1, 1, 0, 0, 0):
+        if video_timestamp is None:
             raise ValueError("Could not parse timestamp from filename.")
 
         return video_timestamp

@@ -34,9 +34,13 @@ Run:  py -3.13 -m pytest testing/test_align_and_rollback_safety.py
 from __future__ import annotations
 
 import logging
+import csv
+import json
 import os
+from pathlib import Path
 import shutil
 import sys
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -50,12 +54,49 @@ from module_base.scene_checkpoint import (checkpoint_scene,  # noqa: E402
 from modules.realityscan_interface.realityscan_cli import WorkflowResult  # noqa: E402
 from modules.realityscan_interface.realityscan_interface import (  # noqa: E402
     RealityScanAlignment)
+from modules import camera_registry, prior_census, flightlog_format
+from testing.test_native_prior_delivery import report_text
 
 QUIET = logging.getLogger('align-test')
 QUIET.addHandler(logging.NullHandler())
 QUIET.propagate = False
 
 LOG_HEADER = 'filename;X (East);Y (North);Alt\n'
+
+
+@pytest.fixture(autouse=True)
+def _offline_install_boundary(monkeypatch):
+    """These tests simulate RS; never repair or depend on a host installation."""
+    for name in ('install_all_managed', 'assert_format_installed',
+                 'assert_calibration_format_installed'):
+        monkeypatch.setattr(flightlog_format, name, lambda *a, **k: None)
+
+
+def _write_priors(folder, log_name='flight_log_UTM.txt'):
+    """Complete native calibration + CSV inputs, using the real serializer."""
+    log = folder / log_name
+    with log.open('w', newline='', encoding='utf-8') as stream:
+        writer = csv.writer(stream, delimiter=';')
+        writer.writerow(['filename', 'X', 'Y', 'Alt', 'XAccuracy', 'YAccuracy', 'AltAccuracy',
+                         'Yaw', 'Pitch', 'Roll', 'YawAccuracy', 'PitchAccuracy', 'RollAccuracy'])
+        for image in sorted(folder.rglob('*.jpg')):
+            camera = camera_registry.identify(image.name)
+            assert camera is not None
+            image.with_suffix('.xmp').write_text(camera_registry.calibration_xmp(camera), encoding='utf-8')
+            writer.writerow([str(image), 100, 200, -30, 5, 5, 1, 11, 22, 33, 10, 40, 10])
+    params = Path(REPO_ROOT) / 'modules/realityscan_interface/RS_CLI/Metadata/FlightLogParamsLocal.xml'
+    return str(log), str(params)
+
+
+def _record_input_census():
+    """Simulate RS numeric readback, then execute the actual fail-closed census."""
+    manifest = os.environ['RS_INPUT_PRIOR_MANIFEST']
+    expected = json.loads(Path(manifest).read_text(encoding='utf-8'))
+    report = os.environ['RS_INPUT_PRIOR_REPORT']
+    Path(report).write_text(report_text(expected), encoding='utf-8')
+    assert prior_census.input_census_main([
+        '--input-manifest', manifest, '--expected-sha256', os.environ['RS_INPUT_PRIOR_SHA256'],
+        '--input-report', report, '--output', os.environ['RS_INPUT_PRIOR_RESULT']]) == 0
 
 
 def _param(name, value, default=None):
@@ -73,8 +114,7 @@ def _batched(root, zones=('zone_1', 'zone_2'), with_log=True, images=True):
         if images:
             (z / f'{zone}_zeuss_a.jpg').write_bytes(b'j')
         if with_log:
-            (batched / zone / 'flight_log_53N_UTM.txt').write_text(
-                LOG_HEADER, encoding='utf-8')
+            _write_priors(batched / zone, 'flight_log_53N_UTM.txt')
     return batched
 
 
@@ -94,6 +134,8 @@ def _module_with_stub(tmp_path, monkeypatch, params, results=None,
         queued.append((script, tuple(args)))
         result = (results.pop(0) if results is not None
                   else WorkflowResult(True, 0, None, '', [], 0.0))
+        if result.success:
+            _record_input_census()
         if produce and result.success:
             out_dir, scene = args[1], args[4]
             with open(os.path.join(out_dir, f'{scene}.rsproj'), 'wb') as fh:
@@ -164,17 +206,14 @@ def test_a_batched_root_is_expanded_per_zone(tmp_path, monkeypatch):
 def test_a_plain_image_folder_is_still_one_scene(tmp_path, monkeypatch):
     """The guard must not turn an ordinary folder of images into zones."""
 
-    # This fixture has no flight log ON PURPOSE - it is testing
-    # rollback/hygiene, not georeferencing. The align stage refuses a
-    # trajectory-less zone since 2026-09-06 (owner directive: the
-    # flight log is REQUIRED), so take the documented escape hatch.
-    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     images = tmp_path / 'my_images'
     (images / 'port').mkdir(parents=True)
-    (images / 'port' / 'p231c0001.jpg').write_bytes(b'j')
+    (images / 'port' / 'zeuss_a.jpg').write_bytes(b'j')
+    log, _params = _write_priors(images)
     params = {
         'output_dir': _param('output_dir', str(tmp_path)),
         'rs_input_image_dir': _param('rs_input_image_dir', str(images)),
+        'rs_flight_log_path': _param('rs_flight_log_path', log),
         'rs_display_output': _param('rs_display_output', False),
         'rs_model_generate': _param('rs_model_generate', False),
         'rs_model_cull_poly': _param('rs_model_cull_poly', False),
@@ -297,67 +336,41 @@ def test_sidecar_repair_runs_before_the_failure_returns():
     assert repair < no_components, 'repair is unreachable on a zero-component align'
 
 
-def test_a_pre_existing_pose_sidecar_is_announced(tmp_path, monkeypatch):
-    """Pointing the pipeline at a user-owned folder MOVES their pose
-    sidecars out and never returns them - undocumented until now."""
-
-    # This fixture has no flight log ON PURPOSE - it is testing
-    # rollback/hygiene, not georeferencing. The align stage refuses a
-    # trajectory-less zone since 2026-09-06 (owner directive: the
-    # flight log is REQUIRED), so take the documented escape hatch.
-    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
+def test_a_pre_existing_pose_sidecar_is_refused_without_mutation(tmp_path, monkeypatch):
+    """Fresh alignment must preserve and refuse solved/pose-bearing sidecars."""
     images = tmp_path / 'my_images'
     images.mkdir()
     (images / 'zeuss_a.jpg').write_bytes(b'j')
-    # The sidecar must satisfy BOTH readers: assert_sidecars_current wants a
-    # calibration group matching the registry for this camera, and the
-    # announcement under test keys off xcr:Position. Before the 2026-09-08
-    # rig guard the fixture image had no camera family at all, so the
-    # calibration check never applied to it; now that every aligned image
-    # must resolve to a family, the sidecar has to be well-formed for that
-    # family too. Built from the registry rather than hand-written so it
-    # cannot drift when a camera's groups change.
-    from modules import camera_registry as _reg
-    _cal = _reg.calibration_xmp(_reg.CAMERAS[_reg.FAMILY_CAMERA['zeuss']])
-    (images / 'zeuss_a.xmp').write_text(
-        _cal.replace('</rdf:Description>',
-                     '  <xcr:Position>1 2 3</xcr:Position>' + chr(10) +
-                     '    </rdf:Description>'),
-        encoding='utf-8')
-
-    messages = []
-
-    class Cap(logging.Handler):
-        def emit(self, record):
-            messages.append(record.getMessage())
-
-    logger = logging.getLogger('align-preflight-test')
-    logger.propagate = False
-    logger.setLevel(logging.WARNING)
-    logger.addHandler(Cap())
-    module = RealityScanAlignment(logger)
+    log, params = _write_priors(images)
+    sidecar = images / 'zeuss_a.xmp'
+    root = ET.fromstring(sidecar.read_text(encoding='utf-8'))
+    description = next(node for node in root.iter() if node.tag.endswith('Description'))
+    ET.SubElement(description, '{http://www.capturingreality.com/ns/xcr/1.1#}Position').text = '1 2 3'
+    sidecar.write_text(ET.tostring(root, encoding='unicode'), encoding='utf-8')
+    original = sidecar.read_bytes()
+    out = tmp_path / 'out'
+    out.mkdir()
+    (out / 'previous.rsproj').write_bytes(b'previous solve')
+    module = RealityScanAlignment(QUIET)
     module.params = {}
     monkeypatch.setattr(module.cli, 'run_batch_script',
-                        lambda *a, **k: WorkflowResult(False, 1, None, 'x',
-                                                       [], 0.0))
-    module._RealityScanAlignment__align_zone(
-        str(images), str(tmp_path / 'out'), 'zone_1', None, None)
-    assert any('pose-bearing' in m and 'identity_r0' in m
-               for m in messages), messages
+                        lambda *a, **k: pytest.fail('Pose-bearing fresh input reached RS'))
+    with pytest.raises(prior_census.PriorsNotApplied, match='pose-bearing'):
+        module._RealityScanAlignment__align_zone(str(images), str(out), 'zone_1', log, params)
+    assert sidecar.read_bytes() == original
+    assert (out / 'previous.rsproj').read_bytes() == b'previous solve'
+    assert not (tmp_path / 'superseded').exists()
 
 
 def test_a_previous_runs_project_is_renamed_not_deleted(tmp_path, monkeypatch):
     """The rmtree took the saved .rsproj and every exported .rsalign -
     with no second copy anywhere in the default configuration."""
 
-    # This fixture has no flight log ON PURPOSE - it is testing
-    # rollback/hygiene, not georeferencing. The align stage refuses a
-    # trajectory-less zone since 2026-09-06 (owner directive: the
-    # flight log is REQUIRED), so take the documented escape hatch.
-    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
+    # Valid native priors let this test reach the rollback boundary.
     images = tmp_path / 'images'
     images.mkdir()
     (images / 'zeuss_a.jpg').write_bytes(b'j')
+    log, params = _write_priors(images)
     out = tmp_path / 'out' / 'zone_1'
     out.mkdir(parents=True)
     (out / 'zone_1.rsproj').write_bytes(b'project')
@@ -369,7 +382,7 @@ def test_a_previous_runs_project_is_renamed_not_deleted(tmp_path, monkeypatch):
                         lambda *a, **k: WorkflowResult(False, 1, None, 'x',
                                                        [], 0.0))
     module._RealityScanAlignment__align_zone(
-        str(images), str(out), 'zone_1', None, None)
+        str(images), str(out), 'zone_1', log, params)
 
     # OUTSIDE the components root - see test_the_superseded_folder_is_not
     # _rescanned below for why a sibling was wrong.
@@ -378,7 +391,8 @@ def test_a_previous_runs_project_is_renamed_not_deleted(tmp_path, monkeypatch):
     assert superseded[0].name.startswith('out_zone_1_')
     assert (superseded[0] / 'zone_1.rsproj').read_bytes() == b'project'
     assert (superseded[0] / 'zone_1_c0.rsalign').read_bytes() == b'component'
-    assert out.is_dir() and not any(out.iterdir())
+    assert out.is_dir() and {path.name for path in out.iterdir()} == {'input_priors'}
+    assert (out / 'input_priors' / 'expected.json').is_file()
     assert [p.name for p in (tmp_path / 'out').iterdir()] == ['zone_1']
 
 
@@ -396,11 +410,7 @@ def test_the_superseded_folder_is_not_rescanned_as_a_zone(tmp_path,
     file). rmtree could not do that - the rename-aside introduced it
     (audit-verification 2026-08-07)."""
 
-    # This fixture has no flight log ON PURPOSE - it is testing
-    # rollback/hygiene, not georeferencing. The align stage refuses a
-    # trajectory-less zone since 2026-09-06 (owner directive: the
-    # flight log is REQUIRED), so take the documented escape hatch.
-    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
+    # Valid native priors let this test reach the rollback boundary.
     import json as _json
 
     from modules import component_analysis                    # noqa: PLC0415
@@ -409,6 +419,7 @@ def test_the_superseded_folder_is_not_rescanned_as_a_zone(tmp_path,
     images = tmp_path / 'images'
     images.mkdir()
     (images / 'zeuss_a.jpg').write_bytes(b'j')
+    log, params = _write_priors(images)
     (tmp_path / 'batched_images_by_zone' / 'zone_1').mkdir(parents=True)
     aligned = tmp_path / 'aligned_components'
     out = aligned / 'zone_1'
@@ -425,7 +436,7 @@ def test_the_superseded_folder_is_not_rescanned_as_a_zone(tmp_path,
                         lambda *a, **k: WorkflowResult(False, 1, None, 'x',
                                                        [], 0.0))
     module._RealityScanAlignment__align_zone(
-        str(images), str(out), 'zone_1', None, None)
+        str(images), str(out), 'zone_1', log, params)
     # The re-run re-exports under the SAME name.
     (out / 'zone_1_c0.rsalign').write_bytes(b'component2')
     (out / 'zone_1_c0.rsalign.manifest.json').write_text(
@@ -449,14 +460,11 @@ def test_a_stale_folder_without_deliverables_is_still_cleared(tmp_path,
     """The clean-slate premise the files_before/after diff needs must
     survive - only PROJECTS and COMPONENTS are worth keeping."""
 
-    # This fixture has no flight log ON PURPOSE - it is testing
-    # rollback/hygiene, not georeferencing. The align stage refuses a
-    # trajectory-less zone since 2026-09-06 (owner directive: the
-    # flight log is REQUIRED), so take the documented escape hatch.
-    monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
+    # Valid native priors let this test reach the rollback boundary.
     images = tmp_path / 'images'
     images.mkdir()
     (images / 'zeuss_a.jpg').write_bytes(b'j')
+    log, params = _write_priors(images)
     out = tmp_path / 'out' / 'zone_1'
     out.mkdir(parents=True)
     (out / 'leftover.png').write_bytes(b'plot')
@@ -467,7 +475,7 @@ def test_a_stale_folder_without_deliverables_is_still_cleared(tmp_path,
                         lambda *a, **k: WorkflowResult(False, 1, None, 'x',
                                                        [], 0.0))
     module._RealityScanAlignment__align_zone(
-        str(images), str(out), 'zone_1', None, None)
+        str(images), str(out), 'zone_1', log, params)
     assert not (out / 'leftover.png').exists()
     assert not (tmp_path / 'superseded').exists()
 
@@ -487,9 +495,7 @@ def _scene(tmp_path):
 
 def test_restore_refuses_when_the_volume_cannot_hold_the_snapshot(
         tmp_path, monkeypatch):
-    """The rollback deletes the live scene BEFORE copying, so a too-small
-    volume means an empty scene path. Bundles are multi-GB and this path
-    had no disk floor at all."""
+    """A restore must have room for a complete staged bundle before commit."""
     project = _scene(tmp_path)
     checkpoints = str(tmp_path / 'checkpoints')
     os.makedirs(checkpoints)
@@ -507,9 +513,7 @@ def test_restore_refuses_when_the_volume_cannot_hold_the_snapshot(
 
 def test_an_interrupted_restore_says_where_the_intact_copy_is(tmp_path,
                                                               monkeypatch):
-    """Measured: the live .rsproj AND its data folder both gone,
-    scene_bundle() == [], and the run ended with no message pointing at
-    checkpoints/<tag>."""
+    """Copy failure preserves the live bundle and identifies the checkpoint."""
     project = _scene(tmp_path)
     checkpoints = str(tmp_path / 'checkpoints')
     os.makedirs(checkpoints)
@@ -527,6 +531,8 @@ def test_an_interrupted_restore_says_where_the_intact_copy_is(tmp_path,
     assert 'ROLLBACK INCOMPLETE' in message
     assert os.path.join(checkpoints, 'initial') in message
     assert 'retry-safe' in message
+    assert open(project, 'rb').read() == b'PROJECT'
+    assert open(os.path.join(os.path.splitext(project)[0], 'sfm0.dat'), 'rb').read() == b'DATA'
 
     # ... and the promise in that message is TRUE: retrying finishes it.
     monkeypatch.setattr(scene_checkpoint.shutil, 'copytree', real_copytree)
@@ -556,7 +562,9 @@ def test_an_interrupted_re_checkpoint_keeps_the_previous_snapshot(
     os.makedirs(checkpoints)
     checkpoint_scene(project, checkpoints, 'pass', QUIET)
     good = sorted(os.listdir(os.path.join(checkpoints, 'pass')))
-    assert good == ['zone_1', 'zone_1.rsproj']
+    assert good == [scene_checkpoint.MANIFEST, 'zone_1', 'zone_1.rsproj']
+    manifest_path = os.path.join(checkpoints, 'pass', scene_checkpoint.MANIFEST)
+    original_manifest = open(manifest_path, 'rb').read()
 
     def exploding(src, dst, *a, **k):
         raise OSError(28, 'No space left on device')
@@ -565,6 +573,7 @@ def test_an_interrupted_re_checkpoint_keeps_the_previous_snapshot(
     with pytest.raises(OSError):
         checkpoint_scene(project, checkpoints, 'pass', QUIET)
     assert sorted(os.listdir(os.path.join(checkpoints, 'pass'))) == good
+    assert open(manifest_path, 'rb').read() == original_manifest
 
 
 # ------------------------------------------- mixed-zone flight-log refusal

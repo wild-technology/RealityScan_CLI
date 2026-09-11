@@ -10,12 +10,11 @@
     "load-bearing: anchored WCA prefixes, then anchored legacy prefixes,",
     "then the delimiter-bounded zeuss/herc token. An unanchored 'herc'",
     "test once ran first and would have beaten an anchored WCA prefix.",
-    "Migration state (2026-08-07, steps a-b of the cameras.json plan):",
-    "camera_registry loads this file; georeference_images.py MOUNTS,",
-    "geoall.py constants, modules/run_plan.py OFFICIAL_CAMERAS and",
-    "modules/file_metadata_parser.py still carry their own copies, each",
-    "marked 'superseded-by modules/cameras.json' at the site. Pinned by",
-    "testing/test_rig_mounts.py."
+    "Current migration state (2026-09-11): camera_registry supplies the",
+    "shared mount and accuracy defaults; geoall and module conversion",
+    "consume those tables. Approved project overrides are validated and",
+    "snapshotted before a processing worker starts. The planner camera",
+    "question labels are presentation data, not another mount table."
   ],
   "defaults": {
     "_comment": [
@@ -26,10 +25,11 @@
       "--g_orientation_accuracy on the module and --pos-accuracy /",
       "--alt-accuracy / --orientation-accuracy on geoall.py.",
       "Position accuracy is END-TO-END PER-IMAGE UNCERTAINTY, not sensor",
-      "spec. 2026-09-08 OWNER DIRECTIVE: pos 10->5 m, yaw/roll 15->5 deg,",
-      "pitch 10 deg for every family EXCEPT zeuss (30 - its mount is",
-      "assumed, not measured). This TIGHTENS against recorded",
-      "counter-evidence and the owner made the call knowing it:",
+      "spec. CURRENT OWNER SETTINGS 2026-09-11: X/Y/depth 5/5/1 m;",
+      "yaw/roll 10 deg. Legacy WCA pitch accuracy stays 10 deg; Zeuss",
+      "starts 40 deg down with pitch accuracy 40 deg. Orientation weight",
+      "is locked at 2. These supersede earlier Zeuss25/30/45 and yaw5 notes.",
+      "Historical tuning evidence has limited dataset-specific scope:",
       "PRIORS_DISTORTION_TEST_PLAN 'bow 2x2' had the 1/1/0.1 sensor spec",
       "fragmenting a known-good 665-image component, and PD-0/PD-0b had",
       "3-5 deg claimed orientation fragmenting where 15 deg gained",
@@ -68,8 +68,8 @@
       "alt": 1.0
     },
     "orientation_accuracy_deg": {
-      "yaw": 5.0,
-      "roll": 5.0
+      "yaw": 10.0,
+      "roll": 10.0
     },
     "assumed_mount": {
       "pitch_deg": 10.0,
@@ -279,8 +279,8 @@
         "fwd": 0.5,
         "lat": 0.0,
         "down": 0.5,
-        "pitch": 25.0,
-        "p_acc": 45.0
+        "pitch": 40.0,
+        "p_acc": 40.0
       },
       "timestamp_formats": [
         "%Y%m%d%H%M%S"

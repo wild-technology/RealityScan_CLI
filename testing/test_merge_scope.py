@@ -473,7 +473,9 @@ def test_hull_fusion_is_invisible_without_a_loss_budget():
 
 def test_hull_fusion_is_adopted_within_the_budget():
     results, confidence = merge_zones.attribute_result(
-        HULL, HULL_PEEL, LOG, loss_tolerance=HULL_TOL)
+        HULL, HULL_PEEL, LOG, loss_tolerance=HULL_TOL,
+        peel_members=[[n for m in HULL for n in m['images']][:-5]]
+                     + [m['images'] for m in HULL])
     assert confidence == 'exact', 'a single best lossy match is not ambiguous'
     fused = [r for r in results if len(r['inputs']) >= 2]
     assert len(fused) == 1, f'expected one fusion, got {fused}'
@@ -501,7 +503,8 @@ def test_exact_match_wins_over_a_lossy_one():
     # 160 is exactly A+B; A+B+C (200) is far outside the 10-camera budget, so
     # the exact candidate is the only one and must be taken with zero loss.
     results, _ = merge_zones.attribute_result(
-        inputs, [160, 40], LOG, loss_tolerance=10)
+        inputs, [160, 40], LOG, loss_tolerance=10,
+        peel_members=[inputs[0]['images'] + inputs[1]['images'], inputs[2]['images']])
     fused = [r for r in results if len(r['inputs']) >= 2][0]
     assert fused['camera_count'] == 160
     assert sorted(fused['inputs']) == ['z/A', 'z/B']
@@ -512,7 +515,9 @@ def test_tolerance_zero_is_the_old_behaviour():
     inputs = [comp('z', 'A', 78, (0, 0, 10, 10)),
               comp('z', 'B', 42, (5, 0, 15, 10))]
     results, confidence = merge_zones.attribute_result(
-        inputs, [120, 78, 42], LOG, loss_tolerance=0)
+        inputs, [120, 78, 42], LOG, loss_tolerance=0,
+        peel_members=[inputs[0]['images'] + inputs[1]['images']]
+                     + [m['images'] for m in inputs])
     fused = [r for r in results if len(r['inputs']) >= 2]
     assert confidence == 'exact' and len(fused) == 1
     assert fused[0]['camera_count'] == 120 and fused[0]['loss'] == 0

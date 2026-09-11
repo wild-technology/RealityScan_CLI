@@ -3,8 +3,24 @@
 Processing pipeline for underwater ROV photogrammetry: extract and
 georeference dive imagery, batch it into zones, and drive **RealityScan 2.2**
 (Epic Games, formerly RealityCapture) through its CLI to align, merge, model,
-export and publish. Designed to be **run by a Claude-guided workflow** with
-the owner supervising and deciding at gates; every stage also runs by hand.
+export and publish. The native project workflow organizes source data, records
+settings and progress, and asks the operator to approve image selection before
+batching. Runtime decisions are code and project data, with no AI dependency.
+Deployment integration and live acceptance are still being verified; see
+[verification status](docs/VERIFICATION_STATUS.md).
+
+## Native project workflow
+
+Launch `python app.py` in the installed environment, create or open a `.rovscan`
+project, and run the setup check. Source imagery stays read-only; the selected
+project folder contains `raw`, `proc`, and `proc/tmp`. Review camera counts,
+navigation exceptions, low-detail image candidates and retained/culled density
+against the dive track before batching. Save/Open retains project decisions;
+changing inputs or selection invalidates affected downstream results.
+
+See [project format](docs/PROJECT_FORMAT.md), [desktop UI](docs/DESKTOP_UI.md),
+and [deployment plan](docs/DEPLOYMENT_PLAN.md). The existing command lane below
+remains the planner/executor used by the frontend.
 
 ## Requirements
 
@@ -12,7 +28,9 @@ the owner supervising and deciding at gates; every stage also runs by hand.
   Windows-oriented too). RealityScan 2.2 is auto-detected under
   `C:\Program Files\Epic Games\RealityScan_2.2\`; override with `RS_EXECUTABLE`
   or `"realityscan": {"executable": ...}` in `rs_settings.json`.
-- Python 3.11+ and `pip install -r requirements.txt`. One or more CUDA GPUs
+- Windows CPython **3.13, 64-bit**, with the reviewed dependency lock under
+  `packaging/`; `packaging/bootstrap.py plan --destination <directory>` shows
+  an isolated installation plan without installing anything. One or more CUDA GPUs
   (RealityScan uses all of them by default; pin with `RS_INSTANCE` +
   `RS_GPU_DEVICES`).
 

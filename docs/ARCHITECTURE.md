@@ -1,5 +1,31 @@
 # Architecture — RealityScan_CLI
 
+## Native deployment workflow (integration under verification, 2026-09-11)
+
+- `app.py`, `desktop/`: native PySide6 project frontend, review gates, previews,
+  setup checks, Save/Open, and progress. UI callbacks never launch RealityScan.
+- `modules/project_workspace.py`: versioned `.rovscan` document, settings
+  approval, attempts, artifact fingerprints and downstream invalidation.
+- `modules/project_controller.py`: connects UI to inventory, navigation,
+  culling/density reviews and the existing `run_plan`/`rs.execute_commands` lane.
+- `modules/project_reviews.py`, `project_staging.py`: content-bound review
+  persistence, single-project root ownership, retained images/masks and exactly
+  matching camera flight logs. Both culling and spatial approval precede batching.
+- `modules/source_inventory.py`, `navigation_quality.py`: source fingerprint,
+  timestamps, camera/mask associations, duplication/conflicts and finite nav matches.
+- `modules/image_quality.py`, `spatial_review.py`: deterministic candidate
+  evidence; local detail preserves useful partial scenes, spatial screening
+  suggests isolated short bursts. Neither automatically excludes imagery.
+- `modules/project_runtime.py`: child monitoring and owned cancellation channel;
+  `RealityScanCLI` remains the only application execution implementation.
+- `modules/deployment_preflight.py`, `rs_installation.py`, `storage_policy.py`,
+  `packaging/`: isolated dependencies, strict 2.2/XML contracts and volume budgets.
+- `integrations/rovdataconcat/`: vendored navigation source with upstream
+  provenance; vehicle navigation excludes the terrain-visualization offset.
+
+Offline regression evidence and unresolved live application claims remain
+separate in `VERIFICATION_STATUS.md`; this map is not a production blessing.
+
 The module-by-module map. REFERENCE material: grep it when you touch a
 subsystem; `CLAUDE.md` carries the invariants and routes here.
 

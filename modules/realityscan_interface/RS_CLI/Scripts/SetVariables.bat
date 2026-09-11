@@ -52,12 +52,32 @@ set workingDir=%~dp0
 set Metadata=%RootFolder%Metadata
 
 :: A path to the models folder.
-set Models=%RootFolder%Models
-if not exist "%Models%" mkdir "%Models%"
+if defined RS_RUNTIME_ROOT (
+    set "Models=%RS_RUNTIME_ROOT%\models"
+) else (
+    set "Models=%RootFolder%Models"
+)
+if not exist "%Models%" mkdir "%Models%" || exit /b 1
 
 :: A path to the Errors folder (progress/results/error marker files).
-set ErrorPath=%RootFolder%Errors
-if not exist "%ErrorPath%" mkdir "%ErrorPath%"
+if defined RS_ERRORS_DIR (
+    if not defined RS_RUNTIME_ROOT (
+        echo ERROR: RS_ERRORS_DIR requires RS_RUNTIME_ROOT and the canonical Python launcher.
+        exit /b 1
+    )
+    set "ErrorPath=%RS_ERRORS_DIR%"
+) else (
+    if defined RS_RUNTIME_ROOT (
+        echo ERROR: Runtime marker helpers must be prepared by RealityScanCLI.
+        exit /b 1
+    )
+    set "ErrorPath=%RootFolder%Errors"
+)
+if not exist "%ErrorPath%" mkdir "%ErrorPath%" || exit /b 1
+if defined RS_ERRORS_DIR (
+    if not exist "%ErrorPath%\ErrorWriter.bat" exit /b 1
+    if not exist "%ErrorPath%\ErrorWriterLaunch.vbs" exit /b 1
+)
 
 :: Variable storing name of file with Error write script.
 set ErrorWriter=%ErrorPath%\ErrorWriter.bat

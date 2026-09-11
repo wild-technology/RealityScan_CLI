@@ -180,7 +180,12 @@ def test_generate_model_keeps_the_zero_pass_deliverable_and_sweeps_by_pass_count
 
 def test_workflows_get_the_interpreter_from_the_cli():
     src = (REPO / "modules/realityscan_interface/realityscan_cli.py").read_text(encoding="utf-8")
-    assert src.count("env['RS_PYTHON'] = sys.executable") == 2
+    # Boot and attach now share the same workflow boundary.
+    assert "env['RS_PYTHON'] = sys.executable" in src
+    from modules.realityscan_interface.realityscan_cli import RealityScanCLI
+    import inspect
+    for entry in (RealityScanCLI.run_batch_script, RealityScanCLI.run_attach_script):
+        assert "self._run_workflow(" in inspect.getsource(entry)
     for name in ("GenerateModel.bat", "ModelToFinal.bat", "ExportDeliverables.bat"):
         assert 'if not defined RS_PYTHON set "RS_PYTHON=python"' in _bat(name)
         assert 'for %%I in (%RealityScan%) do set "ReportTemplate=%%~dpIReports\\SelectedModel.html"' in _bat(name)

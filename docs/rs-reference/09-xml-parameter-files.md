@@ -582,7 +582,7 @@ Complete file, as generated for NA173_H2103a (UTM 57S):
 | `CoordinateSystemFlightLog` | PROJ string | the CRS the log's X/Y/Z are in | [VERIFIED] |
 | `CoordinateSystemFlightLogType` | display string, shape `epsg:<code> - <name>` | the same CRS, human-readable | [VERIFIED] |
 | `ifCSopt` | int `1` | coordinate-system option | [UNDOCUMENTED] |
-| `ifKGrp` | int `2` | **two competing readings, neither tested.** (a) calibration-group mode on import ("Automatically group camera calibration") — name-based; (b) one of the two carriers of *Euler angles order (YPR)* / *Camera mount*, the pair FINDINGS 2026-07-26 names as the only plausible carriers | [UNDOCUMENTED] [OPEN: question 9] |
+| `ifKGrp` | int; historical profile `2`, current templates `1` | Calibration grouping on trajectory import. Mode 1 grouped the recorded single-family fixture; mixed-family mapping remains open. The Euler/mount interpretation is superseded by reference 13 §9.3. | [VERIFIED: historical single-family probe, FINDINGS 2026-09-08]; ledger CAL-002/003, ROT-003 |
 | `ifuuInhEn` / `ifuuInh` | bool / int | accuracy inheritance enabled / value. Both strings **are** present in the 2.2 binary | [UNDOCUMENTED] |
 | `csvFLSep` | int `1` | value separator | [UNDOCUMENTED] |
 | `csvFLIgn` | bool | ignore first line | [UNDOCUMENTED] |
@@ -602,11 +602,12 @@ the pose XMPs; ~2 min on the smoke fixture.]
 
 **Two settings the import dialog exposes are not pinned by this file at all** — *Euler angles order
 (YPR)* and *Camera mount*, both documented in `tools/flightlogimport` and both present whenever YPR
-is included. Neither `ifKGrp` nor `ifKmode` is a confirmed carrier, and **neither key string appears
-in any file under the RealityScan install**, so both settings are compiled into the binary. Every
-orientation-prior result in this repo was therefore measured through an unverified import path: the
-registration counts stand as measurements, the attribution to "orientation priors" does not.
-[UNDOCUMENTED / VERIFIED-as-flag: FINDINGS 2026-07-26]
+is included. The historical claim that `ifKGrp`/`ifKmode` might carry them is
+superseded: reference 13 §9.3 records `gpsLogEulerAnglesOrderYPR` / `gpsLogMount`
+and identifies grouping separately. Effective values still require readback;
+the historical unpinned experiments do not isolate physical orientation effects.
+Do not infer universal runtime inertness solely from absent binary strings.
+See [ledger ROT-003 and P-ROT](../EVIDENCE_LEDGER.json).
 
 **The zone must never be hand-edited.** `modules/flight_logs.write_flight_log_params` rewrites
 `CoordinateSystemFlightLog` and `CoordinateSystemFlightLogType` from the UTM zone parsed out of the

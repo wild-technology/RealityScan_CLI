@@ -132,8 +132,8 @@ def test_the_assumed_mount_lands_10_degrees_below_horizontal():
 def test_measured_mounts_are_unchanged_by_the_assumption():
     """Regression guard: adding the fallback must not have moved any mount
     that was actually measured."""
-    assert MOUNTS['zeuss']['pitch'] == 25.0
-    assert MOUNTS['zeuss']['p_acc'] == 45.0
+    assert MOUNTS['zeuss']['pitch'] == 40.0
+    assert MOUNTS['zeuss']['p_acc'] == 40.0
     assert MOUNTS['legacy_camupper']['pitch'] == 70.0
     assert MOUNTS['legacy_cammid']['pitch'] == 20.0
     assert MOUNTS['legacy_camlower']['pitch'] == 10.0

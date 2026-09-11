@@ -6,6 +6,10 @@ import os
 import shutil
 import sys
 import warnings
+import csv
+import math
+from pathlib import Path
+from dataclasses import asdict
 
 import numpy as np
 import pandas as pd
@@ -25,6 +29,118 @@ from module_base.settings_store import SettingsStore
 from ..flight_logs import find_flight_log
 from .. import camera_registry
 from .. import image_exts
+
+
+def validate_selection_manifest(manifest_path, input_dir, flight_log, *, cancelled=None):
+    """Read-only low-level project gate. Approvals themselves belong to ReviewStore.
+
+    Exact image/mask sets, bytes and selected navigation must agree BEFORE
+    density/zoning or any batch write. Paths and record order are not identity.
+    Returns a canonical content binding suitable for the batch fingerprint.
+    """
+    from ..source_inventory import file_hash
+    from ..flight_logs import utm_zone_from_flight_log_name, epsg_for_utm_zone
+    def checkpoint():
+        if cancelled is not None and cancelled():
+            raise InterruptedError('Selection manifest validation cancelled')
+    checkpoint()
+    path = Path(manifest_path).resolve()
+    manifest = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(manifest, dict) or manifest.get('schema') != 1:
+        raise ValueError('Selection manifest schema must be 1')
+    owner_root = next((p for p in path.parents if (p / '.rovscan-owner.json').is_file()), None)
+    if owner_root is None or not path.is_relative_to(owner_root / 'proc'):
+        raise ValueError('Selection manifest must be under its owned project proc tree')
+    owner = json.loads((owner_root / '.rovscan-owner.json').read_text(encoding='utf-8'))
+    if not manifest.get('project_id') or manifest['project_id'] != owner.get('project_id'):
+        raise ValueError('Selection manifest project ownership mismatch')
+    for key in ('selection_hash', 'quality_review_hash', 'spatial_review_hash', 'flight_log_sha256'):
+        digest = manifest.get(key)
+        if not isinstance(digest, str) or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+            raise ValueError('Selection manifest requires ' + key)
+    selection_root = path.parent
+    root = Path(input_dir).resolve()
+    if root != Path(manifest['images_root']).resolve() or not root.is_relative_to(selection_root):
+        raise ValueError('Actual batch input differs from approved selected tree')
+    log = Path(flight_log).resolve()
+    if log != Path(manifest['flight_log']).resolve() or not log.is_relative_to(selection_root):
+        raise ValueError('Actual batch flight log differs from approved selection')
+    if file_hash(log, cancelled=cancelled) != manifest['flight_log_sha256']:
+        raise ValueError('Selected flight log content changed')
+    zone = utm_zone_from_flight_log_name(str(log))
+    if zone is None or epsg_for_utm_zone(*zone) != manifest.get('epsg'):
+        raise ValueError('Selected flight log UTM frame differs from manifest')
+    expected = {}
+    names, associated, image_hashes = {}, set(), set()
+    for kind in ('images', 'masks'):
+        records = manifest.get(kind, [])
+        if not isinstance(records, list) or (kind == 'images' and not records):
+            raise ValueError('Selection manifest needs a nonempty image list and valid mask list')
+        for item in records:
+            checkpoint()
+            original = Path(item['path'])
+            file = original.resolve()
+            if (not original.is_absolute() or not file.is_relative_to(root) or file in expected
+                    or image_exts.is_geometry_image(file) != (kind == 'images')):
+                raise ValueError('Selection contains duplicate, redirected or misclassified image/mask paths')
+            if kind == 'images':
+                if file.suffix.lower() not in BatchDirectory.ACCEPTED_EXTENSIONS:
+                    raise ValueError('Selected image format is unsupported by batching: ' + str(file))
+                name = file.name.casefold()
+                if name in names:
+                    raise ValueError('Selected images have ambiguous duplicate basenames')
+                if item['sha256'] in image_hashes:
+                    raise ValueError('Selected images contain duplicate content')
+                image_hashes.add(item['sha256'])
+                names[name] = file
+                associated.update(p.resolve() for p in image_exts.associated_masks(file))
+            if file_hash(file, cancelled=cancelled) != item['sha256']:
+                raise ValueError('Selected image/mask content changed: ' + str(file))
+            expected[file] = (kind, item['sha256'])
+    masks = {p for p, (kind, _) in expected.items() if kind == 'masks'}
+    if masks != associated:
+        raise ValueError('Selected masks do not match exactly associated image layers')
+    actual = set()
+    for directory, _, files in os.walk(root):
+        checkpoint()
+        for name in files:
+            checkpoint()
+            file = Path(directory) / name
+            if file.suffix.lower() in image_exts.ALL_IMAGE_EXTS:
+                resolved = file.resolve()
+                if not resolved.is_relative_to(root) or resolved in actual:
+                    raise ValueError('Selected tree contains redirected or aliased image/mask files')
+                actual.add(resolved)
+    if actual != set(expected):
+        raise ValueError('Actual image/mask set differs from selection manifest')
+    # A selected tree alone is insufficient: excluded flight-log points would
+    # still distort density and zone membership before copying ever starts.
+    seen = set()
+    with log.open(encoding='utf-8-sig', newline='') as stream:
+        reader = csv.reader(stream, delimiter=';')
+        header = next(reader, [])
+        if len(header) != 14 or [v.strip().casefold() for v in header[:4]] != [
+                'filename', 'x (east)', 'y (north)', 'alt']:
+            raise ValueError('Selected flight log must have the 14-column camera schema')
+        for row in reader:
+            checkpoint()
+            if not row:
+                continue
+            name = row[0].replace('\\', '/').rsplit('/', 1)[-1].casefold()
+            if (name not in names or name in seen or len(row) != 14
+                    or not all(math.isfinite(float(v)) for v in row[1:])):
+                raise ValueError('Selected flight log has unknown, duplicate or incomplete camera rows')
+            if ('/' in row[0] or '\\' in row[0]) and Path(row[0]).resolve() != names[name]:
+                raise ValueError('Selected flight log points outside the selected image identity')
+            seen.add(name)
+    if seen != set(names):
+        raise ValueError('Selected flight log does not cover exactly the selected images')
+    checkpoint()
+    canonical = dict(manifest, images=sorted(manifest['images'], key=lambda i: i['path']),
+                     masks=sorted(manifest.get('masks', []), key=lambda i: i['path']))
+    return {'project_id': manifest['project_id'], 'selection_hash': manifest['selection_hash'],
+            'manifest_sha256': hashlib.sha256(json.dumps(canonical, sort_keys=True,
+                separators=(',', ':'), allow_nan=False).encode('utf-8')).hexdigest()}
 
 
 class BatchDirectory(RSModule):
@@ -243,6 +359,20 @@ class BatchDirectory(RSModule):
 
     FINGERPRINT_NAME = 'batch_inputs.json'
 
+    def _require_selection_manifest(self):
+        """Opt-in for legacy callers; sticky once this instance is project-bound."""
+        path = os.environ.get('RS_SELECTION_MANIFEST')
+        prior = getattr(self, '_selection_binding', None)
+        if path is None and prior is None:
+            return None
+        if not path:
+            raise ValueError('Project batching requires RS_SELECTION_MANIFEST')
+        binding = validate_selection_manifest(path, self.__get_input_dir(), self.__get_flight_log_path())
+        if prior is not None and prior != binding:
+            raise ValueError('Project selection changed during batching; start a fresh attempt')
+        self._selection_binding = binding
+        return binding
+
     def _input_fingerprint(self, flight_log_path: str) -> dict:
         """Identity of everything that determines what ends up in the zones.
 
@@ -283,7 +413,7 @@ class BatchDirectory(RSModule):
                 'batch_overlap_max_distance_m', 'batch_use_z',
                 'batch_zone_layout', 'batch_xmp_priors')
         input_dir = self.__get_input_dir()
-        return {
+        fingerprint = {
             'flight_log': os.path.basename(flight_log_path or ''),
             'flight_log_sha256': digest,
             'input_dir': os.path.normcase(os.path.abspath(input_dir)) if input_dir else None,
@@ -291,6 +421,21 @@ class BatchDirectory(RSModule):
             'params': {k: str(self.params[k].get_value())
                        for k in keys if k in self.params},
         }
+        selection = self._require_selection_manifest()
+        if selection is not None:
+            fingerprint['selection'] = selection
+        prior_param = (self.params or {}).get('batch_xmp_priors')
+        if prior_param is not None and prior_param.get_value():
+            # Serializer fixes and approved profile overrides must invalidate
+            # a legacy batch even when filenames and all zoning knobs match.
+            profile_bytes = json.dumps({k: asdict(v) for k, v in camera_registry.CAMERAS.items()},
+                                       sort_keys=True, allow_nan=False).encode('utf-8')
+            fingerprint['native_calibration'] = {
+                'schema': 1,
+                'serializer_sha256': hashlib.sha256(Path(camera_registry.__file__).read_bytes()).hexdigest(),
+                'profiles_sha256': hashlib.sha256(profile_bytes).hexdigest(),
+            }
+        return fingerprint
 
     def _source_signature(self, input_dir: str | None) -> dict | None:
         """Cheap content signature of the image source: count, bytes, newest."""
@@ -301,7 +446,7 @@ class BatchDirectory(RSModule):
         newest = 0.0
         for root, _dirs, names in os.walk(input_dir):
             for n in names:
-                if os.path.splitext(n)[1].lower() not in self.ACCEPTED_EXTENSIONS:
+                if not image_exts.is_geometry_image(os.path.join(root, n), self.ACCEPTED_EXTENSIONS):
                     continue
                 try:
                     st = os.stat(os.path.join(root, n))
@@ -364,6 +509,16 @@ class BatchDirectory(RSModule):
         comparable = {k: v for k, v in previous.items()
                       if k not in ('status', 'zone_flight_logs')}
         if comparable == current:
+            if 'native_calibration' in current:
+                try:
+                    for zone in Path(output_dir).glob('zone_*'):
+                        if zone.is_dir():
+                            images = {p.resolve() for p in zone.rglob('*')
+                                      if p.is_file() and image_exts.is_geometry_image(p)}
+                            if images:
+                                self.__assert_calibration_coverage(zone, images)
+                except (OSError, ValueError) as exc:
+                    return False, 'Existing batch calibration coverage is invalid: ' + str(exc)
             return True, None
         changed = [k for k in current if comparable.get(k) != current.get(k)]
         return False, (
@@ -407,7 +562,7 @@ class BatchDirectory(RSModule):
             return False
         for _root, _dirs, names in os.walk(output_dir):
             for n in names:
-                if os.path.splitext(n)[1].lower() in self.ACCEPTED_EXTENSIONS:
+                if image_exts.is_geometry_image(os.path.join(_root, n), self.ACCEPTED_EXTENSIONS):
                     return True
         return False
 
@@ -920,6 +1075,8 @@ class BatchDirectory(RSModule):
         all_names: list[str] = []
         for root, _dirs, filenames in os.walk(input_dir):
             for fn in filenames:
+                if not image_exts.is_geometry_image(os.path.join(root, fn)):
+                    continue
                 all_names.append(fn)
                 by_name.setdefault(fn.lower(), os.path.join(root, fn))
                 by_stem.setdefault(os.path.splitext(fn)[0].lower(), fn)
@@ -940,6 +1097,8 @@ class BatchDirectory(RSModule):
         by_name, by_stem = file_index[0], file_index[1]
         copied = 0
         missing = 0
+        prior_param = (self.params or {}).get('batch_xmp_priors')
+        require_calibration = prior_param is not None and prior_param.get_value()
 
         # Flight-log rows may carry ABSOLUTE paths (export_rs_flightlog
         # --path-mode=absolute), while the on-disk index above is keyed by
@@ -948,6 +1107,8 @@ class BatchDirectory(RSModule):
         # copy the same indexed file under both rows' identities; refuse
         # loudly instead (colmap_studio FINDINGS C-20260827-06).
         claimed: dict[str, str] = {}
+        expected_copies = set()
+        requested_names = set()
         for file in files:
             raw = str(file)
             key = os.path.basename(raw).lower()
@@ -963,6 +1124,9 @@ class BatchDirectory(RSModule):
             # file's name, and the sidecar stem (an absolute row must
             # never be os.path.join'd - it would swallow camera_dir).
             name = os.path.basename(str(file))
+            if require_calibration and name.casefold() in requested_names:
+                raise ValueError('Duplicate geometry image in batch request: ' + name)
+            requested_names.add(name.casefold())
             file_path = by_name.get(name.lower())
 
             if file_path is None:
@@ -984,8 +1148,10 @@ class BatchDirectory(RSModule):
             os.makedirs(camera_dir, exist_ok=True)
 
             output_path = os.path.join(camera_dir, name)
+            expected_copies.add(Path(output_path).resolve())
             if not os.path.exists(output_path):
                 shutil.copy(file_path, output_path)
+            image_exts.copy_associated_masks(file_path, output_path)
 
             # Optionally generate XMP sidecar with camera calibration priors
             # (self.params is None until the orchestrator injects it - treat
@@ -994,7 +1160,30 @@ class BatchDirectory(RSModule):
             if prior_param is not None and prior_param.get_value():
                 self.__generate_xmp_sidecar(name, camera_dir, camera_subfolder)
 
+        prior_param = (self.params or {}).get('batch_xmp_priors')
+        if prior_param is not None and prior_param.get_value():
+            if missing:
+                raise ValueError('Calibration coverage incomplete: requested batch images are missing')
+            self.__assert_calibration_coverage(batch_folder_dir, expected_copies)
         return copied, missing
+
+    def __assert_calibration_coverage(self, directory, expected_images):
+        """Fresh batch calibration is exact; exported component pose XMP is separate."""
+        root = Path(directory).resolve()
+        actual_images = {p.resolve() for p in root.rglob('*') if p.is_file() and image_exts.is_geometry_image(p)}
+        if actual_images != expected_images:
+            raise ValueError('Batch geometry image set differs from requested calibration coverage')
+        expected_sidecars = {p.with_suffix('.xmp') for p in expected_images}
+        if len(expected_sidecars) != len(expected_images):
+            raise ValueError('Multiple geometry images collide on one calibration sidecar stem')
+        actual_sidecars = {p.resolve() for p in root.rglob('*') if p.is_file() and p.suffix.casefold() == '.xmp'}
+        if actual_sidecars != expected_sidecars:
+            raise ValueError('Batch calibration sidecar set differs from geometry images')
+        for path in expected_images:
+            camera = camera_registry.identify(path.name)
+            if camera is None:
+                raise ValueError('Batch calibration sidecar is not current calibration-only registry output: ' + str(path))
+            camera_registry.validate_calibration_xmp(path.with_suffix('.xmp').read_text(encoding='utf-8'), camera)
 
     def __generate_xmp_sidecar(self, image_filename: str, output_path: str, camera_type: str) -> None:
         """
@@ -1005,6 +1194,8 @@ class BatchDirectory(RSModule):
             output_path: Full path where the image is located
             camera_type: Camera type (zeuss, cammid, camupper, camlower, other)
         """
+        if not image_exts.is_geometry_image(image_filename):
+            return
         # RealityScan's sidecar convention is <stem>.xmp (image.jpg ->
         # image.xmp). The previous f"{image_filename}.xmp" produced
         # image.jpg.xmp, which RealityScan silently ignores - every
@@ -1016,25 +1207,21 @@ class BatchDirectory(RSModule):
         # WCA units, focals/models are owner-confirmed 2026-07-23).
         camera = camera_registry.identify(image_filename)
         if camera is None:
-            # Unknown camera type - no calibration priors to write. Warn
-            # once; per-image warnings would flood the log on a dataset
-            # with an unrecognized naming scheme.
             self._unknown_camera_count += 1
             if self._unknown_camera_example is None:
                 self._unknown_camera_example = image_filename
-                self.logger.warning(
-                    f"Unknown camera type '{camera_type}' (e.g. {image_filename}) - "
-                    "skipping XMP calibration sidecars for these images. "
-                    "Further warnings suppressed; total reported in summary.")
-            return
+            raise ValueError(f"Unknown camera type '{camera_type}' for required calibration: {image_filename}")
 
-        # Write XMP file (content shared with the post-align sidecar
-        # sanitizer via camera_registry.calibration_xmp)
-        try:
-            with open(xmp_path, 'w', encoding='utf-8') as f:
-                f.write(camera_registry.calibration_xmp(camera))
-        except Exception as e:
-            self.logger.error(f"Failed to write XMP file {xmp_path}: {e}")
+        # Fresh-input calibration only. Existing solved/exported pose XMP
+        # belongs to the continuation lane and must not be overwritten.
+        content = camera_registry.calibration_xmp(camera)
+        camera_registry.validate_calibration_xmp(content, camera)
+        path = Path(xmp_path)
+        if path.exists():
+            camera_registry.validate_calibration_xmp(path.read_text(encoding='utf-8'), camera)
+            return
+        with path.open('x', encoding='utf-8', newline='\n') as stream:
+            stream.write(content)
 
     def __create_batch_folders(self, output_dir, zones, input_dir, flight_log_path=None):
         """
@@ -1410,6 +1597,11 @@ class BatchDirectory(RSModule):
         return target, min_size, max_size
 
     def run(self):
+        try:
+            self._require_selection_manifest()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.logger.error('Selection gate refused batching: %s', exc)
+            return {'Success': False, 'Error': str(exc)}
         # Parameters are validated by the orchestrator before run()
         output_dir = os.path.join(self.params['output_dir'].get_value(), 'batched_images_by_zone')
         input_dir = self.__get_input_dir()
@@ -1489,6 +1681,7 @@ class BatchDirectory(RSModule):
             # nothing written. Nothing downstream reads these PNGs, so a
             # failure here is logged and the batches still land on disk.
             try:
+                self._require_selection_manifest()
                 self.__plot_results(gdf_processed, final_zones, output_dir)
             except Exception as e:
                 self.logger.warning(
@@ -1521,6 +1714,7 @@ class BatchDirectory(RSModule):
                     'Re-zoning with target %d, min %d, max %d, overlap %.1f%%',
                     target_size, min_size, max_size, overlap_percent)
 
+                self._require_selection_manifest()
                 if os.path.isdir(output_dir):
                     shutil.rmtree(output_dir)
                 os.makedirs(output_dir)
@@ -1619,6 +1813,10 @@ class BatchDirectory(RSModule):
             return {'Success': False}
 
     def validate_parameters(self) -> tuple[bool, str | None]:
+        try:
+            self._require_selection_manifest()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return False, 'Selection gate refused batching: ' + str(exc)
         success, message = super().validate_parameters()
         if not success:
             return success, message
@@ -1714,9 +1912,17 @@ class BatchDirectory(RSModule):
             if overwrite is not None:
                 if overwrite.strip().lower() != 'y':
                     return False, 'Batched images folder not created'
+                try:
+                    self._require_selection_manifest()
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    return False, 'Selection gate refused batching: ' + str(exc)
                 shutil.rmtree(output_dir)
 
         if not os.path.isdir(output_dir):
+            try:
+                self._require_selection_manifest()
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                return False, 'Selection gate refused batching: ' + str(exc)
             os.makedirs(output_dir)
 
         return True, None

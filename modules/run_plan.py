@@ -337,6 +337,9 @@ class Session:
     #: charter science.min_component_size - the merge's --min_size and, for
     #: the align chain, --r_min_component_size (None = the drivers' 50).
     min_component_size: Optional[int] = None
+    #: Materialized JSON from approved science settings; never stored/inherited.
+    orphan_policy: Optional[str] = None
+    orphan_policy_approved: bool = False
 
     @property
     def label(self) -> str:
@@ -709,6 +712,14 @@ def build_commands(session: Session) -> list[StageCommand]:
             argv=argv, env=env, needs_realityscan=needs_rs))
 
     if "merge" in session.enabled:
+        orphan_args = []
+        if session.orphan_policy is not None:
+            if session.orphan_policy_approved is not True:
+                raise ValueError('science.orphan_policy requires explicit settings approval')
+            from merge_zones import read_orphan_policy
+            _, policy_sha256 = read_orphan_policy(session.orphan_policy)
+            orphan_args = ['--orphan_policy', session.orphan_policy,
+                           '--orphan_policy_sha256', policy_sha256]
         argv = [sys.executable, str(REPO / "merge_zones.py"),
                 "--components_root", str(ws.aligned),
                 "--images_root", str(ws.batched),
@@ -733,10 +744,19 @@ def build_commands(session: Session) -> list[StageCommand]:
                 # 0.937-1.119. Full provenance: merge_zones.merge_cluster's
                 # loss_tolerance_frac comment.
                 "--loss_tolerance", "0.0025", "--scale_gate", "true",
-                "--scale_min", "0.9", "--scale_max", "1.1"]
+                "--scale_min", "0.9", "--scale_max", "1.1"] + orphan_args
+        merge_env = {"PYTHONIOENCODING": "utf-8", **rs_env}
+        # ProjectController also binds this after planning from its reviewed
+        # context. Do not pin an ambient manifest into argv: that would defeat
+        # the controller's authoritative env override or require a second plan.
+        if session.orphan_policy is not None and 'RS_SELECTION_MANIFEST' in os.environ:
+            for key in ('RS_SELECTION_MANIFEST', 'RS_OCCLUSION_MANIFEST',
+                        'RS_OCCLUSION_MANIFEST_SHA256', 'RS_PROJECT_FILE'):
+                if key in os.environ:
+                    merge_env[key] = os.environ[key]
         commands.append(StageCommand(
             stage="Merge Components", argv=argv,
-            env={"PYTHONIOENCODING": "utf-8", **rs_env},
+            env=merge_env,
             needs_realityscan=True))
 
     if "model" in session.enabled:
@@ -979,6 +999,12 @@ def session_from_charter(charter, stages: Optional[list[str]] = None
                            else str(v))
     enabled = list(stages or pipeline.get("stages", []) or [])
     raw_min = (charter.science or {}).get("min_component_size")
+    orphan_policy = (charter.science or {}).get('orphan_policy')
+    if orphan_policy is not None:
+        if not isinstance(orphan_policy, str) or not orphan_policy.strip():
+            raise ValueError('science.orphan_policy must be an absolute materialized JSON path, or null/omitted')
+        if not Path(orphan_policy).is_absolute():
+            raise ValueError('science.orphan_policy must be an absolute materialized JSON path')
     min_size: Optional[int] = None
     if raw_min not in (None, ""):
         try:
@@ -1000,6 +1026,8 @@ def session_from_charter(charter, stages: Optional[list[str]] = None
         enabled=enabled,
         answers=answers,
         min_component_size=min_size,
+        orphan_policy=orphan_policy,
+        orphan_policy_approved=charter.is_signed() if orphan_policy is not None else False,
     )
 
 
@@ -1066,6 +1094,9 @@ def build_plan(session: Session, charter=None,
                          "whose locations.results_root is set")
 
     charter_env = charter.env() if charter is not None else {}
+    if (charter is not None and session.orphan_policy is not None
+            and 'merge' in session.enabled and not charter.is_signed()):
+        raise ValueError('science.orphan_policy requires current signed settings approval')
     if charter is not None and not charter.is_signed():
         warnings.append(
             f"charter {charter.path} is NOT SIGNED OFF (signed_off.by / "
@@ -1086,6 +1117,9 @@ def build_plan(session: Session, charter=None,
             "needs_realityscan": cmd.needs_realityscan,
             "display": cmd.display,
         }
+        if '--orphan_policy' in cmd.argv:
+            record['required_env'] = ['RS_SELECTION_MANIFEST', 'RS_OCCLUSION_MANIFEST',
+                                      'RS_OCCLUSION_MANIFEST_SHA256']
         if validate and str(cmd.argv[1]).endswith("main.py"):
             reason = validate_command(cmd.argv, chain)
             record["parses"] = reason is None

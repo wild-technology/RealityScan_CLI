@@ -631,39 +631,31 @@ class Preflight:
                                    "verified (columns would drop silently)")
                 except Exception as exc:  # noqa: BLE001
                     self.warn(f"flight-log format check failed: {exc}")
+        from .storage_policy import StorageDemand, StoragePolicyError, assess_storage
+
         delta = (self.charter.budget or {}).get("disk_delta_gb")
-        results_drive = None
+        demands = []
         root = self.charter.results_root
         if not _placeholder(root):
-            anchor, free = _free_gb(root)
-            if anchor is not None:
-                results_drive = os.path.splitdrive(str(anchor))[0].lower()
-            if free is not None:
-                if _number(delta) and free < float(delta) + MIN_FREE_GB:
-                    self.block(f"{free:.0f} GB free on {anchor} but the "
-                               f"charter expects a {float(delta):.0f} GB "
-                               f"delta plus the {MIN_FREE_GB:.0f} GB floor")
-                else:
-                    self.ok(f"{free:.0f} GB free on {anchor}")
-        # The cache volume is the one that filled the box (1.2 TB, ~72 GB per
-        # modelled component); until 2026-09-06 only the results volume was
-        # measured (review finding na173-probe F8).
+            demands.append(StorageDemand(root, float(delta) if _number(delta) else 0.0,
+                                         "results"))
+        # Cache growth still consumes space when results share its volume.
+        # Group by actual volume identity, sum both deltas and reserve once.
         cache = self.charter.rs_cache_dir
         if self.needs_realityscan() and not _placeholder(cache):
-            canchor, cfree = _free_gb(cache)
-            cache_drive = os.path.splitdrive(str(canchor))[0].lower() if canchor else None
-            if cfree is not None and cache_drive != results_drive:
-                need = MIN_FREE_GB + (CACHE_GB_PER_COMPONENT
-                                      if "model" in self.stages else 0.0)
-                if cfree < need:
-                    self.block(f"{cfree:.0f} GB free on the cache volume "
-                               f"({canchor}) but a RealityScan run needs the "
-                               f"{MIN_FREE_GB:.0f} GB floor"
-                               + (f" plus ~{CACHE_GB_PER_COMPONENT:.0f} GB per "
-                                  "modelled component" if "model" in self.stages
-                                  else ""))
-                else:
-                    self.ok(f"{cfree:.0f} GB free on the cache volume ({canchor})")
+            demands.append(StorageDemand(cache, CACHE_GB_PER_COMPONENT
+                                         if "model" in self.stages else 0.0, "cache"))
+        if demands:
+            try:
+                storage = assess_storage(demands, reserve_gib=MIN_FREE_GB)
+            except StoragePolicyError as exc:
+                self.block(f"Storage budget invalid: {exc}")
+            else:
+                for alert in storage["alerts"]:
+                    (self.block if alert["level"] == "block" else self.warn)(alert["message"])
+                for volume in storage["volumes"]:
+                    if volume["status"] == "ok":
+                        self.ok(volume["message"])
 
     # ------------------------------------------------- modules and files
     def check_modules(self) -> None:

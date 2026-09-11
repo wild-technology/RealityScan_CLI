@@ -429,6 +429,7 @@ call :readstat
 set "RS_REV0=%RS_REV%"
 set "RS_LASTERR0=%RS_LASTERR%"
 
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_TARGET% %*
 if errorlevel 1 goto :runDelegateFailed
 ping -n 3 127.0.0.1 >nul

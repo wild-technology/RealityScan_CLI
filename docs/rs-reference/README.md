@@ -3,6 +3,15 @@
 A complete reference for driving **RealityScan 2.2** (Epic Games; the product formerly named
 RealityCapture) from its **command line**, headless, unattended.
 
+**Evidence reconciliation (2026-09-11):** consult
+[VERIFICATION_STATUS](../VERIFICATION_STATUS.md) and the atomic claims in
+[EVIDENCE_LEDGER.json](../EVIDENCE_LEDGER.json) before treating a critical behavior
+as established. This reference is not blanket live verification. Official contracts,
+code inspection, historical live reports and new live measurements are distinct;
+the reconciliation performed no RealityScan runs. The later checkpoint changes
+have scoped offline test evidence recorded separately. Historical citations
+remain provenance, with their original scope and unresolved contradictions.
+
 It fuses two sources that do not otherwise exist in one place:
 
 1. **Epic's shipped documentation** — the complete offline Help
@@ -17,8 +26,8 @@ It fuses two sources that do not otherwise exist in one place:
 **Where the two disagree, both are recorded.** The documented claim, the observed behavior, and
 how the observation was made are all stated, and the entry is tagged `[CONTRADICTED]`. Those
 entries are the highest-value content in this set; none of them has been smoothed over. The tag
-appears **173** times across the thirteen documents (occurrences, including cross-references to a
-contradiction documented in full elsewhere).
+appeared **173** times in the historical census below (occurrences, including
+cross-references). That count is not a current completeness or verification metric.
 
 Every document is self-contained enough to answer a question without loading its siblings, and
 cross-references siblings by exact filename when the full treatment lives elsewhere.
@@ -90,7 +99,7 @@ the thing in column 1.
 
 | If you are about to… | Read | Do NOT | Tag |
 |---|---|---|---|
-| Publish a georeferenced mesh to Cesium ion | `10-reconstruction-texturing-export.md` §17.2.1 | Do not hand Cesium the exported Z. It is a depth below the **sea surface** (`geoall.py` writes `-abs(kalman_depth)`), while Cesium reads every height as above the **WGS84 ellipsoid**, and the project CRS is 2D so nothing declares which. The asset sinks or floats by the geoid undulation — **+72.69 m** at NA168 H2080, +70.4 m Solomon Sea, −27.1 m Gulf of Mexico. Convert with `h = −depth + N` (`modules/cesium_placement.py`) and confirm by decoding the finished tileset, never by the upload's exit status. ion itself is blameless: it honours a negative height to **−0.000 m** | `[VERIFIED: probe asset 5171554, FINDINGS 2026-08-31]` |
+| Publish a georeferenced mesh to Cesium ion | `10-reconstruction-texturing-export.md` §17.2.1; ledger DAT-001 | The audited nav path writes sea-surface-referenced negative depth; a 2D project CRS does not establish its vertical datum. `h ≈ −depth + N` is a geoid-only approximation, not an exact conversion from instantaneous sea level. Account for the camera lever arm once and document sea-surface/tide offsets and uncertainty. Read back the tileset placement; that verifies upload placement, not the telemetry datum. Historical probe asset 5171554 reproduced its requested height, not H2101's true vertical position. | `[VERIFIED: historical placement probe, 2026-08-31]`; H2101 datum `[OPEN]` |
 | Compute a geoid correction with PROJ | `10-…` §17.2.1 | Never call `Transformer.from_crs` without `allow_ballpark=False`. With the grid absent PROJ **succeeds and returns Z unchanged**, having silently chosen a "ballpark vertical transformation" — the correction reads as applied and is zero. The EGM2008 grid (`us_nga_egm08_25.tif`, ~80 MB) needs `PROJ_NETWORK=ON` or a local `projsync` | `[VERIFIED: FINDINGS 2026-08-31]` |
 | Conclude that a merge worked | `08-components-and-merge.md` §6; `12-failure-modes-and-race-conditions.md` §1 | Do not read exit status, `errors.txt` emptiness, or "completed" as evidence. `-mergeComponents` exits **SUCCESS** and leaves the components separate under every flag combination when nothing can fuse. The verdict is a **camera census** of the resulting component, never the status | `[VERIFIED: NA167 #23/#26; FINDINGS 2026-07-23/24]` |
 | Plan which components will fuse | `08-components-and-merge.md` §5.2 | Do not assume georeference or flags can fuse components with **zero image-content overlap** — nothing does, silently. The governing rule is **content overlap**, not path identity: shared camera paths are *sufficient but not necessary* (probe D7 fused two components with zero shared basenames and zero shared paths). The older "components fuse only through shared image identity" rule is retained as `[SUPERSEDED]`, not deleted. `sfmMergeGeoreferencedComponents=true`, whose documented purpose is exactly overlap-free merging, has **never** been observed to work headless | `[VERIFIED: D7 probe wave 2026-07-24]` + `[CONTRADICTED: NA167 D1/D2]` |
@@ -109,7 +118,7 @@ the thing in column 1.
 | Wait for a delegated command | `01-cli-fundamentals.md` §6; `11-automation-patterns.md` §2 | Do not trust a single `-waitCompleted`. Delegated commands are **queued**, and `-waitCompleted` issued before the instance picks the command up **returns immediately**, so the next command runs against a busy instance. Use the `:run` shape: delegate → grace delay → `-waitCompleted` → grace → `-waitCompleted` → check the errors marker | `[CONTRADICTED: NA167 §-waitCompleted]` |
 | Diagnose any ambiguous failure | `12-…` §2 and `F-39`/`F-40` | Do not boot another instance first. `%LOCALAPPDATA%\Temp\RealityScan.log` is **global and truncated on every instance boot**, and it is the only place the real reason behind the generic `0x8000FFFF` exists. Snapshot it inside the driver, immediately after the failing call returns — and validate the snapshot, because a snapshot taken while two instances ran spliced two runs together | `[VERIFIED: NA167 B6; FINDINGS 2026-07-27]` |
 | Export anything (XMP, components, models) | `04-image-input-and-handling.md` §4; `02-command-reference.md` `-exportXMP` | Three silent-zero traps in one step: (a) `appIncSubdirs` defaults **false**, so `-addFolder` over a per-camera tree adds **0 images** and the whole zone "succeeds" in 25 s; (b) `-setMinComponentSize` defaults **5**, silently excluding smaller components from export *and* selection — set it to `1`; (c) exports are **selection-driven** and `-importFlightLog` leaves images actively selected, so under `-silent` an export finishes in 0.057 s having written nothing — `-deselectAllImages` first | `[VERIFIED: FINDINGS 2026-07-23; HANDOFF 2026-07-21]` |
-| Delete an intermediate model by name | `12-…` `F-102`; `02-command-reference.md` A1 | Never `-selectModel <name>` then `-deleteSelectedModel` unverified. Inside a populated component a bogus name is a **silent no-op** (`lastError:0`) and the delete lands on whatever was selected — the working model. Prove the select via `-exportReport SelectedModel.html` first (`run_decimate.py`); `ModelToFinal.bat` still carries the blind pattern (D12, owner's call) | [VERIFIED: FINDINGS 2026-09-03] |
+| Delete an intermediate model by name | `12-…` `F-102`; `02-command-reference.md` A1; ledger SEL-001/002 | In the recorded populated-component case, a bogus model name retained the prior selection with `lastError:0`. Read back the selected name before dependent destructive work. Current `ModelToFinal.bat` and `ExportDeliverables.bat` contain verification helpers; their presence is code evidence, not proof that every call site is safe or every context behaves identically. | [VERIFIED: historical probe 2026-09-03]; [VERIFIED-by-inspection: 0c9224e] |
 | Unwrap or export a textured model | `10-…` A5; `12-…` `F-103`; `11-…` §2.3 | Do not read a clean exit as "textured". `AdaptiveTexelSize` can reject a mesh in 3 s with `rev` unchanged, `-reprojectTexture` then fails, and `-exportSelectedModel` writes a geometry-only OBJ and reports success. Census `Textured` and the texture count; the `:try_unwrap` fallback covers only the reported-error case | [VERIFIED: FINDINGS 2026-09-03] |
 
 ---

@@ -1857,14 +1857,21 @@ sea-surface asset on this account:
    **WGS84 ellipsoid**. Nothing in the chain converts between them, so the
    asset sinks or floats by the geoid undulation N: **+72.69 m** at the NA168
    H2080 site, +70.4 m in the Solomon Sea, −27.1 m in the Gulf of Mexico,
-   +4.5 m at Papahanaumokuakea. The correction is `h = H + N` with `H = −depth`
-   [VERIFIED: FINDINGS 2026-08-31].
+   +4.5 m at Papahanaumokuakea under the recorded geoid-only model.
+   `h = H + N` is the height relation, but `H ≈ −depth` assumes sea-surface and
+   geoid coincidence and omits other corrections. Include the camera lever arm
+   once, document tide/sea-surface offsets and uncertainty, and independently
+   establish the telemetry datum. Historical placement readback is not H2101
+   vertical validation. [VERIFIED: historical placement, FINDINGS 2026-08-31;
+   datum approximation INFERRED; ledger DAT-001]
 
-`publish_cesium.py` (rewritten 2026-08-31) closes both. It reads the export's
+`publish_cesium.py` (rewritten 2026-08-31) implements placement and the geoid-only
+correction model. It does not establish an unknown telemetry datum. It reads the export's
 `.rsInfo` for the CRS and `transformToModel`, resolves the mesh into that
 global CRS, converts the anchor's sea-surface depth to an ellipsoidal height
-through EGM2008, rewrites the mesh into a local East-North-Up frame about that
-anchor, and passes the anchor as `options.position`:
+through EGM2008 under that approximation, rewrites the mesh into a local
+East-North-Up frame about that anchor, and passes it as `options.position`. See
+[ledger DAT-001 and P-DATUM](../EVIDENCE_LEDGER.json):
 
 ```
 1. POST /v1/assets           type=3DTILES, options.sourceType=3D_CAPTURE,

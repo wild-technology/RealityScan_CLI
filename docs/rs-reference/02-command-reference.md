@@ -1062,6 +1062,13 @@ first without `-quit`, inspect, then load and run a full `-align`
 
 ### `-update`
 
+**Reconciliation 2026-09-11:** the historical notes below do not establish a
+universally corrective fit. BUGS B19 records update improving zone_3 but worsening
+zone_4, with separate component scale factors; its objective remains unknown.
+Current AlignZone contains post-align update, while the old absence diagnosis is
+historical. See [ledger UPD-001/002 and P-UPDATE](../EVIDENCE_LEDGER.json) and
+reference 13 §7.4. No new live test was performed for this correction.
+
 **Behavior notes**
 
 - [VERIFIED] It is a **similarity/rigid fit to the scene's imported constraints**, applied
@@ -2444,14 +2451,13 @@ by execution on two independent machines [VERIFIED: FINDINGS 2026-07-21 onward].
 - Other format GUIDs in play: `{0E9850E2-…}` a 7-column position-only format;
   `{97F08A22-…}` the stock 10-column format (X, Y, Alt, three accuracies, YPR), kept as the
   no-admin fallback [VERIFIED: FINDINGS 2026-07-26].
-- [UNDOCUMENTED] `ifKGrp` and `ifKmode` in the params XML are the only plausible carriers of
-  the "Euler angles order (YPR)" and "Camera mount" import settings. Their value mapping is
-  undocumented, and **neither string appears in any file under the RealityScan install** —
-  both are compiled into the binary. Current values, unchanged since the template was
-  written: `ifKGrp=2`, `ifKmode=0x0` [FINDINGS 2026-07-26]
-  [OPEN: (1) set the two dropdowns in the GUI import dialog, save params, diff against the
-  template — one minute, needs the GUI; (2) headless — align the smoke fixture at several
-  `ifKmode` values and read camera attitudes out of the pose XMPs, ~2 min per cell].
+- [SUPERSEDED: July 26 key attribution] `ifKGrp` controls import calibration
+  grouping; it is not the Euler/mount carrier. Reference 13 §9.3 records
+  `gpsLogEulerAnglesOrderYPR` / `gpsLogMount` for those settings and distinguishes
+  `ifKModel` from the unsupported `ifKmode` spelling. Current templates use
+  `ifKGrp=1`, supported only by the recorded single-family grouping probe.
+  Effective mount/order and mixed-family grouping still need readback.
+  See [ledger ROT-003, CAL-002/003](../EVIDENCE_LEDGER.json).
 
 **Example — tolerant import wrapper** [VERIFIED: `MergeZoneComponents.bat` `:run_geoimport`]
 
@@ -2949,7 +2955,7 @@ rest are headless and scriptable.
 | Q3 | What `layerType` strings do `-setImageLayer` / `-setImagesLayer` / `-removeImageLayer` accept — with or without the leading dot? | **GUI** Try `.geometry`, `geometry`, `.mask`, `mask`, `.labels`, `.depth`, `.texture`, `.texture02` once each from the console view and read the error/no-error. |
 | Q4 | Is `-exportDepthAndMask` a live alias or only a stale doc name? | **GUI** Type `-exportDepth` and press TAB. |
 | Q4b | Does `-undercut` (§12.2) still parse in 2.2? Its Help row is commented out, but process ID `27 UNDERCUT_MODEL_PARTS` is public. | **GUI** Type `-under` and press TAB — the console's completion list comes from the binary, not the Help, so it answers whether the command exists. |
-| Q5 | What do `ifKGrp` and `ifKmode` in `FlightLogParams.xml` actually control ("Euler angles order (YPR)" and "Camera mount")? Both strings are compiled into the binary and appear in no install file. | **GUI** Save three params files from the Import Trajectory dialog: defaults, Euler-order changed only, camera-mount changed only. Diff them. One minute; **load-bearing for orientation-prior attribution**, open since 2026-07-26. |
+| Q5 | Recorded key identification supersedes the `ifKGrp`/`ifKmode` Euler theory (13 §9.3; ledger ROT-003). What effective Euler/mount settings are used, and how does import group multiple camera families? | P-ROT and P-GROUP: distinguish effective settings and mixed-family behavior through readback; do not probe an unsupported spelling as if its semantics were established. |
 
 ### Answerable headless in under ten minutes
 
@@ -3000,7 +3006,17 @@ Facts established after this document was written (2026-08-04), carried here so 
 
 ### A1. `-selectModel` on a name that does not exist is a SILENT NO-OP
 
-Inside a component that has models, `-selectModel <bogus>` leaves the previous selection live and reports `lastError:0`, no marker, nothing. So `-selectModel X` followed by `-deleteSelectedModel` deletes **whatever was selected before** when `X` is absent. Proven directly on the H2060 master (`-selectModel zone_all_c15_THIS_DOES_NOT_EXIST` left `..._Simplified_Textured` selected). `ModelToFinal.bat`'s intermediate cleanup uses exactly this pair seven times; it is safe only while every name exists (not changed — owner's call). **Rule: never issue a destructive command after an unverified select**; prove the selection with `-exportReport` (A2) first. This supersedes the 2026-08-07 reading that a failed `-selectModel` always surfaces `0x80070057`: that code appears when *no* model can be resolved or there is no component context (A3), not for a bogus name inside a populated component. [VERIFIED: FINDINGS 2026-09-03]
+In the recorded populated H2060 component, `-selectModel <bogus>` retained the
+previous selection with `lastError:0`. A blind delete would therefore target the
+previous model. Other contexts produced errors; do not promote either observation
+into a universal missing-name rule. [VERIFIED: historical probe, FINDINGS 2026-09-03]
+
+**Current code correction (2026-09-11):** `ModelToFinal.bat` and
+`ExportDeliverables.bat` contain selected-name report checks in `:select_verified`
+and `:delete_verified`; the earlier seven-blind-pairs description is historical.
+This is code inspection at `0c9224e`, not proof every call site is safe.
+Require name readback before dependent destructive work, and audit component
+selection separately. See [ledger SEL-001/002, P-SELECT](../EVIDENCE_LEDGER.json).
 
 ### A2. `-exportReport` is headless, non-blocking, and the model-measurement primitive
 
@@ -3014,6 +3030,17 @@ Inside a component that has models, `-selectModel <bogus>` leaves the previous s
 
 `-selectComponent <name>` + `-deleteSelectedComponent`, and the name-free `-selectMaximalComponent` → delete → re-import → `-save`, exit 0 with an empty errors file and change nothing on disk: three post-delete censuses were byte-identical to baseline, on the GUI-visible instance **and** on a headless twin holding a copy (with real memory movement, so the operations executed in memory). Deletion executes in memory and is discarded by save+reload. Production rule: exclude a component's members at the driver level; leave the object for an interactive GUI delete. Fourth member of the silently-broken-delegated-command class. [VERIFIED: FINDINGS 2026-08-12]
 
-### A5. Calibration-group commands from the delegated CLI — open contradiction (decision D1)
+### A5. Calibration-group commands — scoped negative evidence and open mixed-camera behavior
 
-`-setPriorCalibrationGroup` / `-setPriorLensGroup` were measured **silently non-functional** on a 6-image fixture (2026-08-08): every delegated call returned success, and after `-align` every exported camera read `CalibrationGroup="-1"` with six distinct solved focals, under both the full-path+union and the regex `-selectImage` forms. The NA168 H2080 and NA165 H2063 campaigns later ran with these commands in `AlignZone.bat` (`modules/prior_groups.py`) **without measuring the effect**. Both claims stand until the solved-focal-equality oracle is run on the smoke fixture; `docs/DECISIONS.md` D1. Related: `-selectImage <regexp> union` left the selection in a state where the next command errored `0x8000FFFF`; the mode-less regexp form and path+union are fine. `-addImageWithCalibration <image> <xmp>` **does** work end to end (groups echoed, solved focals identical within an eye, approximate prior honoured, not fixed). [CONTRADICTED: FINDINGS 2026-08-08 vs [RECON] 2026-09-03]
+The August 8 six-image delegated-setter fixture returned success but exported
+ungrouped cameras with distinct focals. September 8 added a no-flight-log control:
+16 cameras, all ungrouped, 12 distinct focals. Unmeasured campaign use is not a
+positive measurement that contradicts those results. [VERIFIED: historical reports]
+
+The separate `ifKGrp=1` single-family probe produced one focal and no ungrouped
+cameras, but does not distinguish group-all from group-by-focal. Successful XMP
+grouping was also recorded, including the August 23 xcr-attribute fixture. Neither
+"setters preserve grouping exactly" nor "import is the only working channel" is
+supported as a universal rule. No-import failure does not exclude import
+overwriting existing groups under other conditions. See
+[ledger CAL-001..005 and P-GROUP](../EVIDENCE_LEDGER.json) for the controls needed.

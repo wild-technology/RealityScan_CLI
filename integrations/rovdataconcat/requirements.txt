@@ -1,0 +1,10 @@
+# Runtime dependencies actually imported by the pipeline.
+# (File must be UTF-8: pip cannot read UTF-16 requirements files.)
+pandas>=2.2
+numpy>=1.26
+scipy>=1.11
+matplotlib>=3.8
+filterpy==1.4.5
+pyproj>=3.6
+rasterio>=1.4
+pillow>=11.0

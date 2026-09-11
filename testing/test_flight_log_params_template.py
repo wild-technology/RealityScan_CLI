@@ -59,15 +59,17 @@ def test_no_log_defaults_to_utm_template_for_compatibility():
 #     ifKGrp=1   95 cameras    0 ungrouped    1 distinct focal   25.09 mm flat
 #     ifKGrp=2   93 cameras   93 ungrouped   55 distinct focals  29.50-30.42 mm
 #
-# Only 1 groups. The template shipped 2 for the life of this repo, and the
+# Historical single-camera result: only 1 created a group in that input.
+# The template shipped 2 for the life of this repo, and the
 # import runs AFTER AlignZone.bat sets the prior groups, so it overrode them
 # on every dive: free per-image focal length, therefore free scale, therefore
 # unmergeable components. NA165/H2060's first pass is the receipt - 35 of 43
 # components outside the 0.90-1.10 scale band.
 #
-# This is pinned rather than merely set because the value is UNDOCUMENTED,
-# recovers nothing from the file itself, and reverting it is silent: no error,
-# no warning, just a dive's worth of self-calibrated cameras.
+# SUPERSEDED for mixed-camera production by the 2026-09-11 v02 matrix:
+# native calibration-only XMP delivers distinct focal/calibration/lens groups;
+# ifKGrp=0 preserves them while ifKGrp=1 collapses all four camera groups.
+# Retain the older observation as scoped provenance, not a universal enum rule.
 
 _REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 METADATA = os.path.join(_REPO, 'modules', 'realityscan_interface',
@@ -76,13 +78,14 @@ METADATA = os.path.join(_REPO, 'modules', 'realityscan_interface',
 
 @pytest.mark.parametrize('name', ['FlightLogParams.xml',
                                   'FlightLogParamsLocal.xml'])
-def test_ifkgrp_is_the_value_that_actually_groups(name):
+def test_ifkgrp_preserves_native_per_camera_groups(name):
     with open(os.path.join(METADATA, name), encoding='utf-8') as fh:
         text = fh.read()
-    assert '<entry key="ifKGrp" value="1"/>' in text, (
-        f'{name}: ifKGrp must be 1. Measured 2026-09-08: 0 and 2 both leave '
-        'every camera CalibrationGroup="-1" (per-image self-calibration), '
-        'which frees focal length and therefore scale.')
+    assert '<entry key="ifKGrp" value="0"/>' in text, (
+        f'{name}: ifKGrp must be 0 for native calibration + CSV pose. '
+        'Measured v02 2026-09-11: 1 collapses distinct camera groups; '
+        '0 preserves the groups supplied by native XMP.')
+    assert '<entry key="ifKGrp" value="1"/>' not in text
     assert '<entry key="ifKGrp" value="2"/>' not in text
 
 

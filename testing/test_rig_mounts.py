@@ -55,7 +55,7 @@ EXPECTED = {
     # Retuned 2026-09-01: Zeuss is on a TILTING HEAD, ~20 deg down for most
     # survey work, never up, sometimes near-nadir. 25 centres just above the
     # mode and into the tail; 45 keeps near-nadir ~1.4 sigma out.
-    'zeuss': ((0.5, 0.0, 0.5), 25.0, 45.0),
+    'zeuss': ((0.5, 0.0, 0.5), 40.0, 40.0),
     'legacy_camupper': ((1.0, 0.0, 0.0), 70.0, 10.0),
     'legacy_cammid': ((1.0, 0.0, 1.0), 20.0, 10.0),
     'legacy_camlower': ((1.0, 0.0, 1.0), 10.0, 10.0),
@@ -77,7 +77,6 @@ SAMPLE = {
 
 @pytest.fixture()
 def geo():
-    logging.disable(logging.CRITICAL)
     return GeoreferenceImages(logging.getLogger('test'))
 
 
@@ -222,8 +221,8 @@ def test_geoall_orientation_accuracy_is_the_owner_directed_value():
     Was a source grep for the literal `yaw_acc = 15.0`; the value now comes
     from the shared PRIOR_ACCURACY_DEFAULTS table geoall imports, so the
     check is on the default it actually writes (audit 2026-08-07)."""
-    assert geoall._ACCURACY_DEFAULTS['yaw'] == 5.0
-    assert geoall._ACCURACY_DEFAULTS['roll'] == 5.0
+    assert geoall._ACCURACY_DEFAULTS['yaw'] == 10.0
+    assert geoall._ACCURACY_DEFAULTS['roll'] == 10.0
     # No second table anywhere in geoall: the 3-vs-15 divergence M4 exists
     # to prevent came from exactly such a private copy. Every historical AND
     # current literal is barred, so re-introducing a copy fails whichever

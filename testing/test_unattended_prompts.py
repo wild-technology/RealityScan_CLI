@@ -31,10 +31,7 @@ def no_input(monkeypatch):
 
 @pytest.fixture
 def log(caplog):
-    """A fresh, propagating logger at INFO. test_rig_mounts leaves
-    logging.disable(CRITICAL) armed for the rest of the session, so caplog
-    alone saw nothing and these tests were order-dependent (2026-09-05)."""
-    logging.disable(logging.NOTSET)
+    """A propagating logger at INFO without changing global logging state."""
     name = "rs.test.unattended"
     logger = logging.getLogger(name)
     logger.propagate = True

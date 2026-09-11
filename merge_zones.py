@@ -22,16 +22,10 @@ docs/history/MERGE_REWORK_RECOMMENDATIONS.md):
    = a full ladder cycle with no fusion. There is NO fraction target -
    two saturated disjoint features are SUCCESS. --target is
    informational only.
-3. Membership bookkeeping: merged-scene XMP exports are ORDINAL (B10),
-   so membership is derived by ATTRIBUTION - merge never adds images,
-   so a result component's members are the union of the input manifests
-   that fused into it. Inputs are matched to result components by
-   camera-count arithmetic (duplicate-path zone exports share no camera
-   identity, so counts are additive), preferring exact subset sums and
-   falling back to the smallest within-budget loss; every attribution is
-   recorded with its confidence AND its accepted loss in the report. Per-component counts come from a count-based peel loop in
-   the workflow (select maximal -> export -> census -> delete),
-   run on the saved scene in memory only (AlignZone pattern).
+3. Registration CSVs measure each peeled component's image membership.
+   Count arithmetic proposes parent subsets; only measured membership can
+   certify retention or populate a new manifest. Count-only results remain
+   diagnostic and cannot be adopted. Attempts run in fresh directories.
 4. Terminal state: ONE assembly project holding EVERY surviving
    component (fused or single) at its own maximum, georeferenced via
    union flight log + -update, saved + dated copy - then an
@@ -56,6 +50,8 @@ argument is refused by name instead of inherited (module_base.settings_store).
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
 import json
 import os
 import re
@@ -63,6 +59,10 @@ import shutil
 import sys
 import time
 import logging
+import tempfile
+import math
+from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
@@ -71,7 +71,9 @@ from modules import camera_registry
 from modules import component_analysis
 from modules import component_manifest
 from modules import scale_oracle
+from modules import align_fingerprint
 from modules.flight_logs import (assert_one_zone,
+                                 epsg_for_utm_zone,
                                  utm_zone_from_flight_log_name,
                                  write_flight_log_params)
 from modules.harvest_guard import assert_harvestable
@@ -80,6 +82,812 @@ from modules.realityscan_interface.realityscan_cli import (
 
 COMPONENT_EXTENSIONS = ('.rsalign', '.rcalign')
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.heif')
+
+ORPHAN_SELECTOR_VERSION = 'pair-local-surfaces-1'
+ORPHAN_POLICY_SCHEMA = {
+    'type': 'object', 'additionalProperties': False,
+    'required': ['horizontal_margin_m', 'vertical_margin_m', 'footprint_link_m',
+                 'max_corridor_m', 'max_offered', 'vertical_datum', 'component_features'],
+    'properties': {
+        'horizontal_margin_m': {'type': 'number', 'minimum': 0,
+                                'description': 'XY navigation uncertainty around pair support, metres'},
+        'vertical_margin_m': {'type': 'number', 'minimum': 0,
+                              'description': 'Uncertainty around interpolated navigation height, metres'},
+        'footprint_link_m': {'type': 'number', 'exclusiveMinimum': 0,
+                             'description': 'Maximum 3D edge connecting measured camera centres, metres'},
+        'max_corridor_m': {'type': 'number', 'minimum': 0,
+                           'description': 'Maximum 3D closest-footprint corridor length, metres'},
+        'max_offered': {'type': 'integer', 'minimum': 1,
+                        'description': 'Hard offered-image cap; overflow refuses the attempt'},
+        'vertical_datum': {'type': 'string', 'minLength': 1, 'pattern': r'\S',
+                           'description': 'Declared datum of selected flight-log height in metres'},
+        'component_features': {'type': 'integer', 'enum': [0, 1, 2],
+                                'description': 'Imported component feature mode; orphans independently use 2'},
+        'cli_probe_evidence': {'type': 'string', 'minLength': 1,
+                               'description': 'Optional absolute path to project-owned passed probe evidence'},
+    },
+}
+
+
+def _orphan_id(name):
+    return str(name).replace('\\', '/').rsplit('/', 1)[-1].casefold()
+
+
+def validate_orphan_policy(policy):
+    """All spatial tolerances are explicit, in metres; no campaign defaults."""
+    allowed = set(ORPHAN_POLICY_SCHEMA['properties'])
+    if not isinstance(policy, dict) or set(policy) - allowed:
+        raise ValueError('orphan policy must be an object with only the documented policy fields')
+    for key in ('horizontal_margin_m', 'vertical_margin_m', 'footprint_link_m',
+                'max_corridor_m'):
+        value = policy.get(key)
+        if (type(value) not in (int, float) or not math.isfinite(value)
+                or value < 0 or (key == 'footprint_link_m' and value == 0)):
+            raise ValueError(f'orphan policy requires finite nonnegative {key}')
+    if type(policy.get('max_offered')) is not int or policy['max_offered'] < 1:
+        raise ValueError('orphan policy requires a positive max_offered')
+    if type(policy.get('component_features')) is not int or policy['component_features'] not in (0, 1, 2):
+        raise ValueError('orphan policy requires component_features 0, 1 or 2')
+    if not isinstance(policy.get('vertical_datum'), str) or not policy['vertical_datum'].strip():
+        raise ValueError('orphan policy requires an explicit vertical_datum')
+    if 'cli_probe_evidence' in policy and (not isinstance(policy['cli_probe_evidence'], str)
+            or not policy['cli_probe_evidence'].strip() or not Path(policy['cli_probe_evidence']).is_absolute()):
+        raise ValueError('cli_probe_evidence must be an absolute path or omitted')
+
+
+def read_orphan_policy(path, *, expected_sha256=None):
+    """Shared planner/runtime validation of the exact approved policy bytes."""
+    path = Path(path)
+    if not path.is_absolute():
+        raise ValueError('science.orphan_policy must name an absolute materialized JSON path')
+    content = path.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise ValueError('orphan policy changed since planning; review and rebuild the plan')
+    policy = json.loads(content)
+    validate_orphan_policy(policy)
+    return policy, digest
+
+
+def _orphan_surface(point, primitive):
+    """Closest XY point and interpolated Z on a measured local simplex."""
+    import numpy as np
+    if len(primitive) == 1:
+        return primitive[0]
+    if len(primitive) == 2:
+        delta = primitive[1] - primitive[0]
+        norm = float(delta[:2] @ delta[:2])
+        if norm == 0:
+            norm = float(delta @ delta)
+            t = float((point - primitive[0]) @ delta) / norm if norm else 0
+        else:
+            t = float((point[:2] - primitive[0, :2]) @ delta[:2]) / norm
+        return primitive[0] + np.clip(t, 0, 1) * delta
+    a, b, c = primitive
+    matrix = np.column_stack((b[:2] - a[:2], c[:2] - a[:2]))
+    try:
+        u, v = np.linalg.solve(matrix, point[:2] - a[:2])
+        if u >= -1e-10 and v >= -1e-10 and u + v <= 1 + 1e-10:
+            return a + u * (b - a) + v * (c - a)
+    except np.linalg.LinAlgError:
+        pass
+    choices = [_orphan_surface(point, primitive[[i, j]]) for i, j in ((0, 1), (1, 2), (2, 0))]
+    return min(choices, key=lambda p: (float(np.linalg.norm(p[:2] - point[:2])),
+                                       abs(float(p[2] - point[2]))))
+
+
+def _orphan_footprint(points, link):
+    """Local Delaunay simplices, never a global hull; long edges are absent.
+
+    Collinear tracks use adjacent samples. Disconnected islands and curved
+    tracks retain their holes when unsupported edges exceed the explicit link.
+    Navigation camera centres approximate coverage, not optical field of view.
+    """
+    import numpy as np
+    from scipy.spatial import Delaunay, QhullError
+    from shapely.geometry import Point, LineString, Polygon
+    from shapely.ops import unary_union
+    points = np.unique(np.asarray(points, dtype=float), axis=0)
+    if len(points) < 3:
+        raise ValueError('at least three distinct measured navigation positions per component are required')
+    primitives = [points[[i]] for i in range(len(points))]
+    edges = set()
+    _, unique_xy = np.unique(points[:, :2], axis=0, return_index=True)
+    planar = points[unique_xy]
+    try:
+        for triangle in Delaunay(planar[:, :2]).simplices:
+            p = planar[triangle]
+            pairs = ((0, 1), (1, 2), (2, 0))
+            if all(np.linalg.norm(p[i] - p[j]) <= link for i, j in pairs):
+                primitives.append(p)
+            for i, j in pairs:
+                edges.add(tuple(sorted((int(unique_xy[triangle[i]]), int(unique_xy[triangle[j]])))))
+    except QhullError:
+        axis = int(np.argmax(np.ptp(points, axis=0)))
+        order = np.argsort(points[:, axis], kind='stable')
+        edges.update((int(a), int(b)) for a, b in zip(order, order[1:]))
+    for a, b in sorted(edges):
+        if np.linalg.norm(points[a] - points[b]) <= link:
+            primitives.append(points[[a, b]])
+    shapes = []
+    for primitive in primitives:
+        xy = primitive[:, :2]
+        shapes.append(Point(xy[0]) if len(primitive) == 1 else
+                      LineString(xy) if len(primitive) == 2 else Polygon(xy))
+    return primitives, unary_union(shapes)
+
+
+def select_pair_orphans(component_members, navigation, orphan_ids, *, epsg, policy):
+    """Pure pair-local geometry. Caller supplies measured registration members.
+
+    Navigation records: {identity: {'xyz': [east, north, height], 'epsg': int,
+    'vertical_datum': str}}. Missing component poses refuse the entire attempt;
+    unknown orphan poses are individually excluded. No global set is mutated.
+    """
+    import numpy as np
+    from shapely.ops import nearest_points
+    from scipy.spatial import cKDTree
+    validate_orphan_policy(policy)
+    if type(epsg) is not int or not (32601 <= epsg <= 32660 or 32701 <= epsg <= 32760):
+        raise ValueError('explicit WGS84 UTM EPSG required')
+    if len(component_members) != 2:
+        raise ValueError('orphan injection requires exactly TWO alignments')
+    def pose(identity):
+        record = navigation.get(identity)
+        if not record:
+            raise ValueError('unknown_navigation')
+        if record.get('epsg') != epsg or record.get('vertical_datum') != policy['vertical_datum']:
+            raise ValueError('navigation_frame_mismatch')
+        try:
+            xyz = np.asarray(record['xyz'], dtype=float)
+            if xyz.shape != (3,) or not np.isfinite(xyz).all():
+                raise ValueError()
+        except (KeyError, TypeError, ValueError):
+            raise ValueError('unknown_navigation') from None
+        return xyz
+    footprints = []
+    for members in component_members:
+        if len(set(members)) < 3:
+            raise ValueError('insufficient measured component membership')
+        try:
+            footprints.append(_orphan_footprint([pose(i) for i in sorted(set(members))],
+                                                 policy['footprint_link_m']))
+        except ValueError as exc:
+            raise ValueError(f'component footprint unavailable: {exc}') from exc
+    left, right = nearest_points(footprints[0][1], footprints[1][1])
+    # GEOS may choose either endpoint of equally close parallel boundaries.
+    # Break those ties with measured vertices so order/platform cannot change
+    # which narrow corridor gets offered. Keep the true surface minimum when
+    # closest points lie in edge interiors rather than at measured vertices.
+    from shapely.geometry import Point
+    vertices = [np.unique(np.array([pose(i)[:2] for i in sorted(set(m))]), axis=0)
+                for m in component_members]
+    distances, indices = cKDTree(vertices[1]).query(vertices[0])
+    candidates = [(left.distance(right), (left.x, left.y), (right.x, right.y))]
+    candidates.extend((float(d), tuple(a), tuple(vertices[1][j]))
+                      for a, d, j in zip(vertices[0], distances, indices))
+    _, axy, bxy = min(candidates, key=lambda item: (round(item[0], 7), item[1], item[2]))
+    left, right = Point(axy), Point(bxy)
+    ends = []
+    for endpoint, (primitives, _) in zip((left, right), footprints):
+        q = np.array([endpoint.x, endpoint.y, 0.0])
+        choices = [_orphan_surface(q, p) for p in primitives]
+        minimum = min(float(np.linalg.norm(p[:2] - q[:2])) for p in choices)
+        ends.append(np.unique([p for p in choices if np.linalg.norm(p[:2] - q[:2]) <= minimum + 1e-7], axis=0))
+    a, b = min(((a, b) for a in ends[0] for b in ends[1]),
+               key=lambda pair: (float(np.linalg.norm(pair[1] - pair[0])), tuple(pair[0]), tuple(pair[1])))
+    corridor = np.array([a, b]) if np.linalg.norm(b - a) <= policy['max_corridor_m'] else None
+    offered, excluded, reasons = [], [], {}
+    covered = set().union(*(set(m) for m in component_members))
+    spatial = []
+    for primitives, _ in footprints:
+        centers = np.array([p[:, :2].mean(axis=0) for p in primitives])
+        radius = max(float(np.max(np.linalg.norm(p[:, :2] - center, axis=1)))
+                     for p, center in zip(primitives, centers))
+        spatial.append((cKDTree(centers), radius + policy['horizontal_margin_m'] + 1e-8))
+    for identity in sorted(set(orphan_ids)):
+        reason = None
+        if identity in covered:
+            reason = 'already_registered'
+        try:
+            q = pose(identity)
+        except ValueError as exc:
+            reason = str(exc)
+        if reason is None:
+            for index, (primitives, _) in enumerate(footprints):
+                tree, radius = spatial[index]
+                for candidate in sorted(tree.query_ball_point(q[:2], radius)):
+                    primitive = primitives[candidate]
+                    near = _orphan_surface(q, primitive)
+                    if (np.linalg.norm(q[:2] - near[:2]) <= policy['horizontal_margin_m'] + 1e-8
+                            and abs(q[2] - near[2]) <= policy['vertical_margin_m'] + 1e-8):
+                        reason = f'within_footprint_{index + 1}'
+                        break
+                if reason:
+                    break
+            if reason is None and corridor is not None:
+                near = _orphan_surface(q, corridor)
+                if (np.linalg.norm(q[:2] - near[:2]) <= policy['horizontal_margin_m'] + 1e-8
+                        and abs(q[2] - near[2]) <= policy['vertical_margin_m'] + 1e-8):
+                    reason = 'between_footprints'
+            reason = reason or 'outside_pair_support'
+        reasons[identity] = reason
+        (offered if reason.startswith('within_') or reason == 'between_footprints' else excluded).append(identity)
+    return {'algorithm': ORPHAN_SELECTOR_VERSION, 'epsg': epsg, 'policy': dict(policy),
+            'component_members': [sorted(set(m)) for m in component_members],
+            'offered_ids': offered, 'excluded_ids': excluded, 'spatial_reasons': reasons,
+            'corridor_xyz': corridor.tolist() if corridor is not None else None,
+            'refused': len(offered) > policy['max_offered'],
+            'refusal': 'max_offered_exceeded' if len(offered) > policy['max_offered'] else None}
+
+
+def measured_component_ids(component):
+    """Re-read an actual registration census; a count/manifest is insufficient."""
+    stem = Path(component['rsalign']).stem
+    # Registration indices need not start at zero for an input component.
+    path = Path(component['rsalign']).parent / 'identity' / (stem + '.csv')
+    with path.open(encoding='utf-8-sig', newline='') as stream:
+        header = re.fullmatch(r'#cameras\s+(\d+)\s*', stream.readline().strip())
+        rows = [r for r in csv.reader(stream, strict=True) if r and not r[0].startswith('#')]
+    if not header or int(header[1]) != component['camera_count'] or len(rows) != int(header[1]):
+        raise ValueError('component registration census disagrees with camera count')
+    members = [_orphan_id(r[0]) for r in rows]
+    if not all(members) or set(members) != {_orphan_id(i) for i in component.get('images', [])}:
+        raise ValueError('component manifest differs from measured registration membership')
+    return members
+
+
+def orphan_probe_plan():
+    """A controlled probe contract, NOT a claim that this CLI lane was tested.
+
+    Use two small components at original export locations and a fresh owned
+    instance/cache. Include one inside orphan, one corridor orphan (approved mask optional),
+    and one remote negative control. Preserve pre/post registration exports.
+    Never probe on a source tree; all added images are verified attempt copies.
+    """
+    return {'status': 'unverified', 'selector_version': ORPHAN_SELECTOR_VERSION,
+            'policy_fields': {'horizontal_margin_m': 'explicit navigation uncertainty around XY support',
+                              'vertical_margin_m': 'explicit uncertainty around interpolated navigation height',
+                              'footprint_link_m': 'maximum 3D edge joining measured camera centres',
+                              'max_corridor_m': 'maximum 3D length of the closest-footprint corridor',
+                              'max_offered': 'positive hard count cap; overflow refuses, never truncates',
+                              'vertical_datum': 'declared datum of the selected flight-log height in metres',
+                              'component_features': 'explicit 0, 1 or 2; orphans separately use 2',
+                              'cli_probe_evidence': 'optional absolute project-owned passed probe JSON'},
+            'checks': ['orphan_priors_only', 'component_poses_preserved_before_align',
+                       'separate_feature_modes', 'mask_selection_exact',
+                       'registration_identity_exact', 'output_frame_preserved'],
+            'procedure': [
+                'Import exactly two components; export their registration before adding images.',
+                'Set the explicit component feature mode while only imported inputs exist.',
+                'Add offered.imagelist; import orphan-only priors; attach each mask by literal full-path selection.',
+                'Select offered paths only and set feature source 2; capture measured masks/features/priors.',
+                'Re-export component registrations BEFORE align; confirm estimated poses did not change.',
+                'Align once; measure registration identities, retained original cameras and output CRS.',
+                'Confirm the remote control was never added and no source bytes/sidecars changed.',
+                'Capture before/prepared/aligned measurements and expected controls with SHA256 bindings.',
+                'Use python -m testing.rs_merge_orphan_probe plan/prepare/record/verify; native replay computes checks.'],
+            'capture_limit': 'Native capture adapter remains unverified. There is no documented '
+                'exportSelectedInputs command. Missing feature/mask readback must fail, never be '
+                'filled from dispatched commands.',
+            'capture_schema': {
+                'schema': 1, 'selector_version': ORPHAN_SELECTOR_VERSION,
+                'artifacts': 'expected, before, prepared, aligned: each {path, sha256}',
+                'dependencies': 'list of {path, sha256}; current merge driver, merge batch, '
+                    'RealityScanCLI, boot/abort helpers and pinned RS executable are mandatory',
+                'expected': 'policy, epsg, component_members (exactly two measured lists), navigation, '
+                    'orphan_ids (inside, between and remote controls), images {id:{path,sha256}}, '
+                    'masks {id:{path,sha256}}, orphan_priors {id:{x,y,z,...}}, '
+                    'source_files [{path,sha256}], source_snapshots [{root,fingerprint}]',
+                'measurement': 'inputs [{path,priors:{x,y,z,yaw,pitch,roll,accuracy:[6],'
+                    'position_prior:bool,orientation_prior:bool},feature_source,mask_path}], '
+                    'components [{members:[{path,pose:[x,y,z,r00,...,r22]}]}], '
+                    'epsg, vertical_datum; prepared is captured BEFORE alignment; '
+                    'all fields must be read back, not inferred from command success'}}
+
+
+def replay_orphan_probe(capture_manifest, project_root, *, policy=None, epsg=None, executable=None):
+    """Read-only replay of measurements, never trust stored verdicts/checkboxes.
+
+    This is a capture-adapter contract, not a claim that RS exposes these fields
+    in one native export. An adapter must preserve measured input settings and
+    component poses; absent readback is a failure. Synthetic fixtures exercise
+    this validator only. No live capture or RS subprocess is implemented here.
+    """
+    from modules.source_inventory import file_hash, source_fingerprint
+    project_root = Path(project_root).resolve()
+    identities = []
+
+    def read_bound(record, *, owned=False, parse=False):
+        path = Path(record['path'])
+        if not path.is_absolute():
+            raise ValueError('orphan probe artifact path must be absolute')
+        path = path.resolve()
+        if owned and not path.is_relative_to(project_root):
+            raise ValueError('orphan probe artifact must be project-owned')
+        digest = file_hash(path)
+        if digest != record['sha256']:
+            raise ValueError('orphan probe artifact content changed: ' + str(path))
+        identities.append({'path': str(path), 'sha256': digest})
+        return json.loads(path.read_text(encoding='utf-8')) if parse else path
+
+    capture_manifest = Path(capture_manifest).resolve()
+    manifest = read_bound({'path': str(capture_manifest), 'sha256': file_hash(capture_manifest)},
+                          owned=True, parse=True)
+    if manifest.get('schema') != 1 or manifest.get('selector_version') != ORPHAN_SELECTOR_VERSION:
+        raise ValueError('unsupported orphan probe capture schema')
+    records = manifest['artifacts']
+    expected, before, prepared, aligned = [read_bound(records[key], owned=True, parse=True)
+                                            for key in ('expected', 'before', 'prepared', 'aligned')]
+    validate_orphan_policy(expected['policy'])
+    if epsg is not None and expected['epsg'] != epsg:
+        raise ValueError('orphan probe was captured for a different UTM frame')
+    if policy is not None and any(expected['policy'][key] != policy[key]
+                                 for key in ORPHAN_POLICY_SCHEMA['required']):
+        raise ValueError('orphan probe was captured for a different policy')
+    dependencies = {read_bound(record) for record in manifest['dependencies']}
+    scripts = Path(__file__).resolve().parent / 'modules/realityscan_interface/RS_CLI/Scripts'
+    required = {Path(__file__).resolve(), scripts.parent.parent / 'realityscan_cli.py'}
+    required.update(scripts / name for name in ('MergeZoneComponents.bat', 'startRealityScan.bat',
+                                               'RuntimeAbortGuard.bat', 'SetVariables.bat'))
+    executable = executable or os.environ.get('RS_EXECUTABLE')
+    if not executable or Path(executable).resolve() not in dependencies or not required <= dependencies:
+        raise ValueError('orphan probe dependencies must bind the current workflow and RS_EXECUTABLE')
+    for record in expected['source_files']:
+        read_bound(record)
+    if not expected['source_files']:
+        raise ValueError('orphan probe requires source content controls')
+    snapshots = expected['source_snapshots']
+    if not snapshots:
+        raise ValueError('orphan probe requires source tree snapshots')
+    for snapshot in snapshots:
+        root = Path(snapshot['root'])
+        if not root.is_absolute() or source_fingerprint(root) != snapshot['fingerprint']:
+            raise ValueError('orphan probe source tree changed')
+        identities.append({'source_root': str(root.resolve()), 'fingerprint': snapshot['fingerprint']})
+    if any(not any(Path(record['path']).resolve().is_relative_to(Path(s['root']).resolve())
+                   for s in snapshots) for record in expected['source_files']):
+        raise ValueError('orphan probe source controls lack tree coverage')
+    images = expected['images']
+    for name, record in images.items():
+        path = read_bound(record, owned=True)
+        if _orphan_id(path) != name:
+            raise ValueError('orphan probe image identity mismatch')
+    if len({record['sha256'] for record in images.values()}) != len(images):
+        raise ValueError('orphan probe images contain duplicate content')
+    for name, record in expected['masks'].items():
+        if name not in images:
+            raise ValueError('orphan probe mask references unknown image')
+        read_bound(record, owned=True)
+    spatial = select_pair_orphans(expected['component_members'], expected['navigation'],
+        expected['orphan_ids'], epsg=expected['epsg'], policy=expected['policy'])
+    original = set().union(*map(set, expected['component_members']))
+    offered = set(spatial['offered_ids'])
+    wanted = original | offered
+    if set(images) != original | set(expected['orphan_ids']):
+        raise ValueError('orphan probe expected image set differs from measured controls')
+    for name in offered:
+        prior = expected['orphan_priors'].get(name, {})
+        if ([prior.get(k) for k in ('x', 'y', 'z')] != expected['navigation'][name]['xyz']
+                or prior.get('position_prior') is not True):
+            raise ValueError('orphan probe expected priors differ from navigation')
+
+    def inputs(snapshot):
+        result = {}
+        for row in snapshot['inputs']:
+            name = _orphan_id(row['path'])
+            if name in result or name not in images or Path(row['path']).resolve() != Path(images[name]['path']).resolve():
+                raise ValueError('orphan probe input identity ambiguous or redirected')
+            priors = row.get('priors', {})
+            if not all(type(priors.get(k)) in (int, float) and math.isfinite(priors[k])
+                       for k in ('x', 'y', 'z', 'yaw', 'pitch', 'roll')):
+                raise ValueError('orphan probe input prior readback incomplete')
+            accuracy = priors.get('accuracy')
+            if (not isinstance(accuracy, list) or len(accuracy) != 6
+                    or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in accuracy)
+                    or any(type(priors.get(k)) is not bool for k in ('position_prior', 'orientation_prior'))):
+                raise ValueError('orphan probe prior accuracy/availability readback incomplete')
+            if ((snapshot is not before or row.get('feature_source') is not None)
+                    and (type(row.get('feature_source')) is not int or row['feature_source'] not in (0, 1, 2))):
+                raise ValueError('orphan probe feature readback missing')
+            if 'mask_path' not in row or (row['mask_path'] is not None and not isinstance(row['mask_path'], str)):
+                raise ValueError('orphan probe mask readback missing')
+            result[name] = row
+        return result
+
+    def components(snapshot):
+        result = []
+        for component in snapshot['components']:
+            members = {}
+            for row in component['members']:
+                name = _orphan_id(row['path'])
+                pose = row['pose']
+                if (name in members or name not in images
+                        or Path(row['path']).resolve() != Path(images[name]['path']).resolve()
+                        or len(pose) != 12 or any(type(v) not in (int, float) or not math.isfinite(v) for v in pose)):
+                    raise ValueError('orphan probe component pose/identity readback incomplete')
+                members[name] = pose
+            if not members:
+                raise ValueError('orphan probe empty component')
+            result.append(members)
+        return sorted(result, key=lambda item: tuple(sorted(item)))
+
+    b, p, a = [inputs(s) for s in (before, prepared, aligned)]
+    bc, pc, ac = [components(s) for s in (before, prepared, aligned)]
+    registered = set().union(*(set(c) for c in ac)) if ac else set()
+    reasons = set(spatial['spatial_reasons'].values())
+    frame = lambda s: (s['epsg'], s['vertical_datum'])
+    def mask_matches(name, row):
+        record = expected['masks'].get(name)
+        return (row['mask_path'] is None if record is None else
+                isinstance(row['mask_path'], str) and
+                Path(row['mask_path']).resolve() == Path(record['path']).resolve())
+    checks = {
+        'spatial_controls_exact': not spatial['refused'] and bool(offered) and
+            'between_footprints' in reasons and any(r.startswith('within_footprint_') for r in reasons) and
+            'outside_pair_support' in reasons and set(b) == original and set(p) == wanted and set(a) == wanted,
+        'orphan_priors_only': all(n in p and p[n]['priors'] == row['priors'] for n, row in b.items()) and
+            set(expected['orphan_priors']) == offered and all(n in p and
+                p[n]['priors'] == expected['orphan_priors'][n] for n in offered),
+        'component_poses_preserved_before_align': bc == pc and
+            sorted([sorted(c) for c in bc]) == sorted([sorted(c) for c in expected['component_members']]),
+        'separate_feature_modes': all(p[n]['feature_source'] == (2 if n in offered else
+            expected['policy']['component_features']) for n in p),
+        'mask_selection_exact': all(mask_matches(n, row) for n, row in p.items()),
+        'registration_identity_exact': original <= registered <= wanted and
+            any(set(c) & offered and set(c) & original for c in ac),
+        'output_frame_preserved': all(frame(s) == (expected['epsg'], expected['policy']['vertical_datum'])
+                                      for s in (before, prepared, aligned)),
+        'source_content_unchanged': True,  # All declared source bytes were rehashed above.
+    }
+    return {'schema': 2, 'status': 'passed' if all(checks.values()) else 'failed',
+            'checks': checks, 'failures': sorted(k for k, value in checks.items() if not value),
+            'spatial_evidence': spatial, 'dependencies': identities,
+            'fingerprint': hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()}
+
+
+def write_orphan_probe_evidence(capture_manifest, output_path, project_root):
+    """Generate GUI-consumable evidence from capture artifacts; no manual approval field."""
+    from modules.source_inventory import file_hash
+    output = Path(output_path).resolve()
+    project = Path(project_root).resolve()
+    if not output.is_relative_to(project) or output.exists():
+        raise ValueError('orphan probe evidence must be a new project-owned file')
+    result = replay_orphan_probe(capture_manifest, project)
+    evidence = {'schema': 2, 'capture_manifest': {'path': str(Path(capture_manifest).resolve()),
+        'sha256': file_hash(capture_manifest)}, 'validation': result}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open('x', encoding='utf-8') as stream:
+        json.dump(evidence, stream, indent=2, allow_nan=False)
+    return result
+
+
+def validate_orphan_probe_evidence(path, project_root, *, policy=None, epsg=None):
+    """Replay the linked measurements; a cached passed verdict has no authority."""
+    from modules.source_inventory import file_hash
+    path, project = Path(path).resolve(), Path(project_root).resolve()
+    if not path.is_relative_to(project):
+        raise ValueError('orphan probe evidence must be project-owned')
+    evidence = json.loads(path.read_text(encoding='utf-8'))
+    if evidence.get('schema') == 3:
+        from modules.orphan_import_probe import verify
+        record = evidence['recording_manifest']
+        result = verify(record['path'], record['sha256'], policy=policy, epsg=epsg)
+        if Path(result['project_root']).resolve() != project or result['status'] != 'passed':
+            raise ValueError('native orphan probe is incomplete or belongs to another project')
+        return result
+    if evidence.get('schema') != 2 or not isinstance(evidence.get('capture_manifest'), dict):
+        raise ValueError('orphan CLI probe requires replayable schema 2 evidence, not manual checks')
+    record = evidence['capture_manifest']
+    if file_hash(record['path']) != record['sha256']:
+        raise ValueError('orphan probe capture manifest content changed')
+    result = replay_orphan_probe(record['path'], project, policy=policy, epsg=epsg)
+    if result['status'] != 'passed':
+        raise ValueError('orphan CLI probe checks failed: ' + ', '.join(result['failures']))
+    return result
+
+
+def load_project_occlusion(selection_path=None, *, batch_root=None, env=None):
+    """Read current shared approval and canonical generated masks; never write.
+
+    Legacy native callers without a project selection remain compatible. An
+    explicit selection (including the probe) always requires Apply or Skip.
+    """
+    environment = os.environ if env is None else env
+    selected = selection_path or environment.get('RS_SELECTION_MANIFEST')
+    if not selected:
+        return None
+    from modules import project_occlusion
+    selection_path = Path(selected).resolve()
+    ambient = environment.get('RS_SELECTION_MANIFEST')
+    if ambient and Path(ambient).resolve() != selection_path:
+        raise ValueError('Occlusion selection differs from native RS_SELECTION_MANIFEST')
+    manifest_value = environment.get('RS_OCCLUSION_MANIFEST')
+    expected_sha = environment.get('RS_OCCLUSION_MANIFEST_SHA256', '')
+    if not manifest_value or not re.fullmatch('[0-9a-f]{64}', expected_sha):
+        raise ValueError('Project native operation requires approved RS_OCCLUSION_MANIFEST and SHA256')
+    project_arguments = {}
+    if env is not None:
+        if not environment.get('RS_PROJECT_FILE'):
+            raise ValueError('Explicit project environment requires RS_PROJECT_FILE')
+        project_arguments['project_file'] = environment['RS_PROJECT_FILE']
+    decision = project_occlusion.validate_external(manifest_value, expected_sha,
+                                                   str(selection_path), batch_root=batch_root, **project_arguments)
+    root = Path(decision['project_root'])
+    manifest_path = (root / decision['canonical_manifest']).resolve()
+    selection = json.loads(selection_path.read_text(encoding='utf-8'))
+    images = {_orphan_id(row['path']): row for row in selection['images']}
+    masks, canonical_ids = {}, {}
+    for row in decision['mappings']:
+        source = row.get('image')
+        if not isinstance(source, dict):
+            raise ValueError('Canonical mask lacks the verified selected image path/hash')
+        image_path = (root / source['path']).resolve()
+        name = _orphan_id(image_path)
+        if (name not in images or image_path != Path(images[name]['path']).resolve()
+                or source['sha256'] != images[name]['sha256']):
+            raise ValueError('Canonical mask differs from selected image identity/content')
+        if name in masks:
+            raise ValueError('Conflicting canonical masks for one image')
+        mask = (root / row['mask']['path']).resolve()
+        masks[name] = {'path': str(mask), 'sha256': row['mask']['sha256']}
+        canonical_ids[name] = row['image_id']
+    return {'manifest': {'path': str(manifest_path), 'sha256': expected_sha},
+            'selection_manifest': str(selection_path), 'project_id': decision['project_id'],
+            'selection_hash': decision['selection_hash'], 'batch_fingerprint': decision['batch_fingerprint'],
+            'decision': decision['decision'], 'masks': masks,
+            'canonical_ids': canonical_ids}
+
+
+def load_orphan_context(selection_path, policy_path, components, *, expected_policy_sha256=None,
+                        recording_probe=False, cancelled=None, env=None):
+    """Read approved project selection, current hashes and measured membership.
+
+    The policy JSON supplies every geometry margin, vertical datum and component
+    feature mode. Optional cli_probe_evidence names a project-owned evidence JSON
+    matching orphan_probe_plan(); without it attempts are prepared but refused.
+    """
+    from modules.project_reviews import ReviewStore
+    from modules.source_inventory import approval_token, file_hash as hash_file, _check_cancelled
+    def file_hash(path):
+        return hash_file(path, cancelled=cancelled)
+    _check_cancelled(cancelled)
+    from modules.image_batcher.batch_directory import validate_selection_manifest
+    policy, _ = read_orphan_policy(policy_path, expected_sha256=expected_policy_sha256)
+    selection_path, policy_path = Path(selection_path).resolve(), Path(policy_path).resolve()
+    selection = json.loads(selection_path.read_text(encoding='utf-8'))
+    validate_selection_manifest(selection_path, selection['images_root'], selection['flight_log'], cancelled=cancelled)
+    project_root = next((p for p in selection_path.parents if (p / '.rovscan-owner.json').is_file()), None)
+    if project_root is None or not selection_path.is_relative_to(project_root / 'proc'):
+        raise ValueError('orphan selection must belong to an owned project proc tree')
+    owner = json.loads((project_root / '.rovscan-owner.json').read_text(encoding='utf-8'))
+    if selection.get('project_id') != owner.get('project_id'):
+        raise ValueError('orphan selection project ownership mismatch')
+    project = SimpleNamespace(root=project_root, project_id=owner['project_id'],
+                              resolve_path=lambda p: project_root / p)
+    store = ReviewStore(project)
+    inventory = store.selection()
+    if selection.get('selection_hash') != approval_token(inventory):
+        raise ValueError('orphan selection is stale')
+    for name in ('quality', 'spatial'):
+        if selection.get(name + '_review_hash') != store.require_approved(name)['assessment_hash']:
+            raise ValueError(f'orphan {name} approval changed')
+    root = Path(selection['images_root']).resolve()
+    if not root.is_relative_to(selection_path.parent):
+        raise ValueError('orphan selected images must be project-owned copies')
+    images, masks = {}, {}
+    for item in inventory:
+        _check_cancelled(cancelled)
+        if item.kind != 'image' or not item.included or item.duplicate_of:
+            continue
+        path = root / item.camera / Path(item.path).name
+        identity = _orphan_id(path)
+        if identity in images or not path.resolve().is_relative_to(root) or file_hash(path) != item.sha256:
+            raise ValueError('orphan image identity ambiguous, redirected or content changed')
+        images[identity] = {'path': str(path), 'sha256': item.sha256}
+    listed = {str(Path(i['path']).resolve()): i['sha256'] for i in selection['images']}
+    if len(listed) != len(selection['images']) or listed != {i['path']: i['sha256'] for i in images.values()}:
+        raise ValueError('orphan manifest membership does not match current approved selection')
+    environment = os.environ if env is None else env
+    occlusion = (load_project_occlusion(selection_path, env=env) if recording_probe or
+                 environment.get('RS_SELECTION_MANIFEST') or environment.get('RS_OCCLUSION_MANIFEST') else None)
+    by_path = {i.path: i for i in inventory}
+    for item in ([] if occlusion is not None else inventory):
+        if item.kind != 'mask' or not item.included:
+            continue
+        image = by_path[item.mask_for]
+        image = by_path[image.duplicate_of] if image.duplicate_of else image
+        identity = _orphan_id(image.path)
+        path = root / image.camera / (Path(image.path).name + '.mask' + Path(item.path).suffix)
+        if identity in masks or not path.resolve().is_relative_to(root) or file_hash(path) != item.sha256:
+            raise ValueError('orphan mask identity ambiguous, redirected or content changed')
+        masks[identity] = {'path': str(path), 'sha256': item.sha256}
+    listed_masks = {str(Path(i['path']).resolve()): i['sha256'] for i in selection.get('masks', [])}
+    if occlusion is not None:
+        if listed_masks:
+            raise ValueError('Native project selections must retire source masks before batching')
+        masks = occlusion['masks']
+    elif listed_masks != {i['path']: i['sha256'] for i in masks.values()}:
+        raise ValueError('orphan mask manifest differs from approved inventory')
+    flight_log = Path(selection['flight_log']).resolve()
+    epsg = selection['epsg']
+    zone = utm_zone_from_flight_log_name(str(flight_log))
+    if (not flight_log.is_relative_to(selection_path.parent) or zone is None or epsg_for_utm_zone(*zone) != epsg
+            or file_hash(flight_log) != selection['flight_log_sha256']):
+        raise ValueError('orphan navigation changed or has a different UTM frame')
+    with flight_log.open(encoding='utf-8-sig', newline='') as stream:
+        reader = csv.reader(stream, delimiter=';')
+        header = next(reader)
+        rows = {}
+        for row in reader:
+            _check_cancelled(cancelled)
+            if not row:
+                continue
+            identity = _orphan_id(row[0])
+            if identity in rows or identity not in images or len(row) != len(header):
+                raise ValueError('orphan navigation has duplicate/unknown/incomplete identities')
+            rows[identity] = row
+    if len(header) != 14 or header[0].casefold() != 'filename':
+        raise ValueError('orphan navigation requires the explicit 14-column camera flight log')
+    navigation = {}
+    for identity, row in rows.items():
+        try:
+            xyz = [float(v) for v in row[1:4]]
+        except ValueError:
+            xyz = None
+        navigation[identity] = {'xyz': xyz, 'epsg': epsg, 'vertical_datum': policy['vertical_datum']}
+    registered = set()
+    for component in components:
+        _check_cancelled(cancelled)
+        registered.update(measured_component_ids(component))
+    if not registered <= images.keys():
+        raise ValueError('registered component members are absent from the approved selection')
+    probe = orphan_probe_plan()
+    probe_identity = None
+    probe_replay = None
+    if policy.get('cli_probe_evidence') and not recording_probe:
+        path = Path(policy['cli_probe_evidence']).resolve()
+        probe_replay = validate_orphan_probe_evidence(path, project_root, policy=policy, epsg=epsg)
+        probe_identity = align_fingerprint.file_identity(str(path))
+    from modules import camera_registry
+    calibration_profiles = {n: (camera_registry.calibration_xmp(camera) if camera else None)
+                            for n in images for camera in [camera_registry.identify(n)]}
+    fingerprint = {'algorithm': ORPHAN_SELECTOR_VERSION, 'policy': policy,
+                   'policy_file': align_fingerprint.file_identity(str(policy_path)),
+                   'selection': align_fingerprint.file_identity(str(selection_path)),
+                   'navigation': align_fingerprint.file_identity(str(flight_log)),
+                   'images': images, 'masks': masks, 'occlusion': occlusion,
+                   'calibration_profiles': calibration_profiles,
+                   'cli_probe': probe_identity,
+                   'cli_probe_replay': probe_replay['fingerprint'] if probe_replay else None}
+    return {'policy': policy, 'epsg': epsg, 'images': images, 'masks': masks,
+            'calibration_profiles': calibration_profiles, 'occlusion': occlusion,
+            'navigation': navigation, 'rows': rows, 'header': header,
+            'registered': registered, 'fingerprint': fingerprint,
+            'cli_ready': probe_identity is not None, 'probe_plan': probe,
+            'project_root': str(project_root),
+            'flight_log': str(flight_log), 'zone': zone, 'review_store': store,
+            'selection_hash': selection['selection_hash']}
+
+
+def prepare_orphan_attempt(context, subset, directory, *, scene_capacity=None):
+    """Fresh immutable input copies/lists; never write beside selected sources."""
+    from modules.source_inventory import file_hash
+    if context.get('occlusion') is not None:
+        if load_project_occlusion(context['occlusion']['selection_manifest']) != context['occlusion']:
+            raise ValueError('Approved occlusion decision changed before orphan attempt')
+    if 'review_store' in context:
+        from modules.source_inventory import approval_token
+        if approval_token(context['review_store'].selection()) != context['selection_hash']:
+            raise ValueError('orphan selection approvals changed before attempt')
+        for key in ('selection', 'navigation', 'policy_file', 'cli_probe'):
+            original = context['fingerprint'][key]
+            if original is not None and align_fingerprint.file_identity(original['path']) != original:
+                raise ValueError('orphan provenance changed before attempt: ' + key)
+        if context['cli_ready']:
+            replay = validate_orphan_probe_evidence(context['policy']['cli_probe_evidence'],
+                context['project_root'], policy=context['policy'], epsg=context['epsg'])
+            if replay['fingerprint'] != context['fingerprint']['cli_probe_replay']:
+                raise ValueError('orphan probe provenance changed before attempt')
+    members = [measured_component_ids(c) for c in subset]
+    candidates = set(context['images']) - context['registered']
+    if candidates:
+        evidence = select_pair_orphans(members, context['navigation'], candidates,
+                                       epsg=context['epsg'], policy=context['policy'])
+    else:
+        evidence = dict(algorithm=ORPHAN_SELECTOR_VERSION, epsg=context['epsg'], policy=dict(context['policy']),
+                        component_members=members, offered_ids=[], excluded_ids=[], spatial_reasons={},
+                        refused=False, refusal=None)
+    evidence['cli_status'] = 'probe_evidence_supplied' if context['cli_ready'] else 'probe_required'
+    if scene_capacity is not None and len(evidence['offered_ids']) > scene_capacity:
+        evidence.update(refused=True, refusal='orphan_scene_ceiling_exceeded')
+    directory = Path(directory)
+    directory.mkdir(exist_ok=False)
+    if not evidence['offered_ids']:
+        evidence.update(cli_status='not_required', reason='no_pair_local_orphans')
+    elif not context['cli_ready']:
+        evidence.update(refused=True, refusal='orphan_cli_probe_required', controlled_probe=context['probe_plan'])
+    evidence_path = directory / 'orphan_selection.json'
+    evidence_path.write_text(json.dumps(evidence, indent=2, allow_nan=False), encoding='utf-8')
+    if evidence['refused'] or not evidence['offered_ids']:
+        return evidence, None
+    return evidence, stage_orphan_inputs(context, evidence['offered_ids'], directory)
+
+
+def stage_orphan_inputs(context, offered_ids, directory):
+    """Copy already-scoped pixels/priors; no RS execution or readiness assertion.
+
+    The production caller gates on probe evidence; the tiny recorder calls this
+    data-only helper after pinning its reviewed geometry and control selection.
+    """
+    from modules.source_inventory import file_hash
+    from modules import camera_registry
+    directory = Path(directory)
+    calibrations = {}
+    if 'calibration_profiles' in context:
+        stems = set()
+        for identity in offered_ids:
+            camera = camera_registry.identify(identity)
+            content = context['calibration_profiles'].get(identity)
+            if camera is None or content is None:
+                raise ValueError('Offered orphan has no approved native calibration profile: ' + identity)
+            camera_registry.validate_calibration_xmp(content, camera)
+            stem = Path(context['images'][identity]['path']).stem.casefold()
+            if stem in stems:
+                raise ValueError('Orphan calibration sidecar stem collision')
+            stems.add(stem)
+            calibrations[identity] = content
+    images = directory / 'images'
+    images.mkdir()
+    paths, mask_lines, rows = [], [], []
+    for identity in offered_ids:
+        item = context['images'][identity]
+        source = Path(item['path'])
+        target = images / source.name
+        # Never inherit solved pose XMP. New inputs receive native calibration only.
+        for value in (str(source), str(target)):
+            if not value.isascii() or any(c in value for c in '&|<>^%!"\'\r\n\t'):
+                raise ValueError('orphan CLI paths must be ASCII without cmd metacharacters')
+        if file_hash(source) != item['sha256']:
+            raise ValueError('orphan image changed before staging')
+        shutil.copyfile(source, target)
+        if file_hash(target) != item['sha256']:
+            raise ValueError('orphan image changed during staging')
+        if identity in calibrations:
+            with target.with_suffix('.xmp').open('x', encoding='utf-8') as stream:
+                stream.write(calibrations[identity])
+        paths.append(str(target))
+        row = list(context['rows'][identity])
+        if not all(math.isfinite(float(v)) for v in row[1:]):
+            raise ValueError('orphan priors contain unknown/nonfinite fields')
+        row[0] = str(target)
+        rows.append(row)
+        if identity in context['masks']:
+            mask = context['masks'][identity]
+            output = images / (source.name + '.mask' + Path(mask['path']).suffix)
+            if file_hash(Path(mask['path'])) != mask['sha256']:
+                raise ValueError('orphan mask changed before staging')
+            shutil.copyfile(mask['path'], output)
+            if file_hash(output) != mask['sha256']:
+                raise ValueError('orphan mask changed during staging')
+            mask_lines.append(str(target) + '|' + str(output))
+    def write_list(name, lines):
+        path = directory / name
+        path.write_bytes(('\r\n'.join(lines) + ('\r\n' if lines else '')).encode('ascii'))
+        return str(path)
+    inputs = {'list': write_list('offered.imagelist', paths),
+              'masks': write_list('masks.txt', mask_lines), 'root': str(images),
+              'component_features': context['policy']['component_features']}
+    log = directory / Path(context['flight_log']).name
+    with log.open('w', encoding='utf-8', newline='') as stream:
+        writer = csv.writer(stream, delimiter=';', lineterminator='\n')
+        writer.writerow(context['header'])
+        writer.writerows(rows)
+    inputs['flight_log'] = str(log)
+    inputs['params'] = write_flight_log_params(os.path.join(METADATA_DIR, 'FlightLogParams.xml'),
+        str(directory / 'FlightLogParams.xml'), zone=context['zone'][0], band=context['zone'][1])
+    inputs['has_orphans'] = bool(paths)
+    return inputs
 
 # Escalation ladder - one variable per rung. Order is revisited by the
 # D7 probe verdict (testing/MERGE_TEST_PLAN.md "D7 probe wave"): if
@@ -457,50 +1265,38 @@ def partition_clusters(manifests: list[dict], logger,
 
 
 def attribute_result(input_manifests: list[dict], peel_counts: list[int],
-                     logger, loss_tolerance: int = 0) -> tuple[list[dict], str]:
-    """Map peel-loop component counts back to input-manifest subsets.
+                     logger, loss_tolerance: int = 0,
+                     peel_members: list[list[str]] | None = None,
+                     offered_members: list[str] | None = None) -> tuple[list[dict], str]:
+    """Attribute selected-component registration exports to parent subsets.
 
-    CLI fact (smoke E2E, 2026-07-24): a merge/align leaves the SOURCE
-    components in the scene alongside the freshly fused one - the peel
-    of a fused 78+42 pair reads [120, 78, 42]. So peel entries are
-    attributed LARGEST FIRST against the remaining inputs; an entry
-    matching no remaining subset but equal to an already-consumed input's
-    count is that input's RESIDUAL SOURCE component - expected, recorded,
-    never adopted.
+    Without peel_members, return count-only candidates with no membership,
+    loss or duplicate-collapse certification. With measured memberships,
+    accept only subsets covering every observed image within the unique-image
+    loss budget. Original source components left in the scene are residuals.
+    Ambiguous subsets or bounded-search exhaustion are never certified.
+    """
+    # Counts identify candidate subsets, never camera membership or retention.
+    # Only the selected-component registration export can supply that evidence.
+    measured = peel_members is not None
+    if measured and (len(peel_members) != len(peel_counts) or any(
+            len(names) != count or any(not str(n).strip() for n in names)
+            for names, count in zip(peel_members, peel_counts))):
+        raise ValueError('registration membership disagrees with peel counts')
 
-    DUPLICATES (2026-09-06). The copy layout puts every overlap image into
-    both zones it touches, so two inputs can share basenames, and the fused
-    component then holds EITHER both copies (NA173 F2: 78 + 80 with 21
-    shared basenames peeled as 158) OR one camera per unique image (H2063,
-    the other session's numbers: 400 + 360 with 4 shared peeled as 756).
-    Both are lossless fusions. A subset therefore matches a peel count
-    anywhere from its UNIQUE basename count up to its camera-count SUM;
-    only a count BELOW the unique count is a real loss, and that shortfall
-    must fit `loss_tolerance`. The previous rule ("a fusion's count is
-    EXACTLY the sum") read every collapsed fusion as a loss of exactly the
-    duplicate count and rejected it as ambiguous - two byte-perfect
-    cross-zone fusions on H2063 were thrown away that way.
+    def image_key(name):
+        return os.path.basename(str(name).replace('\\', '/')).lower()
 
-    Returns (results, confidence). Each result dict carries its
-    peel_index (-> <name>_c<K>.rsalign), camera_count, inputs (consumed
-    keys; empty for residuals), members (attributed basename union; None
-    when unattributable), residual flag, `loss` (cameras REALLY lost) and
-    `collapsed` (duplicate copies RealityScan folded into one camera).
-    confidence 'exact' iff every entry was uniquely attributed or a
-    residual and every input was consumed.
-
-    `loss_tolerance` (absolute cameras, 0 = exact only) admits a subset whose
-    unique count EXCEEDS the peel count by up to that many cameras - i.e. a
-    fusion that dropped a few marginal cameras. Without it a solver-lossy
-    fusion is invisible: H2024's hull fused 4,860 of 4,865 cameras on every
-    rung and was rejected all three times because 4,860 is not an exact
-    subset sum (FINDINGS 2026-07-28). Lossless matches always win; a lossy
-    match is only considered when no lossless one exists."""
     by_key = {component_analysis.component_key(m): m for m in input_manifests}
+    offered = {image_key(n) for n in (offered_members or [])}
+    if offered and not measured:
+        raise ValueError('orphan attribution requires measured registration membership')
     remaining = {k: m['camera_count'] for k, m in by_key.items()}
-    basenames = {k: {os.path.basename(str(i)).lower()
+    basenames = {k: {image_key(i)
                      for i in (m.get('images') or [])}
                  for k, m in by_key.items()}
+    if offered & set().union(*basenames.values()):
+        raise ValueError('offered orphans include an existing registered member')
     # A manifest with no image list (older exports) cannot be de-duplicated:
     # its unique count is its camera count, exactly the pre-2026-09-06 rule.
     for k, m in by_key.items():
@@ -512,7 +1308,19 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
     order = sorted(range(len(peel_counts)), key=lambda i: -peel_counts[i])
     by_index: dict[int, dict] = {}
     for idx in order:
-        count = peel_counts[idx]
+        full_count = peel_counts[idx]
+        added = ([image_key(n) for n in peel_members[idx] if image_key(n) in offered]
+                 if measured else [])
+        count = full_count - len(added)
+        observed = ({image_key(n) for n in peel_members[idx]}
+                    if measured else None)
+        if measured:
+            observed -= offered
+        if added and count == 0:
+            by_index[idx] = {'peel_index': idx, 'camera_count': full_count,
+                             'inputs': [], 'members': added, 'residual': True,
+                             'offered_registered': added, 'evidence': 'registration'}
+            continue
         matched, matched_loss, matched_collapsed = None, 0, 0
         keys = sorted(remaining)
         # (loss, kind, -len, chosen, collapsed, unique, total) per candidate
@@ -521,31 +1329,65 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
         # (some folded - or a loss smaller than the duplicate count, which
         # this instrument cannot tell apart), 3 = below unique (real loss).
         candidates: list[tuple] = []
+        suffix_totals = [0] * (len(keys) + 1)
+        suffix_members = [set() for _ in range(len(keys) + 1)]
+        for i in range(len(keys) - 1, -1, -1):
+            suffix_totals[i] = suffix_totals[i + 1] + remaining[keys[i]]
+            suffix_members[i] = suffix_members[i + 1] | basenames[keys[i]]
+        search_calls = 0
+        search_exhausted = False
 
         def search(i, chosen, total, union):
+            nonlocal search_calls, search_exhausted
+            search_calls += 1
+            if search_calls > 100_000:
+                search_exhausted = True
+                return
+            if total + suffix_totals[i] < count:
+                return
+            if measured and not observed <= union | suffix_members[i]:
+                return
             if chosen:
                 unique = len(union)
                 if unique - loss_tolerance > count:
                     return  # every superset has at least this many unique
                 if total >= count:
-                    if count == total:
+                    if measured:
+                        loss = len(union - observed)
+                        collapsed = total - count - loss
+                        if (observed <= union and loss <= loss_tolerance
+                                and collapsed >= 0):
+                            kind = 0 if collapsed == 0 else 1
+                            candidates.append((loss, kind, -len(chosen), list(chosen),
+                                               collapsed, unique, total))
+                    elif count == total:
                         kind, loss, collapsed = 0, 0, 0
                     elif count >= unique:
                         kind = 1 if count == unique else 2
                         loss, collapsed = 0, total - count
                     else:
                         kind, loss, collapsed = 3, unique - count, total - unique
-                    candidates.append((loss, kind, -len(chosen), list(chosen),
-                                       collapsed, unique, total))
+                    if not measured:
+                        candidates.append((loss, kind, -len(chosen), list(chosen),
+                                           collapsed, unique, total))
             if i >= len(keys):
                 return
             k = keys[i]
             chosen.append(k)
             search(i + 1, chosen, total + remaining[k], union | basenames[k])
             chosen.pop()
-            search(i + 1, chosen, total, union)
+            if not search_exhausted:
+                search(i + 1, chosen, total, union)
 
-        search(0, [], 0, set())
+        if count == suffix_totals[0] and all(remaining[k] > 0 for k in keys):
+            # Every proper subset has fewer cameras: one uniquely possible sum.
+            search(len(keys), keys, suffix_totals[0], suffix_members[0])
+        else:
+            search(0, [], 0, set())
+        if search_exhausted:
+            candidates.clear()
+            confidence = 'ambiguous'
+            logger.warning('attribution search limit reached; no subset certified')
         if candidates:
             candidates.sort(key=lambda t: (t[0], t[1], t[2]))
             lossless_exact = [c for c in candidates if c[0] == 0 and c[1] in (0, 1)]
@@ -557,16 +1399,16 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
                                    'candidate subsets, took %s',
                                    count, len(lossless_exact), best[3])
                 elif best[1] == 1:
-                    logger.info('peel count %d is the UNIQUE image count of %s '
-                                '(%d camera(s) summed): RealityScan folded %d '
-                                'duplicate cop%s into one camera - lossless',
+                    logger.info('peel count %d matches %s '
+                                '(%d camera(s) summed): %d duplicate '
+                                'collapse candidate(s), evidence=%s',
                                 count, best[3], best[6], best[4],
-                                'y' if best[4] == 1 else 'ies')
+                                'registration' if measured else 'count_only')
             elif candidates[0][0] == 0:
                 best = candidates[0]
                 logger.warning('peel count %d sits between the unique (%d) and '
-                               'summed (%d) camera counts of %s - adopted as a '
-                               'lossless fusion with %d duplicate(s) folded; a '
+                               'summed (%d) camera counts of %s - %d possible '
+                               'duplicate collapse(s); a '
                                'real loss smaller than the duplicate count is '
                                'indistinguishable from this',
                                count, best[5], best[6], best[3], best[4])
@@ -582,26 +1424,34 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
                                    '%d candidates at loss %d, took %s',
                                    count, len(tied), best[0], best[3])
                 else:
-                    logger.info('attributed peel count %d to %s with a '
-                                '%d-camera loss (tolerance %d)%s',
+                    logger.info('candidate peel count %d for %s with a '
+                                '%d-camera loss estimate (tolerance %d)%s',
                                 count, best[3], best[0], loss_tolerance,
                                 f', {best[4]} duplicate(s) folded' if best[4] else '')
             matched, matched_loss, matched_collapsed = best[3], best[0], best[4]
 
         if matched is not None:
-            members = set()
             for k in matched:
-                members |= set(by_key[k]['images'])
                 consumed_counts.append(remaining.pop(k))
-            by_index[idx] = {'peel_index': idx, 'camera_count': count,
-                             'inputs': matched, 'members': sorted(members),
-                             'residual': False, 'loss': matched_loss,
-                             'collapsed': matched_collapsed}
-        elif count in consumed_counts:
+            by_index[idx] = {'peel_index': idx, 'camera_count': full_count,
+                             'inputs': matched,
+                             'members': ([image_key(n) for n in peel_members[idx]]
+                                         if measured else None),
+                             'residual': False,
+                             'loss': matched_loss if measured else None,
+                             'collapsed': matched_collapsed if measured else None,
+                             'estimated_loss': matched_loss,
+                             'estimated_collapsed': matched_collapsed,
+                             'offered_registered': added,
+                             'evidence': 'registration' if measured else 'count_only'}
+        elif count in consumed_counts and (not measured or any(
+                observed == basenames[k] and count == by_key[k]['camera_count']
+                for k in by_key if k not in remaining)):
             consumed_counts.remove(count)
             by_index[idx] = {'peel_index': idx, 'camera_count': count,
                              'inputs': [], 'members': None, 'residual': True}
-        elif not remaining and count <= loss_tolerance:
+        elif not remaining and count <= loss_tolerance and (not measured or
+                observed <= set().union(*basenames.values())):
             # Bounded shed (2026-08-01, ON2026): the joint solve can split
             # weak boundary cameras into a fragment that is not a
             # subset-sum of whole inputs. With EVERY input already
@@ -626,6 +1476,8 @@ def attribute_result(input_manifests: list[dict], peel_counts: list[int],
     if remaining:
         confidence = 'ambiguous'
         logger.warning('inputs unattributed after peel: %s', remaining)
+    if not measured and confidence == 'exact':
+        confidence = 'count_only'
     results = [by_index[i] for i in sorted(by_index)]
     return results, confidence
 
@@ -802,8 +1654,24 @@ def run_merge_workflow(cli: RealityScanCLI, complist_path: str, out_dir: str,
                        name: str, mode: str, settings: list[str],
                        flight_log: str | None, params: str | None,
                        images_root: str, logs_dir: str, harvest: bool,
-                       logger):
+                       logger, orphan_inputs=None, preserve_component_poses=False):
     """One MergeZoneComponents.bat invocation with env plumbing."""
+    assert_safe_merge_harvest(images_root)
+    load_project_occlusion(batch_root=images_root or None)
+    for key in ('RS_MERGE_ORPHAN_LIST', 'RS_MERGE_ORPHAN_MASKS', 'RS_MERGE_ORPHAN_ROOT',
+                'RS_MERGE_ORPHAN_LOG', 'RS_MERGE_ORPHAN_PARAMS', 'RS_MERGE_COMPONENT_FEATURES'):
+        os.environ.pop(key, None)
+    if orphan_inputs is not None:
+        if mode != 'align':
+            raise ValueError('orphan injection is an align-only operation')
+        preserve_component_poses = True
+        os.environ['RS_MERGE_COMPONENT_FEATURES'] = str(orphan_inputs['component_features'])
+        if orphan_inputs['has_orphans']:
+            for key, field in [('LIST', 'list'), ('MASKS', 'masks'), ('ROOT', 'root'),
+                               ('LOG', 'flight_log'), ('PARAMS', 'params')]:
+                os.environ['RS_MERGE_ORPHAN_' + key] = orphan_inputs[field]
+    if preserve_component_poses:
+        flight_log = None  # never reimport navigation for estimated component poses
     if flight_log:
         os.environ['RS_MERGE_FLIGHT_LOG'] = flight_log
         os.environ['RS_MERGE_FLIGHT_LOG_PARAMS'] = params or ''
@@ -818,6 +1686,55 @@ def run_merge_workflow(cli: RealityScanCLI, complist_path: str, out_dir: str,
         os.environ.pop('RS_MERGE_IMAGES_ROOT', None)
     args = [complist_path, out_dir, name, mode, '1'] + settings
     return cli.run_batch_script('MergeZoneComponents.bat', args, logs_dir)
+
+
+def assert_safe_merge_harvest(images_root: str | None = None) -> None:
+    """Pool images are source-backed; this workflow must never sweep them.
+
+    Refuse at every Python entry point and in the batch file itself, before
+    settings persistence, directory creation or any RealityScan interaction.
+    Copy-layout zone trees remain the supported merge input.
+    """
+    pool = bool(os.environ.get('RS_ALIGN_POOL_DIR', '').strip())
+    if images_root:
+        marker = os.path.join(images_root, 'batch_inputs.json')
+        if os.path.isfile(marker):
+            with open(marker, encoding='utf-8') as fh:
+                batch = json.load(fh)
+            pool = pool or str(batch.get('params', {}).get(
+                'batch_zone_layout', '')).lower() == 'pool'
+    if pool:
+        raise ValueError('REFUSING merge: source-backed pool declared by '
+                         'RS_ALIGN_POOL_DIR or batch_inputs.json. '
+                         'Merge XMP harvesting must not write or move its '
+                         'sidecars. Use pipeline-owned copy-layout zones.')
+
+
+def peel_members_from(out_dir: str, name: str, counts: list[int]) -> list[list[str]]:
+    """Read and validate measured membership, paired with each peeled export.
+
+    The existing align reader only extracts column zero without validating its
+    header/count. Here independent ordinal counts must agree before adoption.
+    Duplicate basenames are legitimate copy-layout cameras and are preserved.
+    """
+    memberships = []
+    for index, count in enumerate(counts):
+        path = os.path.join(out_dir, 'identity', f'{name}_c{index}.csv')
+        with open(path, encoding='utf-8-sig', newline='') as fh:
+            header = re.fullmatch(r'#cameras\s+(\d+)\s*', fh.readline().strip())
+            if not header or int(header[1]) != count:
+                raise ValueError(f'{path}: registration header disagrees with peel count {count}')
+            names = []
+            for row in csv.reader(fh, strict=True):
+                if not row or row[0].startswith('#'):
+                    continue
+                if not row[0].strip():
+                    raise ValueError(f'{path}: empty camera identity')
+                names.append(row[0].strip())
+        if len(names) != count:
+            raise ValueError(f'{path}: {len(names)} camera rows, expected {count}')
+        memberships.append(names)
+    return memberships
 
 
 def peel_counts_from(out_dir: str) -> list[int]:
@@ -896,13 +1813,16 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                   # incident (final review 2026-07-29, item c).
                   loss_tolerance_frac: float = 0.0,
                   pair_gate: str = 'overlap',
-                  max_scene_cameras: int = MAX_MERGE_SCENE_CAMERAS) -> dict:
+                  max_scene_cameras: int = MAX_MERGE_SCENE_CAMERAS,
+                  orphan_context=None) -> dict:
     """Run the escalation ladder on one border-connected cluster until
     convergence. Returns the cluster record for the report, including the
     final component list (paths + manifests) for the assembly stage."""
+    assert_safe_merge_harvest(images_root)
+    if orphan_context is not None and merge_scope != 'neighbour':
+        raise ValueError('orphan injection requires pairwise neighbour scope')
     tag = f'cluster_{cluster_idx}'
-    cdir = os.path.join(output_dir, tag)
-    os.makedirs(cdir, exist_ok=True)
+    cdir = tempfile.mkdtemp(prefix=f'{tag}_', dir=output_dir)
 
     current = list(cluster)  # manifests, each with 'rsalign' on disk
     record = {'cluster': tag,
@@ -929,9 +1849,12 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
 
     cluster_names = {os.path.basename(os.path.dirname(m['rsalign']))
                      for m in current}
-    log_path, params_path = build_union_flight_log(
-        images_root, cdir, logger,
-        only_basenames={b.lower() for b in members_union}, tag=tag)
+    if orphan_context is None:
+        log_path, params_path = build_union_flight_log(
+            images_root, cdir, logger,
+            only_basenames={b.lower() for b in members_union}, tag=tag)
+    else:
+        log_path, params_path = orphan_context['flight_log'], None
 
     attempt_no = 0
     # Growth targets, largest first (the order grow_zone also uses: a big
@@ -955,6 +1878,7 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
     # target B yields the identical set. A subset whose members are unchanged
     # has already had all three rungs run against it.
     attempted: set[frozenset] = set()
+    unresolved: set[frozenset] = set()
     # Synthetic component key -> the ORIGINAL input keys behind it, resolved
     # transitively. Needed because a second-round fusion's attribution names
     # first-round synthetic keys, and the scale gate is keyed by original
@@ -971,6 +1895,12 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                 break
             subset = neighbour_subset(current, target_key, logger,
                                       pair_gate=pair_gate)
+            if orphan_context is not None:
+                target = next(m for m in subset if component_analysis.component_key(m) == target_key)
+                neighbours = [m for m in subset if component_analysis.component_key(m) != target_key
+                              and frozenset((target_key, component_analysis.component_key(m))) not in attempted]
+                subset = ([target, sorted(neighbours, key=component_analysis.component_key)[0]]
+                          if neighbours else [target])
             if len(subset) < 2:
                 logger.info('%s: %s relates to nothing else - no merge attempted',
                             tag, target_key)
@@ -1005,6 +1935,7 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
         # driver's complists; the guard is the backstop.
         refuse, subset_cams = scene_ceiling_verdict(subset, max_scene_cameras)
         if refuse:
+            unresolved.add(subset_sig)
             logger.warning(
                 '%s: candidate subset of %d components sums to %s cameras - '
                 'OVER the %s-camera merge-scene ceiling (C-20260802-01: 44k '
@@ -1027,6 +1958,13 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
         # decide its fate (which is exactly what happened: align fused all
         # three on content, proving z4_c2 belonged).
         effective_ladder = effective_ladder_for(subset, ladder)
+        if orphan_context is not None:
+            effective_ladder = [step for step in effective_ladder if step['mode'] == 'align']
+            if not effective_ladder:
+                unresolved.add(subset_sig)
+                record['attempts'].append({'refused': True, 'label': 'orphan_align_rung_required'})
+                exhausted.add(target_key)
+                continue
         if len(effective_ladder) != len(ladder):
             logger.info('%s: shared-image graph does not span the subset - '
                         'align-only rungs (%d of %d); a merge rung could only '
@@ -1039,7 +1977,8 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
             attempt_no += 1
             adir = os.path.join(cdir, f'attempt_{attempt_no}_{step["label"]}')
             os.makedirs(adir, exist_ok=True)
-            complist = os.path.join(adir, 'cluster.complist')
+            # Control inputs must not make the batch's fresh OUTPUT directory dirty.
+            complist = os.path.join(cdir, f'attempt_{attempt_no}.complist')
             with open(complist, 'w', encoding='utf-8', newline='\r\n') as f:
                 f.write('\n'.join(m['rsalign'] for m in subset) + '\n')
 
@@ -1048,14 +1987,50 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                         f' (target {target_key})' if target_key else '')
             t0 = time.time()
             export_name = fused_export_name(tag, attempt_no)
+            orphan_evidence, orphan_inputs = None, None
+            if orphan_context is not None:
+                try:
+                    orphan_evidence, orphan_inputs = prepare_orphan_attempt(orphan_context, subset,
+                        os.path.join(cdir, f'orphan_inputs_{attempt_no}'),
+                        scene_capacity=max_scene_cameras - subset_cams)
+                except (OSError, ValueError, csv.Error) as exc:
+                    orphan_evidence = {'refused': True, 'refusal': str(exc), 'offered_ids': [],
+                        'excluded_ids': sorted(set(orphan_context['images']) - orphan_context['registered'])}
+                    orphan_evidence['spatial_reasons'] = {i: 'component_support_unavailable: ' + str(exc)
+                                                          for i in orphan_evidence['excluded_ids']}
+                reason_counts = {}
+                for identity in orphan_evidence['excluded_ids']:
+                    reason = orphan_evidence['spatial_reasons'][identity]
+                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                logger.info('%s attempt %d orphan scope: %d eligible, %d excluded; '
+                            'excluded remain available globally; reasons: %s',
+                            tag, attempt_no, len(orphan_evidence['offered_ids']),
+                            len(orphan_evidence['excluded_ids']),
+                            ', '.join(f'{reason}={count}' for reason, count in sorted(reason_counts.items())) or 'none')
+                if orphan_evidence['refused']:
+                    logger.warning('%s attempt %d orphan dispatch REFUSED: %s',
+                                   tag, attempt_no, orphan_evidence['refusal'])
+                    record['attempts'].append({'attempt': attempt_no, 'label': step['label'],
+                                              'refused': True, 'orphans': orphan_evidence})
+                    unresolved.add(subset_sig)
+                    break
             result = run_merge_workflow(
                 cli, complist, adir, export_name, step['mode'], step['settings'],
                 log_path, params_path, images_root, logs_dir, harvest=True,
-                logger=logger)
+                logger=logger, **({'orphan_inputs': orphan_inputs} if orphan_context is not None else {}))
             snapshot_rs_log(os.path.join(adir, 'rslog.txt'), logger)
             registered, _r, _d = camera_registry.sanitize_and_census(images_root)
 
             sizes = peel_counts_from(adir)
+            measured_members = None
+            if result.success and sizes:
+                try:
+                    measured_members = peel_members_from(adir, export_name, sizes)
+                except (OSError, ValueError, csv.Error) as exc:
+                    logger.error('Membership census failed: %s', exc)
+                    unresolved.add(subset_sig)
+            if not result.success or not sizes:
+                unresolved.add(subset_sig)
             # INSTRUMENT INVARIANT: an empty peel next to a non-empty export is
             # a broken instrument, not a result. Exactly this shape silently
             # discarded 5h12m of correct GPU work across two runs (the junction
@@ -1078,15 +2053,24 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
             input_cams = sum(m['camera_count'] for m in subset)
             tol = loss_budget(input_cams, loss_tolerance_frac)
             attributed, confidence = attribute_result(subset, sizes, logger,
-                                                      loss_tolerance=tol)
+                                                      loss_tolerance=tol,
+                                                      peel_members=measured_members,
+                                                      offered_members=(orphan_evidence['offered_ids']
+                                                        if orphan_evidence and measured_members is not None else None))
             adopted = [r for r in attributed if r['inputs']]
             residuals = [r for r in attributed if r['residual']]
             adopted_cams = sum(r['camera_count'] for r in adopted)
             # Duplicate copies RealityScan folded into one camera are not
             # lost cameras (attribute_result, 2026-09-06): the count deficit
             # they leave is provenance, and only the remainder is a loss.
-            collapsed = sum(r.get('collapsed', 0) for r in adopted)
-            lost = (input_cams - adopted_cams - collapsed) if adopted else None
+            retention_measured = (measured_members is not None and
+                                  confidence == 'exact')
+            collapsed = (sum(r['collapsed'] for r in adopted)
+                         if retention_measured else None)
+            lost = (sum(r['loss'] for r in adopted)
+                    if adopted and retention_measured else None)
+            if confidence != 'exact':
+                unresolved.add(subset_sig)
 
             entry = {'attempt': attempt_no, 'label': step['label'],
                      'mode': step['mode'], 'workflow_success': result.success,
@@ -1096,6 +2080,8 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                      'input_count': len(subset), 'adopted_count': len(adopted),
                      'residual_count': len(residuals),
                      'camera_delta': (adopted_cams - input_cams) if adopted else None,
+                     'membership_evidence': ('registration' if measured_members is not None
+                                             else 'unmeasured'),
                      'duplicates_collapsed': collapsed if adopted else None,
                      'cameras_lost': lost,
                      'loss_tolerance': tol,
@@ -1103,6 +2089,8 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                      'rs_finalizing': entry_rs,
                      'duration_s': round(time.time() - t0, 1)}
             record['attempts'].append(entry)
+            if orphan_evidence is not None:
+                entry['orphans'] = orphan_evidence
 
             fused = any(len(r['inputs']) >= 2 for r in adopted)
             # Bounded loss, not never-shrink - the pure decision lives in
@@ -1174,7 +2162,10 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                     current = [m for m in current
                                if component_analysis.component_key(m)
                                not in subset_keys] + new_subset
+                    if orphan_context is not None:
+                        orphan_context['registered'].update(_orphan_id(i) for m in new_subset for i in m['images'])
                     entry['accepted'] = True
+                    unresolved.discard(subset_sig)
                     fused_this_target = True
                     logger.info('%s: fused %d -> %d; cluster now %d component(s)',
                                 tag, len(subset), len(new_subset), len(current))
@@ -1182,6 +2173,7 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                 logger.warning('%s: exports incomplete (%d of %d) - treating '
                                'attempt as failed', tag, len(new_subset),
                                len(adopted))
+                unresolved.add(subset_sig)
             rung += 1
 
         if fused_this_target:
@@ -1201,11 +2193,15 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
                 break
             continue
         if merge_scope == 'neighbour':
-            exhausted.add(target_key)
+            if orphan_context is None:
+                exhausted.add(target_key)
             continue
         break
 
-    record['converged'] = True
+    current_keys = {component_analysis.component_key(m) for m in current}
+    record['unresolved_subsets'] = [sorted(s) for s in sorted(
+        unresolved, key=lambda s: sorted(s)) if s <= current_keys]
+    record['converged'] = not record['unresolved_subsets']
     record['final_components'] = [{
         'key': component_analysis.component_key(m),
         'rsalign': m['rsalign'],
@@ -1218,7 +2214,8 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
         'inputs': origin_map.get(component_analysis.component_key(m),
                                  [component_analysis.component_key(m)]),
     } for m in current]
-    logger.info('%s converged: %d final component(s)', tag, len(current))
+    logger.info('%s %s: %d final component(s)', tag,
+                'converged' if record['converged'] else 'INCOMPLETE', len(current))
     return record
 
 
@@ -1226,8 +2223,32 @@ def merge_cluster(cli: RealityScanCLI, cluster: list[dict], cluster_idx: int,
 # Main
 # ----------------------------------------------------------------------
 
+def component_identity(component: dict) -> dict:
+    """Content and provenance at the original export location, never mtime alone."""
+    path = component['rsalign']
+    identity = align_fingerprint.file_identity(path)
+    if identity is None or not identity['bytes']:
+        raise FileNotFoundError(f'component identity unavailable: {path}')
+    declared = dict(component)
+    if 'images' in declared:
+        declared['images'] = sorted(declared['images'])
+    return {
+        'component': identity,
+        'manifest': align_fingerprint.file_identity(path + '.manifest.json'),
+        'registration': align_fingerprint.file_identity(os.path.join(
+            os.path.dirname(path), 'identity',
+            os.path.splitext(os.path.basename(path))[0] + '.csv')),
+        'alignment': align_fingerprint.file_identity(os.path.join(
+            os.path.dirname(path), align_fingerprint.FINGERPRINT_NAME)),
+        'declared_sha256': hashlib.sha256(json.dumps(
+            declared, sort_keys=True, allow_nan=False).encode('utf-8')).hexdigest(),
+    }
+
+
 def run_fingerprint(input_keys, ladder_name, merge_scope, pair_gate,
-                    loss_tolerance_frac, min_size, assemble_only) -> dict:
+                    loss_tolerance_frac, min_size, assemble_only, *,
+                    input_manifests=None, images_root=None,
+                    max_scene_cameras=MAX_MERGE_SCENE_CAMERAS, orphan_context=None) -> dict:
     """Everything that changes what a cluster's result MEANS.
 
     Resume is only sound when the new run would have asked the same question.
@@ -1237,8 +2258,37 @@ def run_fingerprint(input_keys, ladder_name, merge_scope, pair_gate,
     semantic on the deliverable itself. Order is deliberately ignored -
     sorted() - because input order does not affect partitioning.
     """
+    identities = None
+    if input_manifests is not None:
+        manifests = sorted(input_manifests, key=component_analysis.component_key)
+        if sorted(input_keys) != [component_analysis.component_key(m) for m in manifests]:
+            raise ValueError('fingerprint keys do not match input manifests')
+        identities = [component_identity(m) for m in manifests]
+    provenance = []
+    if images_root:
+        for root, _dirs, files in os.walk(images_root):
+            for name in sorted(files):
+                if (name == 'batch_inputs.json' or name.endswith('.imagelist')
+                        or (name.startswith('flight_log') and name.endswith('.txt'))):
+                    path = os.path.join(root, name)
+                    identity = align_fingerprint.file_identity(path)
+                    if identity is None:
+                        raise FileNotFoundError(f'navigation identity unavailable: {path}')
+                    provenance.append(identity)
+    recipe_paths = [__file__, os.path.join(os.path.dirname(__file__), 'calibration.xml'),
+                    os.path.join(os.path.dirname(METADATA_DIR),
+                                         'Scripts', 'MergeZoneComponents.bat')]
+    recipe_paths.extend(os.path.join(METADATA_DIR, name) for name in (
+        'RegistrationExportParams.xml', 'XMPExportParams.xml',
+        'FlightLogParams.xml', 'FlightLogParamsLocal.xml'))
     return {
+        'schema': 3,
         'inputs': sorted(input_keys),
+        'input_identities': identities,
+        'navigation': sorted(provenance, key=lambda p: p['path']),
+        'recipe': [align_fingerprint.file_identity(p) for p in recipe_paths],
+        'max_scene_cameras': max_scene_cameras,
+        'orphans': orphan_context['fingerprint'] if orphan_context is not None else None,
         'ladder': ladder_name,
         'merge_scope': merge_scope,
         'pair_gate': pair_gate,
@@ -1263,6 +2313,9 @@ def load_resumable_clusters(output_dir, fingerprint, logger) -> dict:
     path = os.path.join(output_dir, 'merge_report.json')
     if not os.path.isfile(path):
         return {}
+    if fingerprint.get('schema') != 3 or not fingerprint.get('input_identities'):
+        logger.warning('--resume: content-backed input identities required')
+        return {}
     try:
         with open(path, encoding='utf-8') as f:
             prior = json.load(f)
@@ -1271,8 +2324,11 @@ def load_resumable_clusters(output_dir, fingerprint, logger) -> dict:
                        path, exc)
         return {}
 
+    if not isinstance(prior, dict):
+        logger.warning('--resume: report is not an object - starting fresh')
+        return {}
     prior_fp = prior.get('run_fingerprint')
-    if prior_fp is None:
+    if not isinstance(prior_fp, dict):
         logger.warning(
             '--resume: %s predates run fingerprints, so it cannot be shown to '
             'describe the same question - starting fresh. This run writes a '
@@ -1288,7 +2344,10 @@ def load_resumable_clusters(output_dir, fingerprint, logger) -> dict:
 
     out, skipped = {}, 0
     for rec in prior.get('clusters') or []:
-        if not rec.get('converged'):
+        if not isinstance(rec, dict) or not rec.get('converged'):
+            skipped += 1
+            continue
+        if rec.get('unresolved_subsets') or not rec.get('final_components'):
             skipped += 1
             continue
         missing = [c.get('rsalign') for c in rec.get('final_components') or []
@@ -1297,6 +2356,16 @@ def load_resumable_clusters(output_dir, fingerprint, logger) -> dict:
             logger.warning('--resume: %s converged previously but %d of its '
                            'component file(s) are gone - re-merging it',
                            rec.get('cluster'), len(missing))
+            skipped += 1
+            continue
+        try:
+            identities = [component_identity(c) for c in rec['final_components']]
+        except (OSError, ValueError, KeyError):
+            skipped += 1
+            continue
+        if rec.get('final_identities') != identities:
+            logger.warning('--resume: %s output content/provenance changed or unrecorded',
+                           rec.get('cluster'))
             skipped += 1
             continue
         key = frozenset(rec.get('inputs') or [])
@@ -1312,6 +2381,19 @@ def load_resumable_clusters(output_dir, fingerprint, logger) -> dict:
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger('merge_zones')
+    if sys.argv[1:] == ['--validate_project_occlusion']:
+        try:
+            if load_project_occlusion() is None:
+                raise ValueError('Native occlusion validation requires RS_SELECTION_MANIFEST')
+            return 0
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            logger.error('Project occlusion refused: %s', exc)
+            return 1
+    try:
+        assert_safe_merge_harvest()
+    except ValueError as exc:
+        logger.error('%s', exc)
+        return 1
     settings = SettingsStore()
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -1375,7 +2457,22 @@ def main() -> int:
                         help=f'lower scale bound (default {scale_oracle.DEFAULT_SCALE_MIN})')
     parser.add_argument('--scale_max', type=float, default=None,
                         help=f'upper scale bound (default {scale_oracle.DEFAULT_SCALE_MAX})')
+    parser.add_argument('--orphan_policy', default=None,
+                        help='Explicit pair-local orphan policy JSON; absent preserves legacy component-only merging')
+    parser.add_argument('--orphan_policy_sha256', default=None,
+                        help='Planner pin for the exact approved orphan policy bytes')
+    parser.add_argument('--orphan_selection_manifest', default=None,
+                        help='Approved project selection JSON; defaults to RS_SELECTION_MANIFEST only when orphan_policy is supplied')
     args = parser.parse_args()
+    try:
+        if args.orphan_policy_sha256 and not args.orphan_policy:
+            raise ValueError('orphan_policy_sha256 requires orphan_policy')
+        if args.orphan_policy:
+            read_orphan_policy(args.orphan_policy, expected_sha256=args.orphan_policy_sha256)
+        assert_safe_merge_harvest(args.images_root)
+    except (OSError, ValueError) as exc:
+        logger.error('%s', exc)
+        return 1
 
     def ask(key, cli_value, fallback):
         # Promoted shared helper: unattended-safe prompt-with-default
@@ -1482,6 +2579,17 @@ def main() -> int:
     if not inputs:
         logger.error('No manifested components under %s', components_root)
         return 1
+    orphan_context = None
+    if args.orphan_policy:
+        try:
+            selection_path = args.orphan_selection_manifest or os.environ.get('RS_SELECTION_MANIFEST')
+            if not selection_path or merge_scope != 'neighbour':
+                raise ValueError('orphan_policy requires a selection manifest and neighbour scope')
+            orphan_context = load_orphan_context(selection_path, args.orphan_policy, inputs,
+                expected_policy_sha256=args.orphan_policy_sha256)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            logger.error('Orphan preflight refused: %s', exc)
+            return 1
 
     # Metric scale FIRST, before any ladder spends GPU hours: a component
     # that is metrically broken is not worth merging or modelling, and this is
@@ -1519,11 +2627,14 @@ def main() -> int:
               'ladder': ladder_name,
               'twin_plan': {'discards': plan.get('discards', []),
                             'twin_resolutions': plan.get('twin_resolutions', [])},
+              'assembly': {'workflow_success': False},
               'clusters': []}
 
     report['run_fingerprint'] = run_fingerprint(
         report['inputs'], ladder_name, merge_scope, pair_gate,
-        loss_tolerance_frac, min_size, assemble_only)
+        loss_tolerance_frac, min_size, assemble_only,
+        input_manifests=inputs, images_root=images_root,
+        max_scene_cameras=args.max_scene_cameras, orphan_context=orphan_context)
 
     def flush():
         with open(os.path.join(output_dir, 'merge_report.json'), 'w',
@@ -1585,9 +2696,23 @@ def main() -> int:
                                    merge_scope=merge_scope,
                                    loss_tolerance_frac=loss_tolerance_frac,
                                    pair_gate=pair_gate,
-                                   max_scene_cameras=args.max_scene_cameras)
+                                   max_scene_cameras=args.max_scene_cameras,
+                                   **({'orphan_context': orphan_context} if orphan_context is not None else {}))
+        record['final_identities'] = [component_identity(c)
+                                      for c in record['final_components']]
+        if orphan_context is not None:
+            for final in record['final_components']:
+                manifest = component_manifest.load_manifest(final['rsalign'])
+                orphan_context['registered'].update(measured_component_ids(manifest))
         report['clusters'].append(record)
         flush()
+
+    if any(not c.get('converged') for c in report['clusters']):
+        report['evaluation_blocked'] = 'merge attempts failed, were refused or lack membership evidence'
+        flush()
+        logger.error('Merge incomplete: %s. Assembly was not launched.',
+                     report['evaluation_blocked'])
+        return 1
 
     # ------------------------------------------------------------------
     # Assembly: ONE project holding every surviving component.
@@ -1606,7 +2731,7 @@ def main() -> int:
     result = run_merge_workflow(
         cli, complist, assembly_dir, merged_name, 'assemble', [],
         union_log, union_params, images_root, logs_dir, harvest=False,
-        logger=logger)
+        logger=logger, **({'preserve_component_poses': True} if orphan_context is not None else {}))
     snapshot_rs_log(os.path.join(assembly_dir, 'rslog.txt'), logger)
     # Sidecar hygiene only. Assemble mode exports NO XMPs (it imports
     # components and georeferences them), so a sidecar scan here cannot

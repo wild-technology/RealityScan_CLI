@@ -29,6 +29,7 @@ pytest.importorskip('pandas')
 pytest.importorskip('geopandas')
 
 from modules.image_batcher.batch_directory import BatchDirectory  # noqa: E402
+from modules import camera_registry  # noqa: E402
 
 QUIET = logging.getLogger('pool-test')
 QUIET.addHandler(logging.NullHandler())
@@ -168,19 +169,27 @@ def test_copy_mode_refuses_fullpath_master(tmp_path):
 
 
 def test_default_layout_is_copy_and_unchanged(tmp_path):
-    names = ['A.jpg', 'B.jpg']
+    # The default also requires native calibration. Use registered cameras so
+    # this positive layout fixture represents a valid default batch.
+    names = ['cammid_001.jpg', 'camupper_001.jpg']
     src = _source(tmp_path, names)
     log = _write_log(tmp_path / 'master.txt', names)
     out = tmp_path / 'batched'
     out.mkdir()
     module = _module()
+    assert module.params['batch_xmp_priors'].get_value() is True
     copied, missing = module._BatchDirectory__create_batch_folders(
         str(out), [names], str(src), str(log))
     assert (copied, missing) == (2, 0)
     # Legacy behaviour intact: physical copies, basename log rows.
     assert sorted(p.name for p in (out / 'zone_1').rglob('*.jpg')) == names
     rows = (out / 'zone_1' / 'flight_log_UTM.txt').read_text().splitlines()
-    assert rows[1].split(';')[0] == 'A.jpg'
+    assert rows[1].split(';')[0] == names[0]
+    assert len(list((out / 'zone_1').rglob('*.xmp'))) == len(names)
+    for image in (out / 'zone_1').rglob('*.jpg'):
+        camera_registry.validate_calibration_xmp(
+            image.with_suffix('.xmp').read_text(encoding='utf-8'), camera_registry.identify(image.name))
+    assert not list(src.rglob('*.xmp'))
 
 
 if __name__ == '__main__':

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import json
+from pathlib import Path
 import shutil
 import time
 
@@ -22,6 +24,51 @@ from .realityscan_cli import RealityScanCLI, METADATA_DIR, set_project_save_env
 # extensions still accepted so older outputs keep working).
 COMPONENT_EXTENSIONS = ('.rsalign', '.rcalign')
 SCENE_EXTENSIONS = ('.rsproj', '.rcproj')
+
+
+def validate_project_occlusion(input_folder):
+    """Bind a native zone to the approved whole batch and recheck mask bytes.
+
+    __align_zone accepts one immediate child of the batched root. The helper
+    compares that parent against the project record, so a foreign zone cannot
+    borrow a valid approval. Legacy/probe callers without selection opt out.
+    """
+    if 'RS_SELECTION_MANIFEST' not in os.environ:
+        return None
+    keys = ('RS_SELECTION_MANIFEST', 'RS_OCCLUSION_MANIFEST',
+            'RS_OCCLUSION_MANIFEST_SHA256')
+    for key in keys:
+        if not os.environ.get(key, '').strip():
+            raise ValueError(f'Native project alignment requires {key}')
+    from ..project_occlusion import validate_external
+    return validate_external(
+        os.environ['RS_OCCLUSION_MANIFEST'],
+        os.environ['RS_OCCLUSION_MANIFEST_SHA256'],
+        os.environ['RS_SELECTION_MANIFEST'],
+        batch_root=Path(input_folder).resolve(strict=True).parent)
+
+
+def prepare_input_prior_contract(input_folder, output_folder, flight_log, params, pool_root=None, *, build_only=False):
+    """Prepare evidence for exactly the images the fresh zone will import."""
+    from ..image_exts import is_geometry_image
+    if pool_root:
+        lists = list(Path(input_folder).glob('*.imagelist'))
+        if len(lists) != 1:
+            raise prior_census.PriorsNotApplied('Exactly one pool image list is required')
+        images = []
+        for line in lists[0].read_text(encoding='utf-8-sig').splitlines():
+            if line.strip():
+                path = Path(line.strip())
+                if not path.is_absolute():
+                    raise prior_census.PriorsNotApplied('Pool image list must contain absolute paths')
+                images.append(path)
+    else:
+        images = sorted((path for path in Path(input_folder).rglob('*')
+                         if path.is_file() and is_geometry_image(path)), key=lambda path: str(path).casefold())
+    manifest = prior_census.build_input_prior_manifest(images, flight_log, params)
+    if build_only:
+        return manifest
+    return prior_census.write_input_prior_contract(manifest, Path(output_folder) / 'input_priors')
 
 
 def flight_log_params_template(metadata_dir: str, log_path: str | None,
@@ -246,6 +293,13 @@ class RealityScanAlignment(RSModule):
         if not os.path.isdir(input_folder):
             raise ValueError(f"Input folder {input_folder} is not a directory")
 
+        validate_project_occlusion(input_folder)
+        prior_selection = None
+        if not os.environ.get('RS_GEOREG_ONLY'):
+            prior_selection = prepare_input_prior_contract(
+                input_folder, output_folder, flight_log_path, flight_log_params_path,
+                os.environ.get('RS_ALIGN_POOL_DIR'), build_only=True)
+
         # A re-run must start from a clean zone folder: stale exports would
         # be indistinguishable from this run's (exportLatestComponents
         # reuses names like "Component 0.rsalign") and would poison the
@@ -271,7 +325,7 @@ class RealityScanAlignment(RSModule):
             os.environ.get('RS_ALIGN_PARAMS')
             or os.path.join(METADATA_DIR, 'AlignmentParams.xml'),
             min_component_size,
-            rs_executable=self.cli.find_executable())
+            rs_executable=self.cli.find_executable(), input_prior_contract=prior_selection)
 
         if os.path.isdir(output_folder) and os.listdir(output_folder):
             prev_fp = align_fingerprint.read_fingerprint(output_folder)
@@ -553,6 +607,21 @@ class RealityScanAlignment(RSModule):
         # production run may hold open (cmd reads .bat by byte offset;
         # a mid-run edit corrupts execution). Unset = production script.
         align_script = os.environ.get('RS_ALIGN_SCRIPT') or 'AlignZone.bat'
+        input_contract = None
+        if not os.environ.get('RS_GEOREG_ONLY'):
+            script_path = Path(align_script)
+            if not script_path.is_absolute():
+                script_path = Path(METADATA_DIR).parent / 'Scripts' / script_path
+            if 'INPUT_PRIOR_CENSUS_V1' not in script_path.read_text(encoding='utf-8'):
+                raise prior_census.PriorsNotApplied('Alignment script lacks mandatory pre-alignment input census')
+            input_contract = prepare_input_prior_contract(
+                input_folder, output_folder, flight_log_path, flight_log_params_path, pool_root)
+            os.environ.update(input_contract)
+            current_fp['input_prior_manifest'] = align_fingerprint.file_identity(
+                input_contract['RS_INPUT_PRIOR_MANIFEST'])
+        # Recheck after preparation and immediately before handing inputs to RS.
+        # Approval of generated files is not proof that their bytes stayed put.
+        validate_project_occlusion(input_folder)
         result = self.cli.run_batch_script(
             align_script,
             [input_folder, output_folder, flight_log_path, flight_log_params_path,
@@ -565,7 +634,12 @@ class RealityScanAlignment(RSModule):
         # which would poison the next attempt as auto-imported priors
         # (B7). The registration census now comes from the manifests
         # (harvested sidecars), not from this sweep.
-        leftover, restored, removed = camera_registry.sanitize_and_census(hygiene_root)
+        if getattr(result, 'ownership_retained', False):
+            raise RuntimeError('Runtime retains scene ownership; refusing sidecar cleanup')
+        # Only fresh staged inputs belong to this calibration lane. Loaded
+        # scenes/continuations retain their valid solved-pose sidecars.
+        leftover, restored, removed = (camera_registry.sanitize_and_census(hygiene_root)
+                                       if input_contract else (0, 0, 0))
         if leftover:
             self.logger.warning(
                 '%d pose sidecars were left beside the images (partial '
@@ -605,7 +679,7 @@ class RealityScanAlignment(RSModule):
         # have imported priors nobody chose. On that path, if an image needs
         # a calibration prior, add its family to cameras.json instead.
         xmp_harvest = os.environ.get('RS_LEGACY_XMP_IDENTITY', '1') != '0'
-        if xmp_harvest:
+        if xmp_harvest and input_contract:
             created, no_camera = camera_registry.ensure_calibration_sidecars(
                 hygiene_root)
             if created:
@@ -623,6 +697,17 @@ class RealityScanAlignment(RSModule):
                               f"{result.errors or f'exit code {result.return_code}'} (log: {result.log_path})")
             return {'Success': False, 'Component Count': 0,
                     'Registered Cameras': 0}, {'Success': False}
+
+        if input_contract:
+            # Independent success check: an alternate batch cannot omit the gate
+            # and turn a missing census into a successful zone.
+            with open(input_contract['RS_INPUT_PRIOR_RESULT'], encoding='utf-8') as stream:
+                input_result = json.load(stream)
+            if (input_result.get('verdict') != 'VERIFIED_INPUT_PRIORS' or
+                    input_result.get('expected_sha256') != input_contract['RS_INPUT_PRIOR_SHA256']):
+                raise prior_census.PriorsNotApplied('Missing/invalid pre-alignment input census')
+            current_fp['input_prior_census'] = align_fingerprint.file_identity(
+                input_contract['RS_INPUT_PRIOR_RESULT'])
 
         component_files = [f for f in os.listdir(output_folder)
                            if f not in files_before and f.endswith(COMPONENT_EXTENSIONS)]
@@ -712,46 +797,38 @@ class RealityScanAlignment(RSModule):
                      'Error': 'zero registered cameras'},
                     {'Success': scene_success, 'Scene Path': scene_path})
 
-        # DID THE CALIBRATION PRIORS ACTUALLY LAND? The guard above proves
-        # cameras registered; it says nothing about whether they registered
-        # with the priors this pipeline spent the whole setup configuring.
-        # NA165/H2060 passed every existing check and still self-calibrated
-        # all 19,241 images (modules/prior_census.py carries the measurement).
-        # The ONLY place that failure is observable is the exported pose, so
-        # this reads the solve rather than trusting the configuration.
-        #
-        # It runs AFTER the registration guard on purpose: an empty harvest
-        # should be reported as "zero registered cameras", which is the more
-        # specific diagnosis, rather than as a prior failure.
-        #
-        # RS_SKIP_PRIOR_CENSUS exists for the deliberate no-prior control arm
-        # of a test ladder. It is not a way past a failing run - a run that
-        # trips this gate produces free per-camera focal length, therefore
-        # free scale, therefore components that cannot be merged, and
-        # re-running without fixing the delivery channel changes nothing.
+        # Check each exported component against its actual registered members,
+        # not the family count of the whole input tree. A large good component
+        # must not hide missing groups/evidence in a smaller one. The explicit
+        # no-prior control-arm switch remains; checker failures never bypass it.
+        prior_stats = None
         if not os.environ.get('RS_SKIP_PRIOR_CENSUS'):
-            harvest = os.path.join(output_folder, 'identity_r0')
             try:
-                prior_census.assert_priors_landed(
-                    harvest, context=f'zone {scene_name}',
-                    expected_groups=families)
+                prior_stats = prior_census.assert_component_priors(
+                    output_folder,
+                    [os.path.join(output_folder, f) for f in component_files],
+                    manifest_paths, context=f'zone {scene_name}')
             except prior_census.PriorsNotApplied as exc:
                 self.logger.error('%s', exc)
                 return ({'Success': False,
                          'Component Count': len(component_files),
                          'Registered Cameras': registered,
                          'Manifests': manifest_paths,
-                         'Error': 'calibration priors not applied'},
-                        {'Success': scene_success, 'Scene Path': scene_path})
+                         'Error': 'calibration priors not applied',
+                         'Prior Census Error': str(exc)},
+                         {'Success': scene_success, 'Scene Path': scene_path})
             except Exception as exc:                              # noqa: BLE001
-                # A census that cannot RUN is a broken instrument, not a
-                # verdict. Say so loudly and let the zone stand rather than
-                # failing a good align on a bug in the check itself.
                 self.logger.error(
-                    'Prior census could not be evaluated for %s (%s): %s. The '
-                    'zone is NOT being failed on this, but whether the '
-                    'calibration priors applied is UNVERIFIED.',
-                    scene_name, harvest, exc)
+                    'Prior census could not be evaluated for %s: %s. '
+                    'Failing the zone because calibration evidence is unverified.',
+                    scene_name, exc)
+                return ({'Success': False,
+                         'Component Count': len(component_files),
+                         'Registered Cameras': registered,
+                         'Manifests': manifest_paths,
+                         'Error': 'calibration prior census unavailable',
+                         'Prior Census Error': f'{type(exc).__name__}: {exc}'},
+                        {'Success': scene_success, 'Scene Path': scene_path})
 
         # The identity loop is bounded at MAX_IDENTITY_COMPONENTS laps and
         # neither the .bat nor the reader says when it stopped BECAUSE of the
@@ -776,6 +853,7 @@ class RealityScanAlignment(RSModule):
             'Component Files': [os.path.join(output_folder, f) for f in component_files],
             'Registered Cameras': registered,
             'Manifests': manifest_paths,
+            'Prior Census': prior_stats,
         }
         scene_data = {'Success': scene_success, 'Scene Path': scene_path}
         return component_data, scene_data

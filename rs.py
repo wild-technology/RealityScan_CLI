@@ -50,6 +50,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 REPO = Path(__file__).resolve().parent
 if str(REPO) not in sys.path:
@@ -98,7 +99,8 @@ def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    from module_base.atomic_io import replace_file
+    replace_file(tmp, path)
 
 
 def _read_json(path: Path) -> dict:
@@ -148,7 +150,8 @@ def _gate(charter: RunCharter, stages: Optional[list[str]] = None,
 # ------------------------------------------------------------------- run
 
 def execute_commands(commands: list[dict], agent_ws: Path, charter_path: str,
-                     session=None, label: str = "run", resume_cmd: str = "") -> int:
+                     session=None, label: str = "run", resume_cmd: str = "",
+                     *, control=None, observer=None) -> int:
     """Run planned commands in order; RUN_STATE.json before/after each.
 
     ``commands`` are run_plan records ({stage, argv, env, cwd, ...}). Each
@@ -156,6 +159,12 @@ def execute_commands(commands: list[dict], agent_ws: Path, charter_path: str,
     block), stdout+stderr to its own log, and the record's env overlaid on
     the process environment. Stops at the first non-zero exit.
     """
+    from modules.project_runtime import (ExecutionControl, OwnershipUnconfirmed,
+                                         capture_child_identity,
+                                         require_runtime_release, runtime_event_cursor,
+                                         wait_planned_process)
+
+    execution_control = control if control is not None else ExecutionControl()
     logs = agent_ws / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     state_path = agent_ws / RUN_STATE_NAME
@@ -172,47 +181,112 @@ def execute_commands(commands: list[dict], agent_ws: Path, charter_path: str,
                   "status": "running", "resume": resume_cmd,
                   "history": history})
     for record in commands:
+        if execution_control.cancellation_requested:
+            state.update(status="cancelled", ownership_released=True,
+                         finished=time.strftime("%Y-%m-%d %H:%M:%S"))
+            _write_json(state_path, state)
+            return 130
         argv = list(record["argv"])
         if session is not None:
             argv = refresh_export_command(argv, session)
+        event_cursor = runtime_event_cursor(record)
         stamp = _stamp()
-        log_path = logs / f"{_slug(record['stage'])}_{stamp}.log"
+        log_path = logs / f"{_slug(record['stage'])}_{stamp}_{uuid4().hex[:12]}.log"
         started = time.strftime("%Y-%m-%d %H:%M:%S")
         state.update({"stage": record["stage"], "argv": argv,
                       "env_keys": sorted(record.get("env") or {}),
                       "started": started, "log": str(log_path),
                       "pid": None, "returncode": None, "finished": None,
-                      "status": "running"})
+                      "status": "running", "ownership_released": False,
+                      "launch_attempted": False, "child_identity": None,
+                      "needs_realityscan": bool(record.get("needs_realityscan")),
+                      "project_id": record.get("project_id"),
+                      "project_attempt_id": record.get("project_attempt_id"),
+                      "runtime_event_cursor": {"offset": event_cursor.offset, "identity": event_cursor.identity},
+                      "runtime": {key: (record.get("env") or {}).get(key) for key in
+                                  ("RS_RUN_ID", "RS_RUNTIME_ROOT", "RS_ERRORS_DIR", "RS_CONTROL_FILE", "RS_EVENT_FILE", "RS_INSTANCE", "RS_EXECUTABLE")}})
         _write_json(state_path, state)
         print(f"== {record['stage']}\n   log: {log_path}")
         env = dict(os.environ)
         env.update({k: str(v) for k, v in (record.get("env") or {}).items()})
+        proc = None
+        launch_attempted = False
+        child_reaped = False
+
+        def unconfirmed(cause, message):
+            # Best-effort instrumentation must never replace this exception
+            # with OSError/TypeError that the controller interprets as release.
+            state.update(status="ownership_unconfirmed", ownership_released=False,
+                         finished=None, returncode=None, error=message,
+                         launch_attempted=launch_attempted)
+            try:
+                _write_json(state_path, state)
+            except BaseException:
+                pass  # The previously persisted running journal remains armed.
+            raise OwnershipUnconfirmed(message, process=proc, record=record,
+                                       log_path=log_path) from cause
+
+        def await_owned():
+            try:
+                code = wait_planned_process(proc, record, log_path, execution_control,
+                                            observer, cursor=event_cursor)
+                if type(code) is not int:
+                    raise RuntimeError("Monitor returned no confirmed integer exit code")
+                return code
+            except BaseException as exc:
+                unconfirmed(exc, "Owned child termination could not be confirmed; reconcile before restarting")
+
         try:
-            with open(log_path, "w", encoding="utf-8", errors="replace") as log:
+            with open(log_path, "x", encoding="utf-8", errors="replace") as log:
+                launch_attempted = True
                 proc = subprocess.Popen(argv, cwd=record.get("cwd") or str(REPO),
                                         env=env, stdin=subprocess.DEVNULL,
                                         stdout=log, stderr=subprocess.STDOUT)
                 state["pid"] = proc.pid
+                state["child_identity"] = capture_child_identity(proc)
+                state["launch_attempted"] = True
                 _write_json(state_path, state)
-                rc = proc.wait()
-        except KeyboardInterrupt:
-            _record_abort(state, history, record, log_path, "aborted",
-                          "KeyboardInterrupt", state_path)
-            raise
-        except OSError as exc:
-            # The stage never started (bad interpreter path, ...). Until
-            # 2026-09-06 RUN_STATE stayed 'running' with no pid forever
-            # (review finding bugs-surface F7).
-            _record_abort(state, history, record, log_path, "failed",
-                          f"{type(exc).__name__}: {exc}", state_path)
-            print(f"   FAILED to start: {exc}")
-            return 1
+                rc = await_owned()
+                child_reaped = True
+        except BaseException as exc:
+            if isinstance(exc, OwnershipUnconfirmed):
+                raise  # Never retry an unrecoverable wait in a busy loop.
+            if proc is None:
+                # File-not-found/access-denied Popen failures prove no child was
+                # created. An interrupted/unexpected constructor does not.
+                known_no_child = not launch_attempted or isinstance(exc, (FileNotFoundError, PermissionError))
+                if not known_no_child:
+                    unconfirmed(exc, "Launch failed before a child handle was returned; ownership must be reconciled")
+                state["ownership_released"] = True
+                status = "cancelled" if isinstance(exc, KeyboardInterrupt) else "failed"
+                _record_abort(state, history, record, log_path, status,
+                              f"{type(exc).__name__}: {exc}", state_path)
+                return 130 if status == "cancelled" else 1
+            if isinstance(exc, KeyboardInterrupt):
+                try:
+                    execution_control.request_cancel("abort_current")
+                except BaseException as request_error:
+                    unconfirmed(request_error, "Unable to request abort of the owned child; ownership remains unconfirmed")
+                state.update(status="cancel_requested", finished=None, ownership_released=False)
+                try:
+                    _write_json(state_path, state)
+                except BaseException:
+                    pass  # Keep monitoring even if cancellation logging fails.
+            # State/log instrumentation can fail after launch. One guarded
+            # recovery wait suffices; its own failure becomes unconfirmed.
+            if not child_reaped:
+                rc = await_owned()
+                child_reaped = True
+        try:
+            require_runtime_release(record, cursor=event_cursor)
+        except BaseException as exc:
+            unconfirmed(exc, "Runtime ownership release is unconfirmed; reconcile before restarting")
         finished = time.strftime("%Y-%m-%d %H:%M:%S")
         entry = {"stage": record["stage"], "started": started,
                  "finished": finished, "returncode": rc, "log": str(log_path)}
         history.append(entry)
         state.update({"returncode": rc, "finished": finished,
-                      "status": "done" if rc == 0 else "failed",
+                      "status": "done" if rc == 0 else "failed", "ownership_released": True,
                       "history": history})
         _write_json(state_path, state)
         print(f"   exit {rc} ({'ok' if rc == 0 else 'FAILED - stopping'})")
@@ -521,18 +595,94 @@ def _budget_block(charter: RunCharter, workspace: str, state: Optional[dict]) ->
             "abort_criteria": b.get("abort_criteria")}
 
 
+def _status_marker_root(workspace: str, agent_ws: Optional[Path], state: Optional[dict],
+                        instance: Optional[str]) -> tuple[Path, Optional[str], str]:
+    """Select read-only marker evidence; persisted runtime paths never fall back.
+
+    Legacy state without an attempt channel can still use checkout markers.
+    Runtime state must bind the requested instance and owned project/proc/tmp
+    path before any marker file is read. No directory is implicitly created.
+    """
+    if instance is not None and (not isinstance(instance, str)
+            or not re.fullmatch(r'[A-Za-z0-9_.-]+', instance) or instance in ('.', '..')):
+        raise ValueError('Invalid requested marker instance')
+    if state is None or 'runtime' not in state:
+        if state and (state.get('project_id') or state.get('project_attempt_id')):
+            raise ValueError('Project run state has no persisted runtime marker binding')
+        return Path(ERRORS_DIR), instance, 'legacy'
+    runtime = state['runtime']
+    if not isinstance(runtime, dict) or not runtime:
+        raise ValueError('Persisted runtime must be a nonempty object')
+    recorded_instance = runtime.get('RS_INSTANCE')
+    if recorded_instance is not None:
+        if (not isinstance(recorded_instance, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', recorded_instance)
+                or recorded_instance in ('.', '..')):
+            raise ValueError('Invalid persisted marker instance')
+        if instance is not None and recorded_instance.casefold() != instance.casefold():
+            raise ValueError('Requested instance does not match persisted runtime instance')
+        instance = recorded_instance
+    channel_keys = ('RS_RUN_ID', 'RS_RUNTIME_ROOT', 'RS_ERRORS_DIR', 'RS_CONTROL_FILE', 'RS_EVENT_FILE')
+    if (not any(runtime.get(key) is not None for key in channel_keys)
+            and not state.get('project_id') and not state.get('project_attempt_id')):
+        if not {'RS_RUN_ID', 'RS_RUNTIME_ROOT', 'RS_CONTROL_FILE', 'RS_EVENT_FILE',
+                'RS_INSTANCE', 'RS_EXECUTABLE'}.issubset(runtime):
+            raise ValueError('Persisted runtime is missing its channel fields')
+        return Path(ERRORS_DIR), instance, 'legacy'
+    run_id, root, markers = (runtime.get(key) for key in ('RS_RUN_ID', 'RS_RUNTIME_ROOT', 'RS_ERRORS_DIR'))
+    if (not isinstance(run_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', run_id)
+            or not isinstance(root, str) or not root or not Path(root).is_absolute()
+            or not isinstance(markers, str) or not markers or not Path(markers).is_absolute()
+            or recorded_instance is None):
+        raise ValueError('Runtime marker binding requires run ID, instance and absolute root/marker paths')
+    root, markers = Path(root), Path(markers)
+    if ('..' in root.parts or '..' in markers.parts or root.name != run_id
+            or root.parent.name.casefold() != 'tmp' or root.parent.parent.name.casefold() != 'proc'
+            or markers != root / 'markers'):
+        raise ValueError('Runtime marker root must match project/proc/tmp/<RS_RUN_ID>/markers')
+    project = root.parent.parent.parent
+    work = Path(workspace).absolute()
+    if not (work == project or work.is_relative_to(project / 'proc')):
+        raise ValueError('Runtime marker root belongs to a different project/workspace')
+    if agent_ws is not None and not agent_ws.absolute().is_relative_to(work):
+        raise ValueError('Run state is outside the requested workspace')
+    for leaf in (markers, work, agent_ws):
+        if leaf is None:
+            continue
+        for path in (leaf, *leaf.parents):
+            if path.is_symlink() or path.is_junction():
+                raise ValueError('Runtime marker/state paths must not be redirected')
+            if path.exists() and not path.is_dir():
+                raise ValueError('Runtime marker/state parent is not a directory')
+    return markers, instance, 'runtime'
+
+
 def status_report(workspace: str, agent_ws: Optional[Path],
                   instance: Optional[str],
                   charter: Optional[RunCharter] = None) -> dict:
+    if charter is None:
+        native = _project_status_report(workspace, instance)
+        if native is not None:
+            return native
     report: dict = {"schema": 1, "workspace": workspace}
     verify = _verify_mod.verify_workspace(workspace)
     report["verify"] = {k: verify.get(k) for k in
                         ("verdict", "counts", "blocking", "incomplete")}
     report["verify_exit"] = _verify_mod.EXIT_CODES[verify["verdict"]]
     report["stages"] = {k: v["status"] for k, v in (verify.get("stages") or {}).items()}
+    state = None
+    state_error = None
     if agent_ws is not None:
         state_path = agent_ws / RUN_STATE_NAME
-        state = _read_json(state_path) if state_path.is_file() else None
+        try:
+            if (state_path.is_symlink() or state_path.is_junction()
+                    or (state_path.exists() and state_path.stat().st_nlink != 1)):
+                raise ValueError('Run state is redirected or hardlinked; marker ownership is unconfirmed')
+            state = _read_json(state_path) if state_path.is_file() else None
+            if state_path.exists() and not state:
+                raise ValueError('Run state is unreadable, malformed or empty; marker ownership is unconfirmed')
+        except (OSError, ValueError) as exc:
+            state_error = str(exc)
+            report['run_state_error'] = state_error
         if state and state.get("rc_file") and Path(state["rc_file"]).is_file():
             rc_text = _tail(Path(state["rc_file"]))
             if rc_text:
@@ -542,25 +692,30 @@ def status_report(workspace: str, agent_ws: Optional[Path],
             state["pid_alive"] = alive
             if not alive:
                 state["status_note"] = ("STALE: RUN_STATE says running but the "
-                                        "pid is gone - rs.py was killed or the "
-                                        "stage never got a pid; nothing is running")
+                                        "recorded Python PID is absent. RealityScan ownership "
+                                        "is unconfirmed; reconcile before restarting.")
         report["run_state"] = state
         report["run_state_path"] = str(state_path)
         if charter is not None:
             report["budget"] = _budget_block(charter, workspace, state)
-    if instance:
-        errors_dir = Path(ERRORS_DIR)
-        progress = errors_dir / f"progress_{instance}.txt"
-        errors = errors_dir / f"errors_{instance}.txt"
-        lock = errors_dir / f"{instance}.lock"
-        report["instance"] = {
-            "name": instance,
-            "progress": (_tail(progress) or [""])[0] if progress.is_file() else None,
-            "progress_age": _age(progress) if progress.is_file() else None,
-            "errors_bytes": errors.stat().st_size if errors.is_file() else None,
-            "errors_first_line": (_tail(errors, 400)[:1] or [""])[0] if errors.is_file() else None,
-            "lock_held": lock.is_file(),
-        }
+    try:
+        if state_error:
+            raise ValueError(state_error)
+        errors_dir, selected_instance, marker_source = _status_marker_root(workspace, agent_ws, state, instance)
+        instance = selected_instance
+        if instance:
+            report['instance'] = _status_markers(errors_dir, instance, marker_source)
+        marker_error = None
+    except (OSError, ValueError, TypeError) as exc:
+        errors_dir, marker_source, marker_error = None, 'unconfirmed', str(exc)
+        report['verify']['blocking'] = list(report['verify'].get('blocking') or []) + [marker_error]
+        report['verify']['verdict'] = 'blocked'
+        report['verify_exit'] = _verify_mod.EXIT_CODES['blocked']
+    report['marker_source'] = marker_source
+    if marker_error:
+        report['instance'] = dict(name=instance, progress=None, progress_age=None, errors_bytes=None,
+                                  errors_first_line=None, lock_held=None, marker_root=None,
+                                  marker_status='unconfirmed', diagnostic=marker_error)
     newest = []
     for folder in (Path(workspace) / "logs",
                    *( [agent_ws / "logs"] if agent_ws else [] ),
@@ -570,6 +725,181 @@ def status_report(workspace: str, agent_ws: Optional[Path],
     newest.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     report["newest_logs"] = [{"path": str(p), "age": _age(p)} for p in newest[:3]]
     return report
+
+
+def _project_status_json(project, relative):
+    """Read attributable launch evidence using the project's path policy."""
+    path = project.resolve_path(relative)
+    for parent in (path.parent, *path.parent.parents):
+        if parent.is_symlink() or parent.is_junction():
+            raise ValueError('Project status evidence directory is redirected')
+    if (not path.is_file() or path.is_symlink() or path.is_junction()
+            or path.stat().st_nlink != 1):
+        raise ValueError(f'Project status evidence is missing or aliased: {relative}')
+    value = _read_json(path)
+    if not value:
+        raise ValueError(f'Project status evidence must be a nonempty object: {relative}')
+    return path, value
+
+
+def _project_status_report(workspace, instance):
+    """Resolve native attempts by identity, never by filesystem timestamps.
+
+    ProjectDocument supplies schema, source/path and output validation. Launch
+    bindings mirror ProjectController.recover_project; terminal RS evidence
+    uses its existing require_runtime_release oracle. No recovery is performed.
+    Unregistered probe/census artifacts are never stage or completion evidence.
+    """
+    from modules.project_workspace import ProjectDocument
+    from modules.project_runtime import OwnershipUnconfirmed, require_runtime_release
+
+    root = Path(workspace).absolute()
+    documents = sorted(root.glob('*.rovscan'))
+    if not documents:
+        return None
+    blocking, incomplete = [], []
+    report = dict(schema=1, workspace=str(root), status_source='project', stages={},
+                  run_state=None, run_state_path=str(root / 'proc' / '_agent' / RUN_STATE_NAME),
+                  marker_source='unconfirmed', newest_logs=[], executions=[],
+                  instance=dict(name=instance, marker_status='unconfirmed', lock_held=None,
+                                diagnostic='No attributable runtime marker evidence'))
+    counts = dict(components=0, cameras=0, modelled=0, exported=0, registered_outputs=0,
+                  verified_outputs=0)
+    try:
+        if len(documents) != 1:
+            raise ValueError('Multiple project documents at workspace root; project identity is ambiguous')
+        project = ProjectDocument.load(documents[0])
+        if project.root != root:
+            raise ValueError('Project document belongs to a different workspace root')
+        data = project.to_dict()
+        report.update(project_id=project.project_id, project_document=str(documents[0]),
+                      stages={name: entry['state'] for name, entry in data['stages'].items()})
+        current = {entry['attempts'][-1]['id']: name for name, entry in data['stages'].items()
+                   if entry['attempts'] and entry['state'] != 'invalidated'}
+        running = {attempt: name for attempt, name in current.items()
+                   if data['stages'][name]['state'] == 'running'}
+        selected = running or current
+        if not current:
+            incomplete.append('No native pipeline attempt is recorded; project is pending')
+        for name, entry in data['stages'].items():
+            if entry['state'] in ('failed', 'interrupted'):
+                blocking.append(f"{name}: {entry['state']}; controller reconciliation/restart required")
+            elif entry['state'] not in ('succeeded', 'skipped'):
+                incomplete.append(f"{name}: {entry['state']}")
+        outputs = project.verify_outputs()
+        counts['registered_outputs'] = sum(output['valid'] for output in outputs)
+        counts['verified_outputs'] = sum(output['valid'] and output['status'] == 'ok' for output in outputs)
+        for output in outputs:
+            if output['valid'] and output['status'] != 'ok':
+                blocking.append(f"Registered output {output['path']}: {output['status']}")
+        report['outputs'] = outputs
+        plans = {}
+        # With no attempts, even plausible probe files are irrelevant.
+        if selected:
+            for path in sorted(project.resolve_path('metadata/plans').glob('*.json')):
+                _, plan = _project_status_json(project, path)
+                attempt = plan.get('project_attempt_id')
+                if not isinstance(attempt, str):
+                    raise ValueError('Launch record has no valid project attempt ID')
+                if plan.get('project_id') != project.project_id or attempt not in selected:
+                    continue
+                if attempt in plans:
+                    raise ValueError('Multiple launch records for the same project attempt are ambiguous')
+                plans[attempt] = plan
+        for attempt, stage in selected.items():
+            # Inventory and review run inside the controller, without a driver.
+            if attempt not in plans:
+                if stage not in ('inventory', 'preprocess'):
+                    blocking.append(f'{stage}: no attributable launch record; ownership unconfirmed')
+                continue
+            plan = plans[attempt]
+            label = project.project_id + '/' + attempt
+            commands = plan.get('commands')
+            if (plan.get('execution_label') != label or not isinstance(commands, list) or not commands
+                    or any(not isinstance(c, dict) or c.get('project_id') != project.project_id
+                           or c.get('project_attempt_id') != attempt for c in commands)):
+                raise ValueError('Launch record commands/label do not match the project attempt')
+            if stage in ('align', 'merge', 'model', 'export') and not all(
+                    c.get('needs_realityscan') is True for c in commands):
+                raise ValueError('RealityScan launch cannot downgrade application ownership evidence')
+            state_path, state = _project_status_json(project, plan['run_state'])
+            if (state_path.name != RUN_STATE_NAME or state_path.parent.name != '_agent'
+                    or not state_path.is_relative_to(root / 'proc')):
+                raise ValueError('Native run state must be under project/proc in an _agent directory')
+            if (state.get('label') != label or state.get('project_id') != project.project_id
+                    or state.get('project_attempt_id') != attempt):
+                # Shared journals can be reused by a later recorded attempt.
+                # Never adopt that later state as this attempt's evidence.
+                if not running and state.get('project_id') == project.project_id and any(
+                        state.get('project_attempt_id') == other
+                        and state.get('label') == project.project_id + '/' + other
+                        and other != attempt for other in current):
+                    incomplete.append(f'{stage}: executor journal was superseded; historical release not verified')
+                    continue
+                raise ValueError('Executor state is not bound to the selected project launch')
+            active = [c for c in commands if c.get('stage') == state.get('stage')]
+            if len(active) != 1 or not isinstance(active[0].get('env'), dict):
+                raise ValueError('Executor command cannot be identified uniquely')
+            command = active[0]
+            runtime = state.get('runtime')
+            keys = ('RS_RUN_ID', 'RS_RUNTIME_ROOT', 'RS_ERRORS_DIR', 'RS_CONTROL_FILE',
+                    'RS_EVENT_FILE', 'RS_INSTANCE', 'RS_EXECUTABLE')
+            if (not isinstance(runtime, dict) or any(key not in runtime or
+                    runtime[key] != command['env'].get(key) for key in keys)):
+                raise ValueError('Executor runtime does not match its launch record')
+            entry = dict(stage=stage, project_attempt_id=attempt, run_state_path=str(state_path),
+                         run_state=state, marker_source='unconfirmed', ownership_released=False)
+            if command.get('needs_realityscan'):
+                markers, selected_instance, source = _status_marker_root(str(root), state_path.parent, state, instance)
+                entry.update(instance=_status_markers(markers, selected_instance, source), marker_source=source)
+            if state.get('status') in ('done', 'failed', 'cancelled'):
+                if type(state.get('returncode')) is not int or state.get('ownership_released') is not True:
+                    raise ValueError('Executor has not confirmed terminal ownership release')
+                for record in commands:
+                    require_runtime_release(record)
+                entry['ownership_released'] = True
+            else:
+                incomplete.append(f'{stage}: executor ownership is not released')
+            report['executions'].append(entry)
+        if len(report['executions']) == 1:
+            entry = report['executions'][0]
+            for key in ('run_state', 'run_state_path', 'marker_source', 'instance'):
+                if key in entry:
+                    report[key] = entry[key]
+        elif len(report['executions']) > 1:
+            report.pop('run_state_path', None)
+            incomplete.append('Multiple recorded stage executions; inspect executions individually')
+        if not outputs:
+            incomplete.append('No registered native pipeline outputs')
+    except (OSError, ValueError, TypeError, KeyError, OwnershipUnconfirmed) as exc:
+        blocking.append(str(exc))
+        report['run_state_error'] = str(exc)
+    verdict = 'blocked' if blocking else 'incomplete' if incomplete else 'ok'
+    report.update(verify=dict(verdict=verdict, counts=counts, blocking=blocking, incomplete=incomplete),
+                  verify_exit=_verify_mod.EXIT_CODES[verdict])
+    return report
+
+
+def _status_markers(errors_dir: Path, instance: str, source: str) -> dict:
+    """Read only the already-validated marker directory."""
+    progress = errors_dir / f"progress_{instance}.txt"
+    errors = errors_dir / f"errors_{instance}.txt"
+    lock = errors_dir / f"{instance}.lock"
+    if source == 'runtime':
+        for path in (progress, errors, lock):
+            if path.is_symlink() or path.is_junction() or (path.exists() and path.stat().st_nlink != 1):
+                raise ValueError('Runtime marker file is redirected or hardlinked')
+            if path.exists() and not path.is_file():
+                raise ValueError('Runtime marker path is not a regular file')
+    return {
+        "name": instance,
+        "marker_root": str(errors_dir), "marker_status": source,
+        "progress": (_tail(progress) or [""])[0] if progress.is_file() else None,
+        "progress_age": _age(progress) if progress.is_file() else None,
+        "errors_bytes": errors.stat().st_size if errors.is_file() else None,
+        "errors_first_line": (_tail(errors, 400)[:1] or [""])[0] if errors.is_file() else None,
+        "lock_held": lock.is_file(),
+    }
 
 
 def format_status(report: dict) -> str:
@@ -582,8 +912,18 @@ def format_status(report: dict) -> str:
              f"  modelled {counts.get('modelled', 0)}  exported {counts.get('exported', 0)}"]
     for b in v.get("blocking") or []:
         lines.append(f"  ! {b}")
+    if report.get('status_source') == 'project':
+        for detail in v.get('incomplete') or []:
+            lines.append(f"  - {detail}")
+        for entry in report.get('executions') or []:
+            lines.append(f"execution : {entry['stage']}  {entry['run_state_path']}"
+                         f"  status={entry['run_state'].get('status')}")
     state = report.get("run_state")
-    if state is None and "run_state_path" in report:
+    if report.get('run_state_error'):
+        lines.append(f"run state : unconfirmed ({report['run_state_error']})")
+    elif state is None and report.get('status_source') == 'project':
+        lines.append('run state : no single attributable native executor snapshot')
+    elif state is None and "run_state_path" in report:
         lines.append(f"run state : none ({report['run_state_path']} absent)")
     elif state:
         lines.append(f"run state : {state.get('status')}  stage={state.get('stage')}"
@@ -604,7 +944,10 @@ def format_status(report: dict) -> str:
             f" memory line {budget.get('memory_peak_gb')} GB (read the RAM yourself)")
         lines.append(f"            abort: {budget.get('abort_criteria')}")
     inst = report.get("instance")
-    if inst:
+    if inst and inst.get('marker_status') == 'unconfirmed':
+        lines.append(f"instance  : {inst['name'] or '<unconfirmed>'}  markers: unconfirmed")
+        lines.append(f"            ! {inst['diagnostic']}; lock: unknown")
+    elif inst:
         lines.append(f"instance  : {inst['name']}  progress: {inst['progress'] or '<no progress file>'}"
                      + (f"  (age {inst['progress_age']})" if inst["progress_age"] else ""))
         err = inst["errors_bytes"]

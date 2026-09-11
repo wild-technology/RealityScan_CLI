@@ -1,0 +1,1354 @@
+{
+  "kind": "precommit_inclusion_snapshot",
+  "observed_at_utc": "2026-09-11T22:04:40.5107588Z",
+  "branch": "agent-native-execution",
+  "commit_push_authority": "Continuing explicit owner request; main stages final documentation then commits and pushes",
+  "final_offline_suite": {
+    "session": 89101,
+    "passed": 2854,
+    "skipped": 1,
+    "failed": 0,
+    "elapsed_seconds": 364.1
+  },
+  "scope": "All Git-visible changed files with untracked directories expanded; intended commit inclusion recorded independently of staging state",
+  "exclusions": [
+    ".agents/",
+    ".codex/",
+    ".claude/settings.local.json",
+    "AGENTS.md"
+  ],
+  "intended_included_files": 201,
+  "excluded_local_files": 20,
+  "staged_files_at_observation": 201,
+  "count": 221,
+  "limits": "This precommit inclusion record becomes historical after commit. Status is not authorship or a perpetual uncommitted-state assertion. Main must stage latest included worktree versions; no excluded files are authorized for staging. Ignored paths are not enumerated.",
+  "git_warning": "Git could not read user-level .config/git/ignore (Permission denied); available ignore rules and explicit owner exclusions applied.",
+  "files": [
+    {
+      "status": "M ",
+      "path": ".gitignore",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/rs_prior_probe_compare.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_align_and_rollback_safety.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_atomic_io.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_attach_mode.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_batch_reuse_guard.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_batch_selection_gate.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_camera_orientation_frame.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_checkpoint_deployment.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_cmd_boundary_guards.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_controller_occlusion_lifecycle.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_controller_orphan_evidence.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_controller_source_mask_retirement.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_deployment_preflight.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_desktop_ui.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_export_workflow.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_flight_log_params_template.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_flight_log_writer.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_flightlog_install_contract.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_geometry_time_groups_deployment.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_image_quality.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_inventory_checkpoint.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_merge_adversarial_safety.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_merge_automatic_evidence.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/rs_prior_probe_compare.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/rs_prior_import_probe.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/rs_prior_import_probe.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/rs_merge_orphan_probe.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/SaveProjectCopy.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/SetVariables.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/startRealityScan.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/realityscan_cli.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/realityscan_interface.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/rs_installation.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/run_plan.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/source_inventory.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/spatial_review.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/storage_policy.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/temporal_occlusion.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_merge_batch_calibration.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "organize_by_date.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "packaging/deployment-lock.json",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "packaging/launch.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "packaging/refresh_lock.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "packaging/source.lock",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "packaging/tools.lock",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "packaging/wheels.lock",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "requirements-desktop.txt",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "requirements.txt",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "rs.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/NATIVE_PRIOR_DELIVERY.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/conftest.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "packaging/bootstrap.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_merge_generated_masks.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_merge_native_probe.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_merge_orphan_probe.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_spatial_review.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_storage_policy.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_temporal_occlusion.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_timestamp_consumers.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_unattended_prompts.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_zone_layout_pool.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "??",
+      "path": ".agents/skills/charter/SKILL.md",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".agents/skills/drive-run/SKILL.md",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".agents/skills/finish-model/SKILL.md",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".agents/skills/handoff/SKILL.md",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".agents/skills/merge-zones/SKILL.md",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_source_inventory.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "??",
+      "path": ".agents/skills/publish-cesium/SKILL.md",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".agents/skills/status/SKILL.md",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".claude/settings.local.json",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".codex/agents/rs-reference.toml",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".codex/agents/run-monitor.toml",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".codex/hooks.json",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".codex/hooks/guard_charter_writes.py",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".codex/hooks/guard_rs_launch.py",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".codex/hooks/guard_schtasks.py",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".codex/hooks/normalize_crlf.py",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".codex/hooks/pre_compact.py",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".codex/hooks/route_driving_prompts.py",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "??",
+      "path": ".agents/skills/rs-lookup/SKILL.md",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "A ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/RuntimeAbortGuard.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_runtime_status_markers.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_runtime_deployment.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_merge_orphans.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_merge_resume.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_merge_scope.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_merge_zones_rework.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_native_occlusion_gate.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_native_prior_delivery.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_navigation_quality.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_occlusion_adversarial.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_occlusion_review.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_owned_failure_recovery.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_owner_decisions_2026_09_06.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_runtime_output_paths.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_prior_census_deployment.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_project_controller_adversarial.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_project_occlusion.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_project_review_gates.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_project_runtime.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_project_selection_handoff.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_project_workspace.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "testing/test_rig_mounts.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_rs_installation.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_rs_prior_import_probe.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_rs_prior_probe_compare.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_run_plan_orphans.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "testing/test_project_camera_priors.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "??",
+      "path": ".codex/hooks/session_status.py",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/ModelToFinal.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/GuiWorkbench.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/PROJECT_FORMAT.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/REALITYSCAN_INSTALLATION.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/TEMPORAL_OCCLUSION.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "AM",
+      "path": "docs/UNCOMMITTED_FILES.json",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/VERIFICATION_STATUS.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/history/FINDINGS_2026-09-06_runtime_and_navigation.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/02-command-reference.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/03-settings-keys.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/04-image-input-and-handling.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/05-metadata-xmp-and-sidecars.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/06-georeferencing-flightlogs-and-scale.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/07-alignment.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/09-xml-parameter-files.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/10-reconstruction-texturing-export.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/11-automation-patterns.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/12-failure-modes-and-race-conditions.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/13-camera-rigs-priors-and-orientation.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/rs-reference/README.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "geoall.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/PROVENANCE.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/README.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/main.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/main_kalman.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/PIPELINE_VARIABLES.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/INVENTORY_CHECKPOINT.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/INSTALLATION.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/IMAGE_QUALITY_SCREENING.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "CLAUDE.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "FINDINGS.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "MM",
+      "path": "HANDOFF.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "README.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "app.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/__init__.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/controller_api.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/image_review.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/main_window.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/map_preview.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/occlusion_review.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/navigation.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/quality_review.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/settings_panel.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/setup_dialog.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/spatial_review.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/theme.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/AGENT_OPERATIONS.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/ARCHITECTURE.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/CLAUDE_PRODUCT_AUDIT_PROMPT.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "docs/DECISIONS.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/DEPLOYMENT_PLAN.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/DESKTOP_UI.md",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "docs/EVIDENCE_LEDGER.json",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "desktop/review_widgets.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/__init__.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/common.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/dive_summaries.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/image_quality.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/inventory_checkpoint.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/navigation_quality.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/orphan_import_evidence.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/orphan_import_probe.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/preflight.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/preprocess_images/preprocess_images.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/prior_census.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/prior_groups.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/project_controller.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/project_occlusion.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/image_exts.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/project_reviews.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/project_staging.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/project_workspace.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Metadata/FlightLogParams.xml",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Metadata/FlightLogParamsLocal.xml",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/AlignImagesFromFolder.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/AlignZone.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/ComputeModel.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/ExportDeliverables.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/FlushCache.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/GenerateModel.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/GrowZone.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/project_runtime.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/realityscan_interface/RS_CLI/Scripts/MergeZoneComponents.bat",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/image_batcher/batch_directory.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/flightlog_format.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/kalman_assess.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/kalman_concat.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/kalman_filter.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/kalman_offset.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/process_dat.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/report.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/sensors_sealog.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/stillcam_images.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/processors/usbl_sdyn.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/requirements.txt",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/tests/test_navigation_deployment.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/georeference/georeference_images.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/tests/test_pipeline.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/tests/test_sdyn_integrity.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/tests/test_stage1_resume.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "merge_zones.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "module_base/atomic_io.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "module_base/scene_checkpoint.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/align_fingerprint.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/camera_registry.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/cameras.json",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "modules/deployment_preflight.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/extract_images/extract_images.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "M ",
+      "path": "modules/file_metadata_parser.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "A ",
+      "path": "integrations/rovdataconcat/tests/test_review_fixes.py",
+      "intended_commit_inclusion": true,
+      "disposition": "deployment_change_include_latest_worktree_version"
+    },
+    {
+      "status": "??",
+      "path": "AGENTS.md",
+      "intended_commit_inclusion": false,
+      "disposition": "preexisting_local_exclusion_leave_untouched"
+    }
+  ]
+}

@@ -1,5 +1,48 @@
 # PIPELINE_VARIABLES - what is baked, what is detected, what the owner must supply
 
+**Current deployment work, 2026-09-11:** the audit below is a historical snapshot,
+not a blanket verification of current code or RealityScan behavior. Consult
+`VERIFICATION_STATUS.md` and `EVIDENCE_LEDGER.json` for claim-level status.
+The native project workflow and required culling/density gates are described in
+`DEPLOYMENT_PLAN.md`, `PROJECT_FORMAT.md`, and `DESKTOP_UI.md`.
+Camera defaults now come from `modules/cameras.json`: legacy upper/mid/lower
+down-tilts 70/20/10 degrees with pitch accuracy 10 degrees; Zeuss down-tilt 40
+degrees and pitch accuracy 40 degrees; yaw/roll accuracy 10 degrees, position
+X/Y/depth accuracy 5/5/1 metres, orientation weight locked at 2. Approved
+project overrides are serialized and validated by `camera_registry.load_project_priors`.
+These numerical choices are owner-approved starts, not proven optimal alignment
+settings. Other camera-era families retain their distinct geometry.
+
+Current settings dependencies use `ProjectWorkspace.settings_signature(blocks)`
+over explicit block values and project/path identity. Each block has its own
+approval; the global `settings_hash` remains exact attempt provenance. Shared
+`settings_stage` maps operating/budget to no completed-science invalidation,
+science to align, cameras to georeference, navigation to navigation, stage-named
+blocks to their stage and unknown blocks conservatively to inventory. The edited
+block needs renewed approval. Late/resource edits preserve quality/density/mask
+reviews; batch invalidates workflow/masks; early nav/geo changes invalidate affected
+downstream reviews. New geo payloads scope settings to navigation/cameras/georeference
+and retain navigation/image content checks. Legacy geo records require the exact
+unchanged global hash or a rerun. Only settings approvals with exact current legacy
+global proof migrate in memory, preserving signer/time and attempts without an
+automatic file write. See [PROJECT_FORMAT.md](PROJECT_FORMAT.md#settings-approval-and-existing-planner-adapters)
+for the contract and focused evidence. The scope fix is reported complete with
+152 UI/store passes and 11 controller dependency/legacy passes in separate runs;
+the later full-suite snapshot is green, with subsequent changes excluded as
+recorded in VERIFICATION_STATUS.md.
+
+The native merge form now proposes pair-local orphan limits for review:
+7.1 m horizontal margin, 1 m depth margin, 20 m maximum footprint edge,
+50 m maximum connecting corridor, and 2,000 offered images. These are
+**unapproved deployment proposals**, not inferred dive settings or measured
+optimal tolerances. The vertical datum must be supplied explicitly. The merge
+block is approved before use and materialized as a hash-bound policy consumed
+by the canonical planner. Live import/feature-mode evidence is also required;
+no broad orphan-pool fallback is permitted. Project and cache growth budgets
+are separate visible fields; execution no longer inserts a hidden 72 GiB cache
+estimate. Review logging stores counts and artifact references rather than
+repeating the complete source census after every decision.
+
 Audited read-only on 2026-09-06 by eight readers and eight adversarial verifiers over
 the code, the two finished runs (`NA173_H2014g_RS` = fixture F2, `NA173_C0probe_RS` =
 the C0 probe) and `docs/rs-reference/`. 158 + 460 claims, none refuted; corrections

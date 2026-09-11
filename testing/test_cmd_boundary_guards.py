@@ -64,8 +64,10 @@ def _cli(tmp_path, instance='RS1'):
     exe = tmp_path / 'RealityScan.exe'
     exe.write_text('stub', encoding='utf-8')
     store = FakeStore({'realityscan': {'executable': str(exe)}})
-    return RealityScanCLI(logging.getLogger('test'), store,
-                          instance_name=instance)
+    cli = RealityScanCLI(logging.getLogger('test'), store, instance_name=instance)
+    # This file tests command boundaries, not Windows PE version resources.
+    cli.find_executable = lambda: str(exe)
+    return cli
 
 
 def _no_subprocess(monkeypatch):

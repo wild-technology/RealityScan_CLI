@@ -13,6 +13,18 @@ and merge semantics (see `08-components-and-merge.md`), model/texture/export (se
 content (see `05-metadata-xmp-and-sidecars.md`).
 
 **Applies to:** RealityScan 2.2 (Epic Games), Windows, headless CLI operation.
+
+**Scoped update, 2026-09-11:** the actual v02 sentinel comparator reports focal
+0 for the four CSV-only images despite the supplied fourteenth column. Native
+XMP followed by CSV with `ifKGrp=0` preserves the XMP focal values and matches the
+six encoded delivery requirements in that fixture. These are import-readback
+results, not alignment or physical-frame validation. The comparator remains
+`BLOCKED` overall. Both georeferencing entry points now share the canonical
+14-column writer; the focal column is retained for managed-format compatibility,
+not advertised as a CSV calibration-delivery mechanism. See the hashed
+`partial_sentinel_comparison_01` and `canonical_flight_log_writer_validation`
+entries in [the evidence ledger](../EVIDENCE_LEDGER.json).
+
 **Tags:** [OFFICIAL] shipped Help · [VERIFIED] measured in production here ·
 [CONTRADICTED] docs vs observation · [UNDOCUMENTED] · [INFERRED] · [OPEN]
 
@@ -518,8 +530,12 @@ scene" and the same `0x820000FF` fires. A 25-second "successful" zone align with
 ### 2.7 The params XML: `FlightLogParams.xml` in full
 
 The second argument of `-importFlightLog` / `-importTrajectory` is a `<Configuration>` file
-saved from the GUI's Import Trajectory dialog. This repo's template, verbatim
-(`modules/realityscan_interface/RS_CLI/Metadata/FlightLogParams.xml`):
+saved from the GUI's Import Trajectory dialog. The following is a historical
+template snapshot, not the current file at
+`modules/realityscan_interface/RS_CLI/Metadata/FlightLogParams.xml`.
+At baseline `0c9224e`, both global/local templates use `ifKGrp=1` after the
+recorded single-family probe; this does not settle mixed-family grouping.
+See [ledger CAL-002/003 and P-GROUP](../EVIDENCE_LEDGER.json):
 
 ```xml
 <Configuration id="{93DBD041-AE1C-4631-89BC-D9430FCED843}">
@@ -1155,7 +1171,7 @@ applied unintentionally is an instant 100× (or 39.37×) scale error in the deli
 RealityScan expresses, and getting it wrong is invisible inside the
 application.**
 
-Every CRS this pipeline uses is **two-dimensional**. The flight-log params
+The audited global UTM flight-log path uses a **two-dimensional** CRS. Its params
 carry `+proj=utm +zone=53 +datum=WGS84 +units=m +no_defs`; the `.rsInfo`
 written on export carries the same string and a matching
 `epsg:32653 - WGS 84 / UTM zone 53N`. A `326xx`/`327xx` code defines easting
@@ -1174,17 +1190,26 @@ What that Z actually is, in this pipeline:
 | imported | Z of a 2D UTM CRS — no vertical datum declared | `FlightLogParams.xml` |
 | exported | unchanged; `MvsExportMoveZ=0.0`, `MvsExportScaleZ=1.0` | every repo preset |
 
-A pressure depth is measured from the **instantaneous sea surface**, which
-approximates mean sea level, which approximates the **geoid**. It is an
-*orthometric* height. It is **not** a height above the WGS84 ellipsoid.
+A pressure depth referred to the **instantaneous sea surface** is not automatically
+an orthometric height. Local sea level, tide and the geoid are distinct references;
+see the [NGS explanation](https://www.ngs.noaa.gov/research/geopotential-datums/geopotential-surface.shtml).
+Treat negative depth as an approximation to orthometric height only with explicit
+assumptions and uncertainty. H2101's telemetry datum has not been independently
+established by this documentation audit. [INFERRED approximation; ledger DAT-001]
 
-Nothing in RealityScan converts between them, and nothing needs to while the
-data stays inside RealityScan — every measurement, scale check and merge is
-differential, so a uniform vertical offset is invisible. The moment the model
-leaves for a globe renderer, it is not.
+The audited pipeline does not declare or correct a sea-surface vertical datum
+inside RealityScan. A uniform offset is invisible to differential scale checks;
+this does not prove all vertical errors are uniform or harmless within a solve.
+Independent absolute controls and globe placement require the datum explicitly.
 
-**Conversion.** `h = H + N`, where `h` is ellipsoidal height, `H` orthometric
-(here `H = -depth`), and `N` the geoid undulation at that lat/lon:
+**Conversion model.** `h = H + N` relates ellipsoidal and orthometric heights.
+For the sea-surface-depth path, use
+`h ≈ -depth - down_offset + N + sea_surface_offset`, documenting omitted
+terms and uncertainty. Apply the lever arm only once: the written camera altitude
+already includes `down_offset`. The implemented geoid-only model treats the
+sea-surface offset as zero; it is not a surveyed H2101 vertical truth.
+See [ledger DAT-001 and P-DATUM](../EVIDENCE_LEDGER.json).
+The following historical geoid values do not establish a new site's correction:
 
 | site | N (EGM2008) | effect of ignoring it |
 |---|---:|---|

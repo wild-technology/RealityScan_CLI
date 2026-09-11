@@ -1,4 +1,139 @@
-# HANDOFF — state of the July 2026 overhaul
+# HANDOFF — generalized Hercules deployment
+
+## 2026-09-11 — current state; goal INCOMPLETE
+
+Build the general native Windows 11/Python 3.13 deployment product; H2101 is reference
+validation, never a hardcoded runtime branch. The workflows must work without an
+AI operator. Production code and documentation are frozen for main's imminent
+commit/push on agent-native-execution. The final Windows suite is green; owner
+decisions and scientific acceptance below remain open. Owner-authorized commit/push
+is the final integration step; the earlier "Push these changes..." remains continuing authority.
+
+Source E:/NA171/H2101 remains physically read-only. Project/output F:/NA171;
+cache F:/NA171/proc/tmp/cache; owned instance ROV_NA171_H2101; reserve 50 GiB.
+The saved NA171_H2101.rovscan has operating/navigation/camera approvals only.
+Effective profile: legacy lower/cinema 10°, mid/port 20°, upper/starboard 70° down,
+each pitch accuracy 10°; Zeuss 40° down with pitch accuracy 40°. All yaw/roll accuracy
+10°, orientation weight 2, position accuracy 5/5/1m and weight 10. Mount-family and
+optical-camera identities remain distinct. These are owner policy, not calibration.
+
+### Completed implementation and evidence limits
+
+Native project lifecycle, scoped block approvals, deterministic inventory/staging,
+navigation adapter, pre-batch quality/density gates, priors, owned execution,
+checkpoint safety, temporal review/distribution and automatic orphan integration
+are implemented. Read VERIFICATION_STATUS.md for current evidence; the ledger
+holds dated test scopes, hashes, contradictions and remaining probes.
+
+Final full Windows suite: **2854 passed, 1 skipped, 0 failed in 364.10 s**
+(main session 89101). This includes the corrected adversarial fixture; the
+correction changed no production code. Earlier results and scoped checks remain
+in EVIDENCE_LEDGER.json. Green offline validation and v05's independently matched
+sentinel proof do not constitute scientific or full processing acceptance.
+
+The helper is frozen with incremental journaling, exclusive stable-ID/hash promotion,
+current-batch ownership, final compact receipts and realistic encoded-copy budgets.
+The frozen UI starts groups unchecked, passes exact IDs, labels actual applied
+subsets, provides guarded async full-resolution viewing and persistent log-failure
+banners. No real temporal candidate is approved or installed.
+
+Automatic orphan integration uses production modules/orphan_import_probe (testing
+entrypoint only wraps it), normal recorded executor after initial preflight,
+explicit environment, preserved ownership exceptions and final policy re-preflight.
+Zero offered orphans returns None and allows ordinary merge. Mapped masks attach
+explicitly; exportMasks runs only for nonempty expected sets. Actual component
+feature readback remains unverified and blocks injection when missing. No real
+merge was run. Offline integration does not establish native feature behavior.
+
+### Completed reference census; owner decisions still block processing
+
+The worker ended at review_ready and released its OS lease; inventory/checkpoint
+code freeze is lifted. Final census: 175,761 files, 128,366 image occurrences, all
+in-window and zero outside, one map; no other image decode exceptions reported.
+There are 125,820 unique camera+basename+content identities, including 61 unknowns.
+This is neither a global unique-content count nor an approved processing set.
+
+| Mount alias / optical camera | Composite unique | Other reported counts |
+|---|---:|---|
+| legacy_camlower / cinema |21,604|Distinct lower mount|
+| legacy_cammid / port |21,467|Distinct mid mount|
+| legacy_camupper / starboard |55,698|55,780 occurrences;82 identical duplicates|
+| Zeuss |26,990|29,454 occurrences;2,464 identical duplicates|
+| Unknown |61|Unresolved|
+
+Same-camera/name different-content flags affect 44,042 occurrences across 21,980
+names. Three checked upper/starboard pairs compare 1975-square batched variants
+with 3840x2160 timer_still/upper variants. These are not identical duplicates;
+owner choice of retained source version is pending. Unknowns need explicit
+exclusion or corrected separate delivery; GUI has no arbitrary camera assignment,
+renaming or timestamp correction. General camera/count acceptance is not complete.
+
+Main acquired the lease and stored source_mask_policy=ignore_existing: all 47,394
+original masks excluded from processing, zero included/deleted; 4,323 unmatched
+retired masks. Inventory approval remains None. Artifact:
+F:/NA171/metadata/reference_inventory/mask_retired_census.json, assessment hash
+7a66db1ab8423c1d866971d8d9f84ae72f100e082c171684bf31e40bcbf9ebb4.
+Physical deletion of 47,394 files/1,429,816,122 bytes still awaits explicit owner
+answer. Stored processing exclusion does not authorize deletion.
+
+### Native probes and remaining scientific uncertainty
+
+V03 production serializer/census readback reports VERIFIED_PRODUCTION_IMPORT.
+Its individual-add mask export failed with no Mask layer, err33640, process0x3f,
+top code2181038093. Cause is not proved; do not label ignored sidecars/configuration
+bugs as established. V04 explicit attachment and folder discovery each produced
+four matching mask exports and VERIFIED_MASK_ATTACHMENT_PIXELS.
+
+V05 completed 21:47:19Z: fresh process, folder-only import, no explicit attachment;
+four real-image controls passed VERIFIED_PRODUCTION_IMPORT and
+VERIFIED_MASK_ATTACHMENT_PIXELS. Final success true, ownership_retained false,
+errors empty. Manifest 365fe121476439d2d8e3534358c0160314427651236f360eb202a7115b055be8.
+This establishes cold-folder attachment/export pixels in that fixture. Ampere's
+independent v05_result_01.json is COMPLETE_MATCH with zero violations and79 focused
+passes. Both runtime ownerships released, scheduler0, no RS process/owner journals,
+dependency hashes unchanged at final observation. Main inspected fresh PID creation
+under the per-run root in cold_process_observation. Feature exclusion/meshing were not measured;
+option readback is UNOBSERVABLE_NO_DOCUMENTED_REPORT_VARIABLE.
+
+Temporal default 96 / min 24 / span 120 s / block 900 s is an engineering proposal. The bounded
+384-hash/four-family experiment shows useful partial edges; three displayed frames
+per lower/mid sheet are not semantic ground truth. Significant hardware remains
+unmasked; offset historical outlines do not measure recall/false positives.
+Independent labels, genuine hover and confirmed head-tilt controls remain open.
+
+Navigation integrity repairs leave the checked H2101 filter input unchanged;
+54,344 finite UTM55N rows and inverse-projection consistency do not prove absolute
+accuracy, frame/datum, timing or filtering validity. Actual checkpoint scene reload,
+alignment/merge science and downstream output acceptance are still open.
+
+### Ranked loose ends
+
+1. Owner: choose upper/starboard source variant; resolve 61 unknowns; decide physical
+   mask deletion exception. Then review the resulting retained inventory explicitly.
+2. Owner: complete remaining stage/settings, quality/culling and density approvals;
+   optional post-batch masks require explicit accepted blocks or Skip before align.
+3. Validate actual orphan component-feature readback; missing proof must continue
+   blocking injection. Separately prove feature exclusion/meshing as required.
+4. Complete independent nav/frame/datum/mount/hover/tilt validation and controlled
+   processing/reload/output acceptance. No blanket scientific readiness claim.
+5. Finish adversarial product audit using docs/CLAUDE_PRODUCT_AUDIT_PROMPT.md and
+   evidence-led FINDINGS retirement under D15; preserve provenance and open D1's
+   legacy identity decision. New native calibration lane does not resolve legacy D1.
+
+### Uncommitted work and ownership
+
+At this precommit snapshot on agent-native-execution, **201 deployment files are
+staged**, with final documentation updates requiring restaging by main. Main reports
+the fetched origin/main is already included in HEAD; this local branch has no
+remote/upstream yet. Exact
+per-file statuses and the local exclusions are in
+[docs/UNCOMMITTED_FILES.json](docs/UNCOMMITTED_FILES.json). The inventory records
+observation time and intended inclusion, not a perpetual uncommitted-state claim;
+it becomes historical after commit.
+Leave pre-existing .agents/, .codex/, .claude/settings.local.json and AGENTS.md
+excluded and untouched. Main owns integration/tests and commit/push; Wegener's
+documentation is frozen. Historical sections below retain
+their original context and must not override this current section.
 
 ## 2026-09-11 - latest GitHub development merged locally
 
@@ -256,6 +391,13 @@ zone_1 output preserved; the pre-fix truncated zone_1 is in
 `proc\batched_images_by_zone\zone_3d` is a decimated copy that must NOT be used.
 
 ### Ranked loose ends
+
+Read-only reference UI smoke loaded175,761 rows/48,426 flags with unchanged project
+and inventory SHA/mtime, no submitted work/lease/scan/approval. Read6.662s and
+hydration9.189s included one2.335s heartbeat gap: not freeze-free. All five camera
+rows loaded; Zeuss needs scrolling at table height180. Provenance/screenshot:
+F:/NA171/proc/tmp/screenshots/ui-review-20260911/REFERENCE-readonly-sources-20260911-175409-e703a3.json
+and matching.png. No production changes; detailed scope is in the evidence ledger.
 
 1. **zone_2 has no accepted remedy.** All four levers measured above. The
    honest options are: accept it will not align as one zone; re-batch that

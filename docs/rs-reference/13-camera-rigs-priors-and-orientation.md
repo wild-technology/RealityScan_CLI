@@ -1,5 +1,17 @@
 # Camera rigs, orientation conventions, priors, and coordinate frames
 
+**Current general Hercules policy (owner, 2026-09-11):** legacy Upper/Mid/Lower
+mount settings are 70/20/10 degrees with pitch accuracy 10 degrees each. Zeuss
+is now **40 degrees down with pitch accuracy 40 degrees**. All yaw/roll accuracies
+are 10 degrees, orientation weight is locked at 2, position accuracy is 5/5/1 m
+with weight 10, and current canonical offsets are confirmed. These are owner
+profile defaults, not empirical calibration; main applies the canonical changes.
+Autoapply detected families and record effective per-project settings. Historical
+campaign mount values below do not override this policy. H2101 is reference evidence
+for the general product, not a runtime special case. See
+[VERIFICATION_STATUS](../VERIFICATION_STATUS.md) and
+[ledger POL-001..009, GEN-001..007, NAV-001..005](../EVIDENCE_LEDGER.json).
+
 This document covers the *geometry layer* of RealityScan 2.2 driven from the CLI: how the
 application is told where a camera is and which way it points, what a "rig" is, how
 calibration and lens-distortion groups partition the intrinsics solve, what each prior
@@ -949,6 +961,11 @@ Practical decision rules:
 
 ### 6.2 Which frames `R` maps between — [INFERRED], strongly evidenced
 
+The 2026-09-11 reconciliation does not promote this to live verification.
+See [ledger ROT-001/002 and P-ROT](../EVIDENCE_LEDGER.json). A locked-pose
+round-trip or position-baseline check is not an independent orientation oracle;
+the discriminating fixture needs off-nadir variety and known reprojections.
+
 > **[2026-08-23] Do not try to settle this on nadir imagery.** An attempt to confirm the
 > world→camera reading empirically — comparing RealityScan's own solved rotations against an
 > external solve carried through a similarity fitted on camera centres — was **inconclusive
@@ -1318,15 +1335,18 @@ No Help page states a precedence order. What is established:
 |---|---|---|
 | **EXIF GPS** | per image, at import | used only when `sfmEnableCameraPrior=true`; suppressible per camera model via `GPSMode="ignore"` in `sensorsdb.xml` [OFFICIAL: tutorials/georeferencing, appbasics/cameradb] |
 | **`sensorsdb.xml`** | per camera **model**, at import | fills calibration priors when EXIF is incomplete; soft by default, hard with `quality="exact"` [OFFICIAL: appbasics/cameradb] |
-| **XMP sidecar** | per image, at import | "All information from the XMP file will automatically be assigned to the corresponding image" — i.e. XMP **replaces** EXIF-derived values [OFFICIAL: tools/xmpalign] |
+| **XMP sidecar** | per image, at import | XMP metadata is associated with the image; priority is conditional. **Prefer Exif over XMP** gives EXIF priority when enabled. Capture the effective setting and test conflicting fields; do not infer universal replacement. [OFFICIAL: tools/xmpalign; appbasics/appsettings] |
 | **Flight log (`-importFlightLog`)** | per image, on demand | matched by **basename**, finds images in subfolders; writes position, optional YPR, optional per-image accuracies, and optionally calibration columns (§9.2) [VERIFIED: NA167 #5; OFFICIAL: tools/defineimportformat] |
-| **`-editInputSelection`** | current selection, on demand | last writer wins; the master per-image control [OFFICIAL + VERIFIED] |
+| **`-editInputSelection`** | current selection, on demand | documented per-input edits; field-specific precedence, omitted values and save/reload effects require readback [OFFICIAL; universal last-writer claim OPEN] |
 | **`sfmDistortionModel`** | **global**, overrides every per-image model | §5.4 [VERIFIED: FINDINGS 2026-07-26] |
 | **GCPs / control points** | per measured point | independent constraint family; can define origin (1 point), scale (2), full frame (3+) [OFFICIAL: tutorials/georeferencing, tutorials/scaling] — **never driven through this CLI** [OPEN] |
 
-Ordering rule that is safe to rely on: **imports are applied in the order you issue them**,
-and `-editInputSelection` after an import overrides that import for the selection.
-[INFERRED from FIFO delegation semantics; not isolated by a cell.]
+The code orders imports and edits, but FIFO execution does not establish their
+field-level merge or overwrite semantics. The previous universal last-writer rule
+was an inference, not an isolated measurement. Use conflicting sentinels and omitted
+fields with readback after each operation. [OPEN]
+See [ledger IMP-001..004 and P-IMPORT](../EVIDENCE_LEDGER.json) and Epic's
+[EXIF preference documentation](https://rshelp.capturingreality.com/en-US/appbasics/appsettings.htm).
 
 Two composition facts that *are* established:
 
@@ -1337,19 +1357,26 @@ Two composition facts that *are* established:
   [INFERRED from Help prose + design reasoning; settings-evaluation §5. Not isolated by a cell.]
 - A **merged** component is **not** georeferenced unless the merge scene itself holds
   constraints — imported components' own georeferencing does not carry into the fused one.
-  The fix is a union flight log + CRS in the merge scene, then `-update`.
-  [VERIFIED: FINDINGS 2026-07-23]
+   A union flight log + CRS followed by `-update` was the recorded remedy in that
+   case. It is not a guarantee of correct scale or attitude: later zone_4 results
+   worsened under update. [VERIFIED: historical case, FINDINGS 2026-07-23;
+   general corrective claim OPEN, ledger UPD-001/002]
 
-### 7.4 `-update` is a similarity fit, and it is the step that can move geometry
+### 7.4 `-update` can change placement and scale; its objective remains open
 
-"Update all components and models by a rigid transformation to fit the actual constraints
-and control points." [OFFICIAL: appbasics/allcommands] Measured here: `-update` is a
-similarity/rigid fit applied **after** reconstruction — it can **rotate or rescale** a
-component but cannot stiffen or repair its geometry. [VERIFIED: FINDINGS 2026-07-26]
+Epic's command table describes a rigid transformation of components/models; its
+scaling page describes selected-component coordinates and child-model scale.
+[OFFICIAL: appbasics/allcommands; tutorials/scaling]
+Later historical measurements record separate per-component scale factors and
+both improvement (zone_3) and regression (zone_4 c0: 0.9377 to 1.1470).
+[VERIFIED: reported BUGS B19 addendum, 2026-09-09]
 
-That makes `-update` the *only* consumer of orientation priors in an assembly stage that
-imports finished components — and therefore the prime suspect whenever a component is
-correctly solved but wrongly oriented in the deliverable (§10.6).
+The exact objective, orientation-prior contribution and general corrective effect
+are not established. Do not promote the suspected cause of an assembly tilt into
+proof that update is the only orientation consumer or minimizes the chosen nav
+residual. Current AlignZone issues it after align when a flight log exists unless
+skipped; that is code evidence, not validation of the result. See
+[ledger UPD-001/002, P-UPDATE](../EVIDENCE_LEDGER.json) for sibling-copy controls.
 
 ### 7.5 Measured effects of priors — the numbers that matter
 
@@ -2049,14 +2076,25 @@ georeferencing. [VERIFIED: FINDINGS 2026-07-25]
 
 ### 10.5 The written flight log
 
-`modules/georeference/georeference_images.py` writes a **13-column, semicolon-separated**
-log matching `{B438A617-…}`:
+**Current writer, 2026-09-11 [VERIFIED-by-inspection]:** both `geoall.py` and
+`modules/georeference/georeference_images.py` use the canonical `geoall.write_flight_log`
+serializer and **14-column, semicolon-separated** managed `{D1F2A3B4-…}` schema:
 
 ```
-filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy
+filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy;FocalLength
 ```
 
-Accuracies in force: **position 10.0 / 10.0 / 1.0 m** (end-to-end per-image uncertainty, not
+Column 14 retains a registry focal value for compatibility; it does not establish
+CSV focal delivery. In the v02 four-image sentinel fixture, CSV-only readback
+reports focal 0; native XMP followed by CSV with grouping disabled preserves XMP
+focal values. See `../EVIDENCE_LEDGER.json` (`partial_sentinel_comparison_01`,
+`canonical_flight_log_writer_validation`) for hashes, tolerances and limits.
+The writer reconciliation passed 71 focused offline tests; it changed no camera
+math or physical-calibration claim. Standalone paths retain camera subfolders;
+module paths and accepted-row filtering retain their existing behavior.
+
+**Historical settings snapshot (not current owner defaults):** position
+**10.0 / 10.0 / 1.0 m** (end-to-end per-image uncertainty, not
 the DVL/Paro sensor spec — see §7.5), **yaw 15.0°, roll 15.0°, pitch per-family from
 `MOUNTS['p_acc']`**. No magnetic declination is applied and that is **correct**:
 `kalman_yaw_deg` comes from an Octans gyrocompass, so it is already true north and
@@ -2371,13 +2409,36 @@ Facts established after this document was written (2026-08-04), carried here so 
 
 ### A1. Manufacturer approximate intrinsics as priors COLLAPSE registration (ON2026 ladder)
 
-Clean A/B/C ladder on a zone_1 copy, one variable per rung, explicit `-addImageWithCalibration` delivery, own cache: **A** control 3,528/3,626 = 97.3 % (1 component, residual median 4.54 cm); **B** groups-only XMPs (calibration/distortion groups 5/6, no values) 97.7 %, median 1.80 cm; **C** full manufacturer priors (focal35 24.2345, PPU/PPV, division, zero-pinned distortion, approximate) **45.4 %** — collapse, reproducing the original failed cell almost exactly, solved focal steered to the prior with wild outliers. The prior VALUES, not sidecar hygiene or cache concurrency, caused the 2026-08-08 collapse (2× replicated, two delivery mechanisms; mirrors NA167 #4 at far greater severity). Production stays calibration-prior-free; value-carrying flight-log calibration columns were downgraded for the same reason. Caveat on B: both A and B exported as ONE calibration group, so flight-log import auto-grouping (`ifKGrp`) appears to stomp prior groups and B's mechanism is unclear. [VERIFIED: FINDINGS 2026-08-09]
+Recorded A/B/C ladder on a zone_1 copy, explicit `-addImageWithCalibration`
+delivery and own cache: **A** control 3,528/3,626 = 97.3% (one component,
+residual median 4.54 cm); **B** groups-only XMPs 97.7%, median 1.80 cm;
+**C** full manufacturer priors (focal35 24.2345, PPU/PPV, division, zero-pinned
+distortion, approximate) 45.4%, with focal steering and outliers.
+[VERIFIED: historical report, FINDINGS 2026-08-09; original artifacts not reopened
+in the 2026-09-11 reconciliation]
+
+This supports a harmful effect of that numeric-prior configuration in that fixture,
+not a universal ban on numeric priors. A and B both exported as one group; the
+reported import-overwrite explanation remains a hypothesis. The later no-import
+setter failure does not disprove overwrites under other conditions. Current
+production policy must come from approved settings, not this historical paragraph.
+See [ledger CAL-004/005, IMP-004 and P-GROUP](../EVIDENCE_LEDGER.json).
 
 ### A2. The 45° down-look belongs to the UPPER camera, not Cinema (rig correction 2026-08-14)
 
 Owner: "upper is 45 degrees down, cinema and mid are pointed directly forward … how they were loaded on this cruise and NA165." The registry had `wca_cinema` at pitch 45 and the upper (`wca_starboard`) with no mount at all. Corrected: `wca_cinema` pitch 0; new family `wca_upper` (`^u\d+c`, the `U###C` stills) → starboard camera at pitch 45; `wca_port` (mid) 0 as before; lever arms untouched (validated figures). **Blast radius:** the NA156 H2023/H2024 WCA line was solved with cinema at 45 (the 43.11° Cinema median in §5 is that solve); the owner vouched for NA168 and NA165 only — reprocess NA156 under a cruise-scoped family rather than moving the row back. §10's mount table is corrected in place. [VERIFIED: FINDINGS 2026-08-14]
 
 ### A3. Group echo from the F2 run: every camera `CalibrationGroup="-1"`, every camera its own focal (2026-09-06)
+
+**Reconciliation 2026-09-11:** the observations below remain historical evidence.
+The subsequent no-import control (FINDINGS 2026-09-08) also failed to group:
+16 cameras, all ungrouped, 12 distinct focals. Import is therefore not necessary
+for the observed setter failure. This does **not** establish that import never
+overwrites existing groups. A single-family probe grouped at `ifKGrp=1`, while
+0/2 left that fixture ungrouped; current global/local templates use 1. Mixed-family
+mapping remains open, and the August 23 XMP grouping result is a separate positive
+delivery path. See [ledger CAL-001..005, P-GROUP](../EVIDENCE_LEDGER.json).
+Command availability, command issuance and successful application are distinct.
 
 The NA173 F2 align ran the generated prior-group file on both zones (cammid -> calibration/lens
 group 2/2, camlower -> 3/3, zeuss|herc -> 1/1; `-deselectAllImages`, `-selectImage <regexp>`,
@@ -2391,8 +2452,8 @@ sharing a number share calibration parameters after alignment) say a group that 
 focal per family. The saved `.rsproj` records no group at all (its `<input>` elements carry only
 `abs*`/`absu*`/`absPrior`/`absCs`), so the CSV focal spread and the XMP echo are the only
 instruments. Same result as the 2026-08-08 fixture (A5 in 02), which tried BOTH the regexp and the
-full-path `-selectImage` forms - so the selection form is not the explanation. Two candidates stay
-open: the commands are inert from the delegated CLI, or the flight-log import's `ifKGrp=2`
+full-path `-selectImage` forms - so the selection form is not the explanation. Two candidates were
+left open in the September 6 interpretation: the commands are inert from the delegated CLI, or the flight-log import's `ifKGrp=2`
 ("Automatically group camera calibration", value mapping UNDOCUMENTED, 06 sec.3) re-groups the
 cameras AFTER the commands - the import runs last by design (07 A-series, owner sequence
 2026-08-14). Cheapest discriminator, no new command in the workflow: the shipped

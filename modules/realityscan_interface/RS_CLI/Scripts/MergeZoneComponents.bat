@@ -1,5 +1,17 @@
 @echo off
 setlocal enabledelayedexpansion
+:: Refuse before SetVariables, mkdir, instance launch or sidecar writes.
+if defined RS_ALIGN_POOL_DIR goto :sourcePoolRefused
+:: A project selection always requires an explicit approved Apply or Skip.
+if defined RS_SELECTION_MANIFEST if not defined RS_OCCLUSION_MANIFEST goto :occlusionRefused
+if defined RS_SELECTION_MANIFEST if not defined RS_OCCLUSION_MANIFEST_SHA256 goto :occlusionRefused
+if defined RS_SELECTION_MANIFEST (
+    if not defined RS_PYTHON goto :occlusionRefused
+    pushd "%~dp0..\..\..\.." || goto :occlusionRefused
+    "%RS_PYTHON%" -B -m merge_zones --validate_project_occlusion
+    if errorlevel 1 ( popd & goto :occlusionRefused )
+    popd
+)
 :: Import every .rsalign component from a folder into a fresh scene, merge
 :: them, and export the merged component.
 ::
@@ -95,8 +107,44 @@ if /i "%merge_mode%" == "assemble" (
         goto :argfail
     )
 )
+:: Scoped orphan mode is align-only and NEVER accepts a component union log.
+:: The driver validates current selection hashes and the controlled CLI probe.
+if defined RS_MERGE_COMPONENT_FEATURES (
+    if /i not "%merge_mode%" == "align" goto :argfail
+    if defined RS_MERGE_FLIGHT_LOG goto :argfail
+    echo %RS_MERGE_COMPONENT_FEATURES%| findstr /r /x "[012]" >nul
+    if errorlevel 1 goto :argfail
+)
+if defined RS_MERGE_ORPHAN_LIST (
+    if not defined RS_MERGE_COMPONENT_FEATURES goto :argfail
+    if not exist "%RS_MERGE_ORPHAN_LIST%" goto :argfail
+    if not exist "%RS_MERGE_ORPHAN_MASKS%" goto :argfail
+    if not exist "%RS_MERGE_ORPHAN_LOG%" goto :argfail
+    if not exist "%RS_MERGE_ORPHAN_PARAMS%" goto :argfail
+    if not exist "%RS_MERGE_ORPHAN_ROOT%" goto :argfail
+)
+if /i "%merge_mode%" == "assemble" goto :outputReady
+:: Python allocates an empty attempt directory. Direct callers must do so too:
+:: old sidecars, exports and PEEL_TRUNCATED markers cannot become new evidence.
+if exist "%output_dir%" for /f "delims=" %%F in ('dir /b "%output_dir%" 2^>nul') do goto :dirtyOutput
+:outputReady
 if not exist "%output_dir%" mkdir "%output_dir%"
+if /i not "%merge_mode%" == "assemble" echo started>"%output_dir%\MERGE_ATTEMPT_STARTED.txt"
 goto :args_ok
+
+:sourcePoolRefused
+echo ERROR: source-backed RS_ALIGN_POOL_DIR is not permitted for merge harvesting.
+echo   Use pipeline-owned copy-layout zones; no source sidecars were touched.
+exit /b 1
+
+:occlusionRefused
+echo ERROR: project merge requires approved RS_OCCLUSION_MANIFEST and RS_OCCLUSION_MANIFEST_SHA256.
+exit /b 1
+
+:dirtyOutput
+echo ERROR: merge attempt output must be empty: %output_dir%
+echo   Use a fresh directory and preserve previous exports in place.
+exit /b 1
 
 :: Argument/precondition failures land here. `exit /b N` inside a
 :: multi-statement parenthesized block returns 0 to the process caller
@@ -105,8 +153,11 @@ goto :args_ok
 exit /b 1
 
 :args_ok
+set "RegistrationParams=%Metadata%\RegistrationExportParams.xml"
+if /i not "%merge_mode%" == "assemble" if not exist "%RegistrationParams%" goto :argfail
 
 echo Starting RealityScan
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -126,6 +177,39 @@ if defined list_mode (
     )
 )
 
+:: Only component inputs exist at this point, so their feature mode is separate.
+if defined RS_MERGE_COMPONENT_FEATURES (
+    call :run -selectAllImages || goto :fail
+    call :run -setFeatureSource %RS_MERGE_COMPONENT_FEATURES% || goto :fail
+    call :run -deselectAllImages || goto :fail
+)
+if defined RS_MERGE_ORPHAN_LIST (
+    call :run -set "ifKGrp=0" || goto :fail
+    call :run -add "%RS_MERGE_ORPHAN_LIST%" || goto :fail
+    :: This log contains ONLY fresh orphan paths, never imported component paths.
+    call :run -importFlightLog "%RS_MERGE_ORPHAN_LOG%" "%RS_MERGE_ORPHAN_PARAMS%" || goto :fail
+    for /f "usebackq tokens=1,* delims=|" %%I in ("%RS_MERGE_ORPHAN_MASKS%") do (
+        call :run -deselectAllImages || goto :fail
+        call :run -selectImage "%%I" union || goto :fail
+        call :run -setImagesLayer "%%J" mask || goto :fail
+    )
+    call :run -deselectAllImages || goto :fail
+    for /f "usebackq delims=" %%I in ("%RS_MERGE_ORPHAN_LIST%") do (
+        call :run -selectImage "%%I" union || goto :fail
+    )
+    call :run -setFeatureSource 2 || goto :fail
+    call :run -enableAlignment true || goto :fail
+    call :run -deselectAllImages || goto :fail
+)
+
+:: Explicit native mask use for every imported/new input, including assembly.
+:: Dispatch is deliberate; actual feature exclusion still needs native readback.
+if defined RS_OCCLUSION_MANIFEST (
+    call :run -selectAllImages || goto :fail
+    call :run -editInputSelection "inpMaskOpts=3" || goto :fail
+    call :run -deselectAllImages || goto :fail
+)
+
 :: Apply optional -set overrides (instant; delegated FIFO guarantees they
 :: execute before the merge/align below). key:value -> key=value.
 if not [%6] == [] ( call :applySet "%~6" || goto :fail )
@@ -138,6 +222,7 @@ goto :afterSets
 set "kv=%~1"
 set "kv=%kv::==%"
 echo Setting %kv%
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -set "%kv%"
 :: A rejected ladder setting (sfmMergeGeoreferencedComponents,
 :: sfmForceComponentRematch, sfmImagesOverlap) used to leave the rung
@@ -180,6 +265,11 @@ if /i "%merge_mode%" == "align" (
     call :run -mergeComponents || goto :fail
 )
 :after_merge_op
+if defined RS_OCCLUSION_MANIFEST (
+    call :run -selectAllImages || goto :fail
+    call :run -editInputSelection "inpMaskOpts=3" || goto :fail
+    call :run -deselectAllImages || goto :fail
+)
 
 :: Rigid-fit every component to the imported constraints - this is the
 :: step that actually georeferences the freshly merged component.
@@ -261,6 +351,7 @@ for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%XMPExportParams%") do (
                 echo ERROR: app-global key "%%A" in %XMPExportParams%
                 goto :fail
             )
+            call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
             %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
             set /a applied_xmp+=1
         )
@@ -354,12 +445,20 @@ if errorlevel 2 goto :after_export
 if errorlevel 1 goto :fail
 call :run -exportSelectedComponentDir "%output_dir%" || goto :fail
 if not exist "%output_dir%\%merged_name%_c%peel_index%.rsalign" goto :after_export
+:: Selected-component registration supplies measured image identity. Counts
+:: alone cannot distinguish duplicate folding from loss of unique imagery.
+if not exist "%output_dir%\identity" mkdir "%output_dir%\identity"
+set "registration_csv=%output_dir%\identity\%merged_name%_c%peel_index%.csv"
+call :run -exportRegistration "%registration_csv%" "%RegistrationParams%" || goto :fail
+if not exist "%registration_csv%" goto :fail
+%SystemRoot%\System32\findstr.exe /n /r /c:"#cameras [0-9][0-9]*" "%registration_csv%" | %SystemRoot%\System32\findstr.exe /b /c:"1:" >nul
+if errorlevel 1 goto :fail
 call :run -exportXMPForSelectedComponent || goto :fail
 :: The errorlevel check below was ineffective on its own: Move-Item
 :: failures are NON-TERMINATING, so powershell.exe exited 0 on a
 :: partial harvest (audit 2026-08-07). $ErrorActionPreference=Stop
 :: plus try/catch makes the failure real.
-powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Get-ChildItem -LiteralPath '%harvest_dir%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%peel_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { @('%harvest_dir%','%RS_MERGE_ORPHAN_ROOT%') | Where-Object { $_ } | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -Filter *.xmp } | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%peel_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
 if errorlevel 1 ( echo ERROR: harvest move failed & goto :fail )
 call :run -deleteSelectedComponent || goto :fail
 set /a peel_index+=1
@@ -384,11 +483,13 @@ echo peel_ceiling_hit=%max_peel% last_peeled=%last_peeled% > "%output_dir%\PEEL_
 
 :after_export
 
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
 :fail
 echo ERROR: merge workflow failed - see %ErrorsFile%
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
@@ -398,6 +499,7 @@ exit /b 1
 :: seconds") - observed on the smoke E2E 2026-07-24. That exact error
 :: exits 2 (peel-terminal); anything else stays a hard failure (exit 1).
 :run_peelrename
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*
@@ -428,6 +530,7 @@ exit /b 0
 :: so the evidence is preserved while later :run calls see a clean
 :: marker. Any other error content fails the workflow as usual.
 :run_geoimport
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*
@@ -459,6 +562,7 @@ exit /b 0
 :: :run - delegate one operation, double-wait, abort on reported error
 :: (see AlignImagesFromFolder.bat for the rationale).
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

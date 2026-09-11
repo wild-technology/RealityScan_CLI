@@ -36,6 +36,7 @@ set "model_name=%~3"
 if not exist "%scene_path%" ( echo ERROR: scene not found: %scene_path% & exit /b 1 )
 
 echo Starting RealityScan
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -73,12 +74,14 @@ exit /b 0
 
 :fail
 echo ERROR: ComputeModel workflow failed - see %ErrorsFile%
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
 :: :run - delegate one operation, double-wait, abort if RealityScan
 :: reported an error (shared pattern - see AlignZone.bat).
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

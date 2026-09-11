@@ -560,10 +560,19 @@ normalised.]**
   7-micron principal-point offset holding across 5,050 independently solved cameras —
   implausible. As a fraction of frame width it is a 0.7 % offset, which is ordinary.
 
-Treat the "[mm]" label as applying to the GUI field's *presentation* and the XMP / export
-value as normalised. What is still unproven is only the arithmetic bridge — whether the
-GUI divides by 36, and whether `scale` is image width or the larger image dimension.
-[OPEN — Q8]
+The templates support a normalised export interpretation, but do not by themselves
+settle XMP import or GUI presentation. The official
+[camera-report documentation](https://rshelp.capturingreality.com/en-US/appbasics/reports_fav_cameras.htm)
+explicitly defines `scale = max(width, height)`; the earlier claim that this report
+variable's dimension is unknown is superseded at the documentation level.
+[OFFICIAL, checked 2026-09-11]
+
+The representation bridge remains [OPEN — Q8]. At baseline `0c9224e`,
+`modules/calibration_sidecars.py::intrinsics_to_xmp_values` divides U by width
+and V by height, whereas the shipped OpenCV export multiplies both axes by the
+same `scale`. This is a convention mismatch requiring a non-square, off-center
+intrinsics probe; it is not a proven RS import defect. Pixel recovery before free
+self-calibration is the oracle. See [ledger UNIT-001/002, P-UNITS](../EVIDENCE_LEDGER.json).
 
 ---
 
@@ -1253,11 +1262,16 @@ The repo carries `RS_CLI/Metadata/XMPExportParams.xml`:
 </Configuration>
 ```
 
-**This file is referenced by no script in the repository** — `AlignZone.bat` calls bare
-`-exportXMP` and `MergeZoneComponents.bat` calls `-exportXMPForSelectedComponent`, which
-takes no params at all. Production exports therefore run on **whatever the instance's
-current XMP dialog state is**, which is unpinned.
-[VERIFIED-by-inspection, 2026-08-04]
+**Historical inspection superseded for the merge path (2026-09-11).** At baseline
+`0c9224e`, `MergeZoneComponents.bat` reads `XMPExportParams.xml`, issues its keys
+through `-set`, and rejects zero applied settings before the parameterless
+`-exportXMPForSelectedComponent`. Do not pass a params argument to that command.
+The general `-exportXMP` command has a different signature and accepts params.
+This correction does not establish that every key took effect, that the bare
+align export is pinned, or that the historical empty-harvest cause is proved.
+[VERIFIED-by-inspection: current merge script; OFFICIAL: appbasics/allcommands]
+See [ledger EXP-001/002 and P-EXPORT](../EVIDENCE_LEDGER.json): fresh pose-bearing
+sidecars and membership are the required live oracle; no such probe ran in this audit.
 
 **No `xmp*` key is documented anywhere in the shipped Help.** `allcommands` and
 `tutorials/commandline_1` both say of `-exportXMPForSelectedComponent` that *"an example

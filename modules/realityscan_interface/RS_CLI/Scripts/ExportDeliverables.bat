@@ -77,6 +77,7 @@ echo Project: %scene_path%
 echo Output:  %out_dir%
 
 echo Starting RealityScan
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -130,6 +131,7 @@ for /f "usebackq delims=" %%N in ("%name_list%") do (
 )
 
 echo Shutting down RealityScan instance %RS_INSTANCE% - NOT saving
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
@@ -190,6 +192,7 @@ exit /b 1
 
 :fail
 echo ERROR: export workflow failed - see %ErrorsFile% and the RealityScan log
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
@@ -235,6 +238,7 @@ exit /b 1
 :: (F-102). A select that RealityScan refuses outright (an empty component)
 :: is evidence, not an abort.
 :delete_verified
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -selectModel "%~1"
 if errorlevel 1 goto :deleteDelegateFailed
 ping -n 3 127.0.0.1 >nul
@@ -261,6 +265,7 @@ exit /b 0
 :: :run - delegate one operation, double-wait, abort on reported error
 :: (see AlignZone.bat for the rationale).
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

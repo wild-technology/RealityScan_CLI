@@ -2,6 +2,7 @@
 /__pycache__
 /.vscode
 /.vs
+/.external/
 
 /module_base/__pycache__
 /modules/__pycache__

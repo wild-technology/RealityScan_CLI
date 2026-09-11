@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from pathlib import Path
 import xml.etree.ElementTree as ET
 
 # Where RealityScan looks. Ordered; first existing wins. Never hardcode a
@@ -45,8 +46,8 @@ REPO_FLIGHTLOGS = os.path.join(_REPO, 'flightlogs.xml')
 REPO_CALIBRATION = os.path.join(_REPO, 'calibration.xml')
 
 # Install-directory XMLs this repo extends. RealityScan resolves format
-# GUIDs against ITS OWN copies, and reverts them on update, so every one of
-# these needs the same self-healing treatment: flightlogs.xml carries the
+# GUIDs against ITS OWN copies, and reverts them on update. Strict execution
+# validates contracts; only legacy callers self-heal. flightlogs.xml carries the
 # priors IN (position, orientation, accuracies, focal), calibration.xml
 # carries the solved identity OUT (component membership + prior readback).
 MANAGED_FILES: tuple[tuple[str, str], ...] = (
@@ -81,6 +82,79 @@ def _parse(path: str) -> ET.Element:
 class FlightLogFormatError(RuntimeError):
     """The configured flight-log format is not readable by RealityScan."""
 
+    def __init__(self, message: str, *, repair_proposal: dict | None = None):
+        super().__init__(message)
+        self.repair_proposal = repair_proposal
+
+
+def _strict_contract() -> bool:
+    # Unknown nonempty values fail closed rather than enabling legacy writes.
+    return any(os.environ.get(key, '').strip().lower() not in ('', '0', 'false', 'no', 'off')
+               for key in ('RS_NO_SETTINGS_INHERITANCE', 'RS_REQUIRE_INSTALL_CONTRACT'))
+
+
+def _selected_install_dir(install_dir=None) -> str:
+    """Resolve execution selection and validate resources without launching RS."""
+    from . import rs_installation as installation
+
+    explicit = os.environ.get('RS_EXECUTABLE')
+    if explicit is not None:
+        exe = Path(explicit)
+        if (not exe.is_absolute() or exe.name.casefold() != 'realityscan.exe'
+                or not exe.is_file()):
+            raise FlightLogFormatError('Invalid explicit RS_EXECUTABLE; select an existing absolute '
+                                       'RealityScan 2.2 executable. No fallback or repair was attempted.')
+        if install_dir is not None and Path(install_dir).resolve() != exe.parent.resolve():
+            raise FlightLogFormatError('RS_EXECUTABLE conflicts with install_dir; select one approved '
+                                       'RealityScan 2.2 installation. No fallback was attempted.')
+        install_dir = str(exe.parent)
+    report = installation.validate_installation(install_dir)
+    if not report['valid']:
+        raise FlightLogFormatError('; '.join(report['diagnostics']))
+    return report['install_dir']
+
+
+def _assert_contract(params_path, key, filename, install_dir=None, logger=None) -> str:
+    """Compare the selected definition using the installation auditor's semantics."""
+    from . import rs_installation as installation
+
+    root = _selected_install_dir(install_dir)
+    try:
+        _, params, _ = installation._xml(Path(params_path))
+        if params.tag != 'Configuration':
+            raise installation.InstallationError(f'Unrecognized params XML root in {params_path}')
+        entries = [e for e in params.findall('entry') if e.get('key') == key]
+        if len(entries) != 1:
+            raise installation.InstallationError(f'{params_path} must name exactly one {key} GUID')
+        guid = (entries[0].get('value') or '').strip().upper()
+        source = Path(dict(MANAGED_FILES)[filename])
+        _, repo_root, want = installation._xml(source)
+        target = Path(root) / filename
+        _, app_root, have = installation._xml(target)
+        if any(element.tag not in installation._MANAGED_ROOTS[filename]
+               for element in (repo_root, app_root)):
+            raise installation.InstallationError(f'Unrecognized XML root for {filename}')
+        if guid not in want:
+            raise installation.InstallationError(
+                f'{key} value {guid!r} is not a GUID defined in repository {source}; '
+                'select approved params and repository contract before proposing repair')
+        if guid not in have or have[guid]['sha256'] != want[guid]['sha256']:
+            proposal = installation.propose_repair(root, filename, [guid])
+            raise FlightLogFormatError(
+                f'Strict installation contract: {guid} is missing or differs in {target}. '
+                'No files were changed. Review repair_proposal and explicitly approve '
+                'rs_installation.apply_repair(proposal, selected_repair_id=proposal["repair_id"]) '
+                'before retrying.', repair_proposal=proposal)
+    except (OSError, ValueError, ET.ParseError, installation.InstallationError) as exc:
+        raise FlightLogFormatError(
+            f'Strict installation contract cannot be verified: {exc}. No files were changed. '
+            'Inspect the selected installation with modules.rs_installation; restore missing or '
+            'malformed vendor XML through an explicitly approved repair, then propose selected '
+            'GUID repairs. Automatic installation is disabled.') from exc
+    if logger:
+        logger.info('Strict %s contract %s matches %s', filename, guid, target)
+    return guid
+
 
 def repo_flightlogs_hint() -> str:
     """Path to the repo's flightlogs.xml, for error messages."""
@@ -88,7 +162,11 @@ def repo_flightlogs_hint() -> str:
 
 
 def installed_path(filename: str, install_dir: str | None = None) -> str | None:
-    """Path to an install-directory xml RealityScan actually reads."""
+    """Find XML beside the selected exe; explicit audit directories are authoritative."""
+    if install_dir is None and 'RS_EXECUTABLE' in os.environ:
+        install_dir = _selected_install_dir()
+    elif install_dir is None and _strict_contract():
+        install_dir = _selected_install_dir()
     candidates = [install_dir] if install_dir else list(INSTALL_DIRS)
     for d in candidates:
         if not d:
@@ -160,7 +238,11 @@ def assert_format_installed(params_path: str, logger=None,
     FAILS CLOSED. A missing format does not fail the import - it silently
     drops columns - so this must be checked BEFORE any -importFlightLog,
     not inferred from the import's exit code afterwards.
+    Strict mode checks semantic equality read-only; legacy mode adds missing IDs.
     """
+    if _strict_contract():
+        return _assert_contract(params_path, FLIGHTLOG_FORMAT_KEY, 'flightlogs.xml',
+                                install_dir, logger)
     guid = configured_guid(params_path)
     if not guid:
         raise FlightLogFormatError(
@@ -227,12 +309,16 @@ def assert_calibration_format_installed(params_path: str, logger=None,
     half is sufficient alone: this one cannot see which format actually
     ran, and the content check cannot run before there is a CSV.
 
-    Self-heals through install_all_managed() rather than
+    In legacy nonstrict mode, self-heals through install_all_managed() rather than
     install_repo_formats(), because calibration.xml is a managed file in
     its own right - and until this guard existed, NOTHING in the pipeline
     installed it (install_all_managed had zero callers, so the RUMI export
     formats were present only where someone had run --install by hand).
+    Strict mode compares the selected repository contract without writing.
     """
+    if _strict_contract():
+        return _assert_contract(params_path, CALIBRATION_EXPORT_FORMAT_KEY, 'calibration.xml',
+                                install_dir, logger)
     guid = configured_guid(params_path, CALIBRATION_EXPORT_FORMAT_KEY)
     if not guid:
         raise FlightLogFormatError(
@@ -284,7 +370,15 @@ def install_all_managed(install_dir: str | None = None,
     not ship is skipped rather than fatal - only the ones actually resolved
     against matter, and the per-import guard catches a genuinely missing
     format at the point of use.
+    In strict mode, only validates standard required contracts and adds nothing.
     """
+    if _strict_contract():
+        from . import rs_installation as installation
+        # Existing callers invoke this before the per-operation guard. Validate
+        # standard required contracts without extending any vendor registry.
+        for params, filename, key in installation.DEFAULT_PARAMS:
+            _assert_contract(params, key, filename, install_dir, logger)
+        return {filename: 0 for filename, _ in MANAGED_FILES}
     out: dict[str, int] = {}
     for filename, repo_copy in MANAGED_FILES:
         if not os.path.isfile(repo_copy):
@@ -308,7 +402,13 @@ def install_repo_formats(install_dir: str | None = None,
 
     Only ADDS formats whose GUID is absent; never rewrites or removes a
     stock one. Backs the install file up first.
+    Disabled in strict mode: use an explicitly reviewed installation repair.
     """
+    if _strict_contract():
+        raise FlightLogFormatError(
+            'Automatic catalog installation is disabled by the strict installation contract. '
+            'Use rs_installation.propose_repair(install_dir, filename, [selected_guid]), '
+            'review its diff and explicitly approve apply_repair; no files were changed.')
     inst = installed_path(filename, install_dir)
     if not inst:
         raise FlightLogFormatError(f'No installed {filename} found')

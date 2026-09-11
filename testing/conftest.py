@@ -53,6 +53,14 @@ def _isolate_settings_store(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runtime_locks(tmp_path, monkeypatch):
+    # Stubbed wildcard tests must never contend with an operator's live run.
+    # Tests of cross-process locking explicitly choose their own shared root.
+    from modules.realityscan_interface import realityscan_cli
+    monkeypatch.setattr(realityscan_cli, "LOCKS_DIR", str(tmp_path / "runtime-locks"))
+
+
 
 _STRAY = os.path.join(REPO, "rs_settings.json")
 

@@ -118,8 +118,12 @@ def _stub_workflow(tmp_path, exit_code=0):
 
 def _cli(exe):
     store = FakeStore({'realityscan': {'executable': exe}})
-    return RealityScanCLI(logging.getLogger('test_attach'), settings=store,
-                          instance_name=OWN_INSTANCE)
+    cli = RealityScanCLI(logging.getLogger('test_attach'), settings=store,
+                         instance_name=OWN_INSTANCE)
+    # This fixture deliberately executes a .bat/.sh stub. Production discovery
+    # must still refuse anything other than a validated RealityScan 2.2 binary.
+    cli.find_executable = lambda: exe
+    return cli
 
 
 def _calls(calls_log):
@@ -177,6 +181,37 @@ def test_refuses_when_getstatus_fails(tmp_path):
     recorded = _calls(calls)
     assert recorded and all('-getStatus' in line for line in recorded), \
         'only readiness probes may reach the executable on refusal'
+
+
+@pytest.mark.parametrize('status', [None, {}, {'unconfirmed': True}, {'timeout': True},
+                                   {'raw': 'not a status line'}, [], {'id': ''}])
+def test_attach_refuses_ambiguous_readiness_before_dispatch(tmp_path, monkeypatch, status):
+    exe, _ = _stub_exe(tmp_path)
+    script, record = _stub_workflow(tmp_path)
+    cli = _cli(exe)
+    monkeypatch.setattr(cli, 'get_instance_status', lambda instance=None: status)
+    monkeypatch.setattr(cli, '_acquire_lock', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, '_release_lock', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, '_prepare_runtime_paths', lambda: pytest.fail('ambiguous attach reached dispatch'))
+    with pytest.raises(RuntimeError, match='never boots'):
+        cli.run_attach_script(script, [], str(tmp_path / 'logs'), instance=TARGET)
+    assert not record.exists()
+
+
+def test_attach_accepts_parsed_status_even_with_sticky_error(tmp_path, monkeypatch):
+    exe, _ = _stub_exe(tmp_path)
+    script, _ = _stub_workflow(tmp_path)
+    cli = _cli(exe)
+    monkeypatch.setattr(cli, 'get_instance_status', lambda instance=None: cli._parse_status_line(CANNED_STATUS))
+    monkeypatch.setattr(cli, '_acquire_lock', lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, '_release_lock', lambda *args, **kwargs: None)
+
+    def stop_before_dispatch():
+        raise RuntimeError('fixture reached dispatch boundary')
+
+    monkeypatch.setattr(cli, '_prepare_runtime_paths', stop_before_dispatch)
+    with pytest.raises(RuntimeError, match='fixture reached dispatch boundary'):
+        cli.run_attach_script(script, [], str(tmp_path / 'logs'), instance=TARGET)
 
 
 # ------------------------------------- no boot / no teardown / markers (b)
@@ -294,9 +329,13 @@ def test_get_instance_status_parses_negative_lasterror(tmp_path):
     assert status['raw'] == CANNED_STATUS
 
 
-def test_get_instance_status_none_when_instance_missing(tmp_path):
+def test_get_instance_status_none_when_instance_missing(tmp_path, monkeypatch):
     exe, _ = _stub_exe(tmp_path, status_rc=1)
-    assert _cli(exe).get_instance_status(TARGET) is None
+    cli = _cli(exe)
+    # The fake client's exit code is not production absence evidence. Model the
+    # independent census explicitly; never inspect live processes in this test.
+    monkeypatch.setattr(cli, '_instance_absent', lambda instance: instance == TARGET)
+    assert cli.get_instance_status(TARGET) is None
 
 
 def test_failed_workflow_reports_sticky_lasterror(tmp_path):

@@ -41,6 +41,15 @@ RS_PRIOR_GROUPS_FILE) is applied alongside it. Which of the two RealityScan
 honours from the delegated CLI is open decision D1 - FINDINGS.md
 `[RECON] 2026-09-03`.
 
+RECON 2026-09-11: v02 import/readback refutes the claim that calibration
+sidecars are unnecessary: CSV focal stayed zero; legacy Camera elements
+left groups unset and scaled focal 36x. Native xcr calibration attributes
+delivered focal/model/groups. Both explicit group setters worked, but
+ifKGrp=1 subsequently collapsed their groups. Fresh alignment now uses
+native calibration-only XMP plus one CSV pose/accuracy import with grouping
+0 and a measured input census. This does NOT flip RS_LEGACY_XMP_IDENTITY
+or change the separate solved-pose/continuation/merge-export ownership lane.
+
 Mount geometry (pitch offsets, lever arms) keys off family() below, not
 off the camera: the same Cinema unit sits 10 deg down under legacy
 camlower names and 45 deg under WCA names. The runtime mount table is
@@ -50,8 +59,12 @@ cameras.json families[].mount, pending migration step (c+)).
 from __future__ import annotations
 
 import json
+import copy
+import hashlib
+import math
 import os
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 _CAMERAS_JSON = os.path.join(
@@ -241,7 +254,150 @@ def families_in_match_order() -> tuple[dict, ...]:
     beat an anchored WCA prefix), so a later selection must be allowed to
     re-group images an earlier, broader one already touched.
     """
-    return _FAMILIES
+    return copy.deepcopy(_FAMILIES)
+
+
+def load_project_priors(path: str | None) -> dict:
+    """Validate a data-only project contract without changing process state.
+
+    Schema 1: required schema_version=1, orientation_weight=2; optional
+    families={family: {fwd,lat,down,pitch,p_acc}}, defaults={position_accuracy_m:
+    {x,y,alt}, orientation_accuracy_deg:{yaw,roll}}, navigation={
+    clock_offset_seconds,max_match_seconds}. All dictionaries are partial,
+    except a previously unmeasured mount requires all five fields. Unknown
+    keys, duplicate JSON keys, booleans and nonfinite numbers are errors.
+
+    Metres: lever arms [-1000,1000], accuracy (0,1e6]; degrees: down-tilt
+    [-180,180] except Zeuss [0,90] (owner: never up, at most nadir),
+    accuracy (0,180]; clock seconds [-86400,86400], matching
+    tolerance [0,3600]. These are input-validation limits, not science priors.
+    """
+    empty = dict(source=None, sha256=None, families={}, defaults={}, navigation={},
+                 schema_version=1, orientation_weight=2.0)
+    if path is None:
+        return empty
+    if not isinstance(path, str) or not path.strip() or not os.path.isabs(path):
+        raise ValueError('RS_CAMERA_PRIORS_FILE must be an absolute JSON file path')
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f'Duplicate project-prior JSON key: {key}')
+            result[key] = value
+        return result
+
+    def fields(value, allowed, label):
+        if not isinstance(value, dict) or set(value) - set(allowed):
+            raise ValueError(f'Unknown fields or invalid object in project priors: {label}')
+        return value
+
+    def number(value, lower, upper, label, positive=False):
+        if (type(value) not in (int, float) or not lower <= value <= upper
+                or not math.isfinite(value) or (positive and value <= 0)):
+            raise ValueError(f'Invalid project-prior numeric value for {label}: {value!r}')
+        return float(value)
+
+    def reject_constant(value):
+        raise ValueError(f'Nonfinite project-prior JSON value: {value}')
+
+    try:
+        with open(path, 'rb') as stream:
+            raw = stream.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise ValueError('Project-prior JSON exceeds 1 MiB')
+        data = json.loads(raw.decode('utf-8-sig'), object_pairs_hook=unique_object,
+                          parse_constant=reject_constant)
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ValueError(f'Cannot load project priors {path!r}: {exc}') from exc
+    fields(data, ('schema_version', 'orientation_weight', 'families', 'defaults', 'navigation'), 'root')
+    if type(data.get('schema_version')) is not int or data['schema_version'] != 1:
+        raise ValueError('Project priors require schema_version=1')
+    weight = number(data.get('orientation_weight'), 2, 2, 'orientation_weight')
+    mounts = fields(data.get('families', {}), FAMILY_CAMERA, 'families')
+    allowed_mount = {'fwd', 'lat', 'down', 'pitch', 'p_acc'}
+    base_mounts = {entry['family']: entry['mount'] for entry in _FAMILIES}
+    excluded = _REGISTRY['defaults']['assumed_mount']['excluded_families']
+    for name, values in mounts.items():
+        fields(values, allowed_mount, name)
+        if name in excluded:
+            raise ValueError(f'Project vehicle-mount priors are not applicable to {name}')
+        if base_mounts[name] is None and set(values) != allowed_mount:
+            raise ValueError(f'Unmeasured family {name} requires all five mount fields')
+        for key, value in values.items():
+            if key == 'pitch':
+                limits = (0, 90) if name == 'zeuss' else (-180, 180)
+            elif key == 'p_acc':
+                # Uncertainty is not a mechanical stop or a truncated interval.
+                limits = (0, 180)
+            else:
+                limits = (-1000, 1000)
+            values[key] = number(value, *limits, f'{name}.{key}', positive=key == 'p_acc')
+    defaults = fields(data.get('defaults', {}),
+                      ('position_accuracy_m', 'orientation_accuracy_deg'), 'defaults')
+    for name, values in defaults.items():
+        position = name == 'position_accuracy_m'
+        fields(values, ('x', 'y', 'alt') if position else ('yaw', 'roll'), name)
+        for key, value in values.items():
+            values[key] = number(value, 0, 1e6 if position else 180,
+                                 f'{name}.{key}', positive=True)
+    navigation = fields(data.get('navigation', {}),
+                        ('clock_offset_seconds', 'max_match_seconds'), 'navigation')
+    for key, value in navigation.items():
+        limits = (-86400, 86400) if key == 'clock_offset_seconds' else (0, 3600)
+        navigation[key] = number(value, *limits, key)
+    return dict(source=os.path.abspath(path), sha256=hashlib.sha256(raw).hexdigest(),
+                schema_version=1, orientation_weight=weight, families=mounts,
+                defaults=defaults, navigation=navigation)
+
+
+# Snapshot once, before consumers cache mount/default tables. Changing the GUI
+# environment later cannot silently retune an already-started worker process.
+_PROJECT_PRIORS = load_project_priors(os.environ.get('RS_CAMERA_PRIORS_FILE'))
+
+
+def project_priors_active() -> bool:
+    return _PROJECT_PRIORS['source'] is not None
+
+
+def baked_mount_defaults() -> dict[str, dict | None]:
+    """New-project mount defaults; ignore any active project-prior snapshot."""
+    return {entry['family']: (None if entry['mount'] is None else
+            {key: value for key, value in entry['mount'].items() if not key.startswith('_')})
+            for entry in _FAMILIES}
+
+
+def baked_prior_defaults() -> dict:
+    """New-project accuracy defaults, copied from the baked registry only."""
+    return copy.deepcopy(_REGISTRY['defaults'])
+
+
+def mount_defaults() -> dict[str, dict | None]:
+    """Effective project mounts, with defensive per-field registry fallback."""
+    mounts = baked_mount_defaults()
+    for name, values in _PROJECT_PRIORS['families'].items():
+        mounts[name] = {**(mounts[name] or {}), **values}
+    return mounts
+
+
+def prior_defaults() -> dict:
+    """Effective project accuracy defaults, with defensive registry fallback."""
+    defaults = baked_prior_defaults()
+    for name, values in _PROJECT_PRIORS['defaults'].items():
+        defaults[name].update(values)
+    return defaults
+
+
+def navigation_defaults() -> dict:
+    return {'clock_offset_seconds': 0.0, 'max_match_seconds': 2.0,
+            **_PROJECT_PRIORS['navigation']}
+
+
+def effective_project_priors() -> dict:
+    """Serializable startup provenance for the controller's project metadata."""
+    return dict(source=_PROJECT_PRIORS['source'], sha256=_PROJECT_PRIORS['sha256'],
+                schema_version=1, orientation_weight=2.0, families=mount_defaults(),
+                defaults=prior_defaults(), navigation=navigation_defaults())
 
 
 def family(filename: str) -> str | None:
@@ -282,25 +438,58 @@ def calibration_xmp(camera: Camera) -> str:
     """
     if camera.principal_point_u is not None:
         return _calibration_xmp_full_intrinsics(camera)
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
-        '  <rdf:RDF>',
-        '    <rdf:Description xmlns:Camera="http://www.capturingreality.com/ns/camera/1.0/" xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.0/">',
-        f'      <Camera:CalibrationGroup>{camera.calibration_group}</Camera:CalibrationGroup>',
-        f'      <Camera:CalibrationPrior>{camera.calibration_prior}</Camera:CalibrationPrior>',
-    ]
-    if camera.focal_length_35mm is not None:
-        lines.append(f'      <xcr:FocalLength35mm>{camera.focal_length_35mm}</xcr:FocalLength35mm>')
-    lines.extend([
-        f'      <Camera:LensDistortionGroup>{camera.lens_distortion_group}</Camera:LensDistortionGroup>',
-        f'      <Camera:LensDistortionPrior>{camera.lens_distortion_prior}</Camera:LensDistortionPrior>',
-        f'      <Camera:DistortionModel>{camera.distortion_model}</Camera:DistortionModel>',
-        '    </rdf:Description>',
-        '  </rdf:RDF>',
-        '</x:xmpmeta>',
-    ])
-    return '\n'.join(lines)
+    # v02 import/readback 2026-09-11: legacy Camera elements left groups
+    # unassigned and scaled focal 36x. Native xcr attributes deliver both.
+    # Keep the public API and the separate full-intrinsics/continuation lanes.
+    if camera.calibration_prior.lower() not in ('approximate', 'initial'):
+        raise ValueError(f'Unverified native calibration prior: {camera.calibration_prior}')
+    focal = camera.focal_length_35mm
+    if focal is None or not math.isfinite(focal) or focal <= 0:
+        raise ValueError(f'Calibration focal must be finite and positive: {camera.key}')
+    xcr = 'http://www.capturingreality.com/ns/xcr/1.1#'
+    rdf = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#'
+    ET.register_namespace('x', 'adobe:ns:meta/')
+    ET.register_namespace('rdf', rdf)
+    ET.register_namespace('xcr', xcr)
+    root = ET.Element('{adobe:ns:meta/}xmpmeta')
+    body = ET.SubElement(root, f'{{{rdf}}}RDF')
+    attributes = dict(Version='3', CalibrationPrior='initial',
+                      CalibrationGroup=str(camera.calibration_group),
+                      DistortionGroup=str(camera.lens_distortion_group),
+                      DistortionModel=camera.distortion_model,
+                      FocalLength35mm=format(focal, '.15g'))
+    for name in ('CalibrationGroup', 'DistortionGroup'):
+        if not re.fullmatch(r'\d+', attributes[name]) or int(attributes[name]) >= 4294967295:
+            raise ValueError(f'Invalid assigned {name}: {attributes[name]}')
+    ET.SubElement(body, f'{{{rdf}}}Description', {f'{{{xcr}}}{key}': value for key, value in attributes.items()})
+    return ET.tostring(root, encoding='unicode')
+
+
+def validate_calibration_xmp(content: str, camera: Camera) -> None:
+    """Read-only exact native calibration check for NEW alignment inputs.
+
+    This must not be applied to solved/continuation/export XMPs, which may
+    legitimately contain poses and adjusted intrinsics. It never rewrites them.
+    """
+    if re.search(r'<!\s*(DOCTYPE|ENTITY)\b', content, re.IGNORECASE):
+        raise ValueError('DTD/entities are not calibration input evidence')
+    actual = ET.fromstring(content)
+    expected = ET.fromstring(calibration_xmp(camera))
+    numeric = {'FocalLength35mm', 'PrincipalPointU', 'PrincipalPointV', 'Skew', 'AspectRatio'}
+
+    def shape(node):
+        attributes = {}
+        for key, value in node.attrib.items():
+            if key.rsplit('}', 1)[-1] in numeric:
+                value = float(value)
+                if not math.isfinite(value):
+                    raise ValueError('Nonfinite calibration value')
+            attributes[key] = value
+        return node.tag, attributes, (node.text or '').strip(), [shape(child) for child in node]
+
+    if shape(actual) != shape(expected):
+        raise ValueError(f'Calibration sidecar differs from native profile for {camera.key}; '
+                         'legacy, stale or pose-bearing inputs require separate owned staging')
 
 
 def _calibration_xmp_full_intrinsics(camera: Camera) -> str:
@@ -359,7 +548,8 @@ def ensure_calibration_sidecars(image_root: str) -> tuple[int, int]:
     for root, _dirs, files in os.walk(image_root):
         names = set(files)
         for filename in files:
-            if not filename.lower().endswith(('.jpg', '.jpeg', '.png', '.heif')):
+            from .image_exts import is_geometry_image, PROCESSABLE_IMAGE_EXTS
+            if not is_geometry_image(os.path.join(root, filename), PROCESSABLE_IMAGE_EXTS):
                 continue
             sidecar = os.path.splitext(filename)[0] + '.xmp'
             if sidecar in names:
@@ -450,7 +640,8 @@ def assert_sidecars_current(image_root: str, logger=None, strict: bool = True) -
                         and f'xcr:CalibrationGroup="{g}"' not in content):
                     wrong_group.append(path)
         for filename in files:
-            if not filename.lower().endswith(exts):
+            from .image_exts import is_geometry_image
+            if not is_geometry_image(os.path.join(root, filename), exts):
                 continue
             if identify(filename) is None:
                 continue

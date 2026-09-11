@@ -26,9 +26,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import merge_zones  # noqa: E402
 
 
-def _fp(inputs=('z/A', 'z/B'), ladder='merge_first', pair_gate='overlap'):
+def _fp(inputs=('z/A', 'z/B'), ladder='merge_first', pair_gate='overlap',
+        input_manifests=None):
     return merge_zones.run_fingerprint(
-        list(inputs), ladder, 'neighbour', pair_gate, 0.0, 50, False)
+        list(inputs), ladder, 'neighbour', pair_gate, 0.0, 50, False,
+        input_manifests=input_manifests)
 
 
 class MergeResumeTest(unittest.TestCase):
@@ -49,8 +51,14 @@ class MergeResumeTest(unittest.TestCase):
                   encoding='utf-8') as fh:
             json.dump(report, fh)
 
+    def fp(self, inputs=('z/A', 'z/B'), **kwargs):
+        manifests = [dict(zone=k.split('/')[0], component=k.split('/')[1],
+                          images=[k + '.jpg'], camera_count=1, rsalign=self.rsalign)
+                     for k in inputs]
+        return _fp(inputs, input_manifests=manifests, **kwargs)
+
     def _cluster(self, converged=True, rsalign=None, inputs=('z/A', 'z/B')):
-        return {
+        record = {
             'cluster': 'cluster_0',
             'inputs': list(inputs),
             'converged': converged,
@@ -59,66 +67,70 @@ class MergeResumeTest(unittest.TestCase):
                  'camera_count': 10},
             ],
         }
+        if os.path.isfile(record['final_components'][0]['rsalign']):
+            record['final_identities'] = [merge_zones.component_identity(c)
+                                          for c in record['final_components']]
+        return record
 
     def test_converged_cluster_is_reused(self):
-        self._write([self._cluster()], _fp())
-        got = merge_zones.load_resumable_clusters(self.dir, _fp(), self.log)
+        self._write([self._cluster()], self.fp())
+        got = merge_zones.load_resumable_clusters(self.dir, self.fp(), self.log)
         self.assertEqual(len(got), 1)
         self.assertIn(frozenset({'z/A', 'z/B'}), got)
 
     def test_unconverged_cluster_is_not_reused(self):
         """It was mid-ladder when the run died; its work is unfinished."""
-        self._write([self._cluster(converged=False)], _fp())
-        got = merge_zones.load_resumable_clusters(self.dir, _fp(), self.log)
+        self._write([self._cluster(converged=False)], self.fp())
+        got = merge_zones.load_resumable_clusters(self.dir, self.fp(), self.log)
         self.assertEqual(got, {})
 
     def test_different_question_is_refused(self):
         """A different ladder repartitions and re-decides; do not blend runs."""
-        self._write([self._cluster()], _fp(ladder='content_first'))
-        got = merge_zones.load_resumable_clusters(self.dir, _fp(), self.log)
+        self._write([self._cluster()], self.fp(ladder='content_first'))
+        got = merge_zones.load_resumable_clusters(self.dir, self.fp(), self.log)
         self.assertEqual(got, {})
 
     def test_different_inputs_are_refused(self):
-        self._write([self._cluster()], _fp(inputs=('z/A', 'z/B', 'z/C')))
-        got = merge_zones.load_resumable_clusters(self.dir, _fp(), self.log)
+        self._write([self._cluster()], self.fp(inputs=('z/A', 'z/B', 'z/C')))
+        got = merge_zones.load_resumable_clusters(self.dir, self.fp(), self.log)
         self.assertEqual(got, {})
 
     def test_input_order_does_not_matter(self):
         """Order does not affect partitioning, so it must not block resume."""
-        self._write([self._cluster()], _fp(inputs=('z/B', 'z/A')))
-        got = merge_zones.load_resumable_clusters(self.dir, _fp(), self.log)
+        self._write([self._cluster()], self.fp(inputs=('z/B', 'z/A')))
+        got = merge_zones.load_resumable_clusters(self.dir, self.fp(), self.log)
         self.assertEqual(len(got), 1)
 
     def test_missing_component_file_forces_remerge(self):
         """A carried record whose file is gone would fail in the assembly."""
         self._write([self._cluster(rsalign=os.path.join(self.dir, 'gone.rsalign'))],
-                    _fp())
-        got = merge_zones.load_resumable_clusters(self.dir, _fp(), self.log)
+                    self.fp())
+        got = merge_zones.load_resumable_clusters(self.dir, self.fp(), self.log)
         self.assertEqual(got, {})
 
     def test_report_without_fingerprint_is_refused(self):
         """Pre-fingerprint reports cannot be shown to describe the same run."""
         self._write([self._cluster()], None)
-        got = merge_zones.load_resumable_clusters(self.dir, _fp(), self.log)
+        got = merge_zones.load_resumable_clusters(self.dir, self.fp(), self.log)
         self.assertEqual(got, {})
 
     def test_no_report_is_not_an_error(self):
-        got = merge_zones.load_resumable_clusters(self.dir, _fp(), self.log)
+        got = merge_zones.load_resumable_clusters(self.dir, self.fp(), self.log)
         self.assertEqual(got, {})
 
     def test_corrupt_report_starts_fresh(self):
         with open(os.path.join(self.dir, 'merge_report.json'), 'w',
                   encoding='utf-8') as fh:
             fh.write('{not json')
-        got = merge_zones.load_resumable_clusters(self.dir, _fp(), self.log)
+        got = merge_zones.load_resumable_clusters(self.dir, self.fp(), self.log)
         self.assertEqual(got, {})
 
     def test_fingerprint_ignores_input_order_only(self):
         """Sanity: the fingerprint still distinguishes the things that matter."""
-        base = _fp()
-        self.assertEqual(base, _fp(inputs=('z/B', 'z/A')))
-        self.assertNotEqual(base, _fp(pair_gate='border'))
-        self.assertNotEqual(base, _fp(ladder='content_first'))
+        base = self.fp()
+        self.assertEqual(base, self.fp(inputs=('z/B', 'z/A')))
+        self.assertNotEqual(base, self.fp(pair_gate='border'))
+        self.assertNotEqual(base, self.fp(ladder='content_first'))
 
 
 if __name__ == '__main__':

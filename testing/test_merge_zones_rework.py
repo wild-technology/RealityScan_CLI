@@ -84,27 +84,27 @@ class TestAttributionWithDuplicates(unittest.TestCase):
         # NA173 F2: 78 + 80 with 21 shared -> peel [158, 80, 78]
         a, b = self.pair(78, 80, 21, 'zone_1', 'zone_2')
         res, conf = merge_zones.attribute_result([a, b], [158, 80, 78], logger)
-        self.assertEqual(conf, 'exact')
+        self.assertEqual(conf, 'count_only')
         self.assertEqual(res[0]['inputs'], ['zone_1/c0', 'zone_2/c0'])
-        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (0, 0))
-        self.assertEqual(len(res[0]['members']), 137)
+        self.assertEqual((res[0]['estimated_loss'], res[0]['estimated_collapsed']), (0, 0))
+        self.assertIsNone(res[0]['members'])
         self.assertTrue(res[1]['residual'] and res[2]['residual'])
 
     def test_folded_duplicates_are_a_lossless_fusion(self):
         # H2063 zone_3/3 + zone_7/1: sum 760, unique 756, peel 756
         a, b = self.pair(400, 360, 4)
         res, conf = merge_zones.attribute_result([a, b], [756, 400, 360], logger)
-        self.assertEqual(conf, 'exact')
+        self.assertEqual(conf, 'count_only')
         self.assertEqual(res[0]['inputs'], ['z3/c0', 'z7/c0'])
-        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (0, 4))
-        self.assertEqual(len(res[0]['members']), 756)
+        self.assertEqual((res[0]['estimated_loss'], res[0]['estimated_collapsed']), (0, 4))
+        self.assertIsNone(res[0]['members'])
 
     def test_heavy_overlap_folded(self):
         # H2063 zone_3/3 + zone_7/2: sum 743, unique 541, peel 541
         a, b = self.pair(500, 243, 202)
         res, conf = merge_zones.attribute_result([a, b], [541], logger)
-        self.assertEqual(conf, 'exact')
-        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (0, 202))
+        self.assertEqual(conf, 'count_only')
+        self.assertEqual((res[0]['estimated_loss'], res[0]['estimated_collapsed']), (0, 202))
 
     def test_real_loss_below_unique_needs_tolerance(self):
         # H2063 zone_2/8 + zone_5/4: sum 1488, unique 1248, peel 1240
@@ -114,8 +114,8 @@ class TestAttributionWithDuplicates(unittest.TestCase):
         self.assertIsNone(res[0]['members'])
         res, conf = merge_zones.attribute_result([a, b], [1240], logger,
                                                  loss_tolerance=8)
-        self.assertEqual(conf, 'exact')
-        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (8, 240))
+        self.assertEqual(conf, 'count_only')
+        self.assertEqual((res[0]['estimated_loss'], res[0]['estimated_collapsed']), (8, 240))
 
     def test_same_zone_loss_is_still_a_loss(self):
         # H2063 zone_5/5 + zone_5/9: no shared images, 1110 -> 1029
@@ -124,14 +124,14 @@ class TestAttributionWithDuplicates(unittest.TestCase):
         self.assertEqual(conf, 'ambiguous')
         res, conf = merge_zones.attribute_result([a, b], [1029], logger,
                                                  loss_tolerance=81)
-        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (81, 0))
+        self.assertEqual((res[0]['estimated_loss'], res[0]['estimated_collapsed']), (81, 0))
 
-    def test_partial_fold_is_adopted_and_warned(self):
+    def test_partial_fold_is_only_a_candidate_and_warned(self):
         a, b = self.pair(100, 100, 10)         # sum 200, unique 190
         with self.assertLogs(logger, level='WARNING') as cm:
             res, conf = merge_zones.attribute_result([a, b], [195], logger)
-        self.assertEqual(conf, 'exact')
-        self.assertEqual((res[0]['loss'], res[0]['collapsed']), (0, 5))
+        self.assertEqual(conf, 'count_only')
+        self.assertEqual((res[0]['estimated_loss'], res[0]['estimated_collapsed']), (0, 5))
         self.assertTrue(any('indistinguishable' in m for m in cm.output))
 
     def test_lone_input_is_not_mistaken_for_a_folded_pair(self):
@@ -149,7 +149,7 @@ class TestAttributionWithDuplicates(unittest.TestCase):
         b = mk('z2', 'c0', 42, None)
         b['images'] = []
         res, conf = merge_zones.attribute_result([a, b], [120], logger)
-        self.assertEqual(conf, 'exact')
+        self.assertEqual(conf, 'count_only')
         self.assertEqual(res[0]['inputs'], ['z1/c0', 'z2/c0'])
 
 
@@ -158,15 +158,15 @@ class TestAttribution(unittest.TestCase):
         a = mk('z1', 'c0', 78, None)
         b = mk('z2', 'c0', 42, None)
         res, conf = merge_zones.attribute_result([a, b], [120], logger)
-        self.assertEqual(conf, 'exact')
+        self.assertEqual(conf, 'count_only')
         self.assertEqual(res[0]['inputs'], ['z1/c0', 'z2/c0'])
-        self.assertEqual(len(res[0]['members']), 120)
+        self.assertIsNone(res[0]['members'])
 
     def test_no_fusion_identity(self):
         a = mk('z1', 'c0', 78, None)
         b = mk('z2', 'c0', 42, None)
         res, conf = merge_zones.attribute_result([a, b], [78, 42], logger)
-        self.assertEqual(conf, 'exact')
+        self.assertEqual(conf, 'count_only')
         self.assertEqual([r['inputs'] for r in res], [['z1/c0'], ['z2/c0']])
 
     def test_partial_fusion(self):
@@ -174,7 +174,7 @@ class TestAttribution(unittest.TestCase):
         b = mk('z1', 'c1', 60, None)
         c = mk('z2', 'c0', 40, None)
         res, conf = merge_zones.attribute_result([a, b, c], [140, 60], logger)
-        self.assertEqual(conf, 'exact')
+        self.assertEqual(conf, 'count_only')
         self.assertEqual(res[0]['inputs'], ['z1/c0', 'z2/c0'])
         self.assertEqual(res[1]['inputs'], ['z1/c1'])
 
@@ -201,10 +201,10 @@ class TestAttribution(unittest.TestCase):
         a = mk('z1', 'c0', 78, None)
         b = mk('z2', 'c0', 42, None)
         res, conf = merge_zones.attribute_result([a, b], [120, 78, 42], logger)
-        self.assertEqual(conf, 'exact')
+        self.assertEqual(conf, 'count_only')
         self.assertEqual(res[0]['inputs'], ['z1/c0', 'z2/c0'])
         self.assertFalse(res[0]['residual'])
-        self.assertEqual(len(res[0]['members']), 120)
+        self.assertIsNone(res[0]['members'])
         self.assertTrue(res[1]['residual'])
         self.assertTrue(res[2]['residual'])
         self.assertEqual([r['peel_index'] for r in res], [0, 1, 2])

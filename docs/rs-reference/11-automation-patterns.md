@@ -1,5 +1,15 @@
 # Large-scale automation patterns and end-to-end recipes
 
+**Reconciliation 2026-09-11:** operation completion, artifact completeness and
+scientific acceptance are separate. At baseline `0c9224e`, `verify.check_scale`
+skips absent measurements while reporting `scale_unmeasured`; an aggregate `ok`
+does not prove every component is metric. The baseline prior census reads
+`identity_r0` XMP, not a general CSV/report channel. Attribute outputs to the
+current attempt and require the scientific checks needed by the consumer.
+See [ledger DONE-001..003, P-COMPLETION](../EVIDENCE_LEDGER.json) and
+[VERIFICATION_STATUS](../VERIFICATION_STATUS.md). No new live verification was
+performed for this correction.
+
 This document is the harness half of the manual: how to build a production pipeline that
 drives RealityScan 2.2 headless, unattended, for hours to days, at 8,000+ camera scale,
 without lying to itself about what happened. It covers instance lifecycle, the
@@ -1247,6 +1257,14 @@ explanation. The real cause was the **write** side. 157 further minutes were spe
 confirmed mechanism that was never linked to the symptom.]
 
 ### 8.6 Acceptance arithmetic: never-shrink, and its bounded-loss successor
+
+**Checkpoint safety, 2026-09-11:** current `module_base/scene_checkpoint.py` uses
+manifest/hash-validated staging and retains the original bundle until restore
+commit succeeds. It refuses lock markers and legacy unmanifested snapshots.
+Callers must establish writer quiescence before restore; absence of a lock is
+insufficient. The new implementation has scoped offline failure-injection evidence,
+not a live RealityScan reload proof. See [CKP-001..005 / P-CHECKPOINT](../EVIDENCE_LEDGER.json)
+and [verification status](../VERIFICATION_STATUS.md) for recovery and crash limits.
 
 The growth loop's invariant is textbook:
 

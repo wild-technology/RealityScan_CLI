@@ -45,6 +45,10 @@ def _module(tmp_path, input_dir):
     """
     mod = BatchDirectory(logging.getLogger('test'))
     mod.params = mod.get_parameters()
+    # These fixtures isolate zoning/content provenance with uncalibrated a.jpg
+    # placeholders. Required native sidecar coverage and stale-profile refusal
+    # are exercised separately in test_merge_batch_calibration.py.
+    mod.params['batch_xmp_priors'].set_value(False)
     mod.params['output_dir'] = Parameter(
         name='Output Directory', cli_short='o', cli_long='output_dir',
         type=str, default_value=None, description='Path to the output directory')

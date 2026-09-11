@@ -4,6 +4,28 @@ ROV underwater photogrammetry pipeline driving **RealityScan 2.2** (Epic
 Games, formerly RealityCapture) through its CLI. Windows, multi-GPU CUDA.
 Continuation of `wild-technology/RC_Main` (frozen; history preserved).
 
+## General deployment work (2026-09-11)
+
+The product is a deterministic Hercules project workflow with a native frontend;
+an AI operator is not a runtime dependency. `app.py` uses project approvals and
+the existing planner/executor. See `docs/DEPLOYMENT_PLAN.md`, `PROJECT_FORMAT.md`,
+`DESKTOP_UI.md`, and `VERIFICATION_STATUS.md`. Integration and live application
+acceptance are ongoing; offline tests do not certify RealityScan behavior.
+
+H2101 is a reference dataset, never a special-case algorithm. Its source is
+`E:\NA171\H2101`; the approved project root is `F:\NA171`. Keep source data
+read-only. Numerical owner settings are recorded in `modules/cameras.json`;
+Zeuss starts 40 degrees down with pitch accuracy 40 degrees, yaw/roll accuracy
+10 degrees, and orientation weight locked at 2. Other camera mounts retain
+their per-family values.
+
+Culling and the retained/culled density review against the dive track are
+mandatory before batching. Changed inputs or selection retire approvals and
+affected downstream artifacts. Masks remain paired with each exposure through
+overlapping zones. A pairwise merge may receive only spatially relevant orphans
+inside or between its two input alignments; unrelated orphans remain available
+for other attempts. Each steering discovery must become a general check/test.
+
 ## Session start
 
 The `SessionStart` hook prints `HANDOFF.md`'s current section, `git status`

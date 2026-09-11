@@ -970,10 +970,12 @@ georeferencing document's subject. Two facts from there are load-bearing here:
   setting **evaluated right-to-left**, and that a **"Camera mount"** option is offered
   whenever YPR is included [OFFICIAL]. What is missing is their *config keys*: no key
   string for either appears in any file under the RealityScan install, so both are compiled
-  into the binary, and `flightlogs.xml` defines column mapping only. The only plausible
-  carriers in `FlightLogParams.xml` are `ifKGrp` and `ifKmode`, whose value mapping is
-  undocumented; this repo has left them at the template's `ifKGrp=2`, `ifKmode=0x0` rather
-  than guess. [UNDOCUMENTED + VERIFIED-as-flag: FINDINGS 2026-07-26]
+   into the binary, and `flightlogs.xml` defines column mapping only. **That key-gap
+   description is historical:** reference 13 §9.3 subsequently identified the
+   `gpsLogEulerAnglesOrderYPR` / `gpsLogMount` family. `ifKGrp` is grouping, not
+   Euler/mount; current templates use 1 after a single-family probe. Effective
+   settings and mixed-family behavior remain open. See
+   [ledger ROT-003, CAL-002/003](../EVIDENCE_LEDGER.json).
   Consequence: every conclusion about whether orientation priors help or hurt was measured
   through an **unpinned import path**, composing angles in a possibly different order than
   the intrinsic Roll → Pitch → Yaw the flight-log writer assumes, and possibly

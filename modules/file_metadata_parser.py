@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ——————————————————————————————————————————————————————————————
 # Timestamp extraction
@@ -12,32 +12,48 @@ from datetime import datetime
 #   • Modified style:   20250705020039
 # Optionally preceded by camlower_, cammid_, or camupper_
 # superseded-by modules/cameras.json families (legacy prefixes + timestamp_formats) - pending migration step (c+)
-_TIMESTAMP_REGEX = re.compile(r'(?:camlower_|cammid_|camupper_)?(\d{8}T\d{6}Z|\d{14})')
+_TIMESTAMP_REGEX = re.compile(r'(?<!\d)(\d{8}T\d{6}Z|\d{14})(?!\d)')
 
-def parse_timestamp_str(filename: str) -> str:
+def parse_timestamp_str(filename: str) -> str | None:
     """
     Extract the timestamp string from a filename.
-    Returns a string in YYYYMMDDTHHMMSSZ form.
+    Returns YYYYMMDDTHHMMSSZ, or None for missing/invalid/ambiguous evidence.
+    Parent directory timestamps are never evidence about an image or video.
     """
-    default = "19700101T000000Z"
-    match = _TIMESTAMP_REGEX.search(filename or "")
-    if not match:
-        return default
+    basename = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    timestamps = set()
+    for match in _TIMESTAMP_REGEX.finditer(basename):
+        ts = match.group(1)
+        try:
+            value = datetime.strptime(
+                ts, "%Y%m%d%H%M%S" if len(ts) == 14 else "%Y%m%dT%H%M%SZ")
+        except ValueError:
+            return None
+        timestamps.add(value.strftime("%Y%m%dT%H%M%SZ"))
+    return next(iter(timestamps)) if len(timestamps) == 1 else None
 
-    ts = match.group(1)
-    if len(ts) == 14:
-        # plain YYYYMMDDHHMMSS → convert to standard
-        dt = datetime.strptime(ts, "%Y%m%d%H%M%S")
-        return dt.strftime("%Y%m%dT%H%M%SZ")
-    # already in YYYYMMDDTHHMMSSZ
-    return ts
-
-def parse_timestamp(filename: str) -> datetime:
+def parse_timestamp(filename: str) -> datetime | None:
     """
-    Extract the timestamp from a filename and return a UTC datetime.
+    Return naive UTC (matching navigation readers), or None, never an epoch fallback.
     """
     ts_str = parse_timestamp_str(filename)
-    return datetime.strptime(ts_str, "%Y%m%dT%H%M%SZ")
+    return datetime.strptime(ts_str, "%Y%m%dT%H%M%SZ") if ts_str is not None else None
+
+
+def navigation_match_timestamp(timestamp: datetime | None) -> datetime | None:
+    """Correct raw image UTC for matching only; never rewrite filename time.
+
+    Positive project clock_offset_seconds moves image time forward. Callers
+    always pass the raw TIMESTAMP, preserving repeatability across matching
+    passes and preventing extraction from applying the correction twice.
+    """
+    if timestamp is None:
+        return None
+    from .camera_registry import navigation_defaults
+    try:
+        return timestamp + timedelta(seconds=navigation_defaults()['clock_offset_seconds'])
+    except OverflowError as exc:
+        raise ValueError('Image clock correction exceeds datetime range') from exc
 
 # ——————————————————————————————————————————————————————————————
 # Frame‐number extraction (unchanged)

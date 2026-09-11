@@ -35,9 +35,6 @@ from module_base.settings_store import SettingsStore  # noqa: E402
 from modules.file_metadata_parser import parse_timestamp  # noqa: E402
 from modules.image_exts import ALL_IMAGE_EXTS  # noqa: E402
 
-# The parser's "no timestamp found" sentinel.
-_EPOCH = datetime(1970, 1, 1, 0, 0, 0)
-
 # Raw formats the pipeline never reads but an operator still wants sorted.
 EXTRA_EXTS = frozenset({'.raw', '.arw'})
 IMAGE_EXTENSIONS = frozenset(ALL_IMAGE_EXTS | EXTRA_EXTS)
@@ -59,7 +56,7 @@ def extract_date_from_filename(filename):
     Z-less Sony form this script originally handled.
     """
     timestamp = parse_timestamp(filename)
-    if timestamp != _EPOCH:
+    if timestamp is not None:
         return datetime(timestamp.year, timestamp.month, timestamp.day)
     match = _SONY_TIMESTAMP.search(filename or '')
     if match:

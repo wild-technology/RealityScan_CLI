@@ -1095,20 +1095,23 @@ generated per cruise by `modules/flight_logs.py::write_flight_log_params`.
 | `ifuuInhEn` | bool | `true` | accuracy inheritance enabled |
 | `csvFLSep` | int | `1` | CSV separator for the flight log |
 | `csvFLIgn` | bool | `true` | ignore-rows flag for the flight log |
-| `ifKmode` | — | `0x0` | **not present in the 2.2 binary — inert**, §12 |
-| `ifUsePosAcc` | — | `true` | **not present in the 2.2 binary — inert**, §12 |
-| `ifUseOriAcc` | — | `true` | **not present in the 2.2 binary — inert**, §12 |
+| `ifKmode` | — | `0x0` | exact spelling absent in the recorded binary scan; do not rely on it as a supported key, §12 |
+| `ifUsePosAcc` | — | `true` | exact spelling absent in the recorded binary scan; consumption unproved, §12 |
+| `ifUseOriAcc` | — | `true` | exact spelling absent in the recorded binary scan; consumption unproved, §12 |
 
 All [UNDOCUMENTED: exported XML + binary].
 
-`ifKGrp` and `ifKmode` are the only plausible carriers of the dialog's *Euler angles order
-(YPR)* and *Camera mount* settings, and their value mapping is **undocumented anywhere**:
-the Help documents the settings but not their config keys, `flightlogs.xml` defines only
-column mapping, and neither key string appears in any file under the RealityScan install
-— both are compiled into the binary. [UNDOCUMENTED: FINDINGS 2026-07-26] [OPEN]
+The table above is a historical NA173 profile, not the current template. The old
+`ifKGrp`/`ifKmode` Euler/mount theory is superseded by the recorded binary-key
+identification in reference 13 §9.3: grouping uses `ifKGrp`; Euler/mount settings
+use `gpsLogEulerAnglesOrderYPR` / `gpsLogMount`; `ifKModel` is distinct from the
+unsupported `ifKmode` spelling. Current templates use `ifKGrp=1`, with only a
+single-family live grouping result recorded. Mixed-family behavior and effective
+mount settings remain open. Absence from a string scan alone is not a general
+proof of runtime inertness. See [ledger ROT-003, CAL-002/003](../EVIDENCE_LEDGER.json).
 
-**The live prior-accuracy family the params file does not use.** `ifUsePosAcc` and
-`ifUseOriAcc` in `FlightLogParams.xml` are inert (they do not exist in the binary), but the
+**The recorded prior-accuracy key family.** The binary scan did not find
+`ifUsePosAcc` or `ifUseOriAcc`; their consumption must not be assumed. The
 Import Trajectory dialog's accuracy block does have live keys — all present **both** in
 `RealityScan.exe` 2.2.0.119430 and in this machine's persisted `appConfig` blob:
 
@@ -2766,7 +2769,7 @@ by value.
 | 16 | Which of `txtFillInUntextoredParts` (documented, typo'd) and `txtFillInUntexturedParts` (binary, correct) is live? | Probe #1 on both |
 | 17 | Are the AdaptiveTexelSize enum selectors really `unwrapMinTexelSizeType` / `unwrapMaxTexelSizeType`? | Export an AdaptiveTexelSize preset from the GUI Unwrap dialog and read the key names |
 | 18 | Is aspect ratio `inpAspect` rather than the Help's duplicated `inpSkew`? | `-editInputSelection "inpAspect=1.01"` on one image, `-exportXMP`, read the aspect back |
-| 19 | What are the value mappings for `ifKGrp` (calibration group mode) and `ifKmode` — the flight-log dialog's *Euler angles order* and *Camera mount*? Neither string is in any install file; `ifKmode` is not even in the binary | (a) Set both dropdowns in the GUI Import Trajectory dialog, save params, diff against the current template — one minute, needs the GUI. (b) Headless: align the smoke fixture at several `ifKmode` values and read camera attitudes out of the pose XMPs (~2 min/cell). Neither run |
+| 19 | What is the mixed-family mapping of `ifKGrp`, and what effective Euler/mount settings does the import use? The old `ifKmode` carrier theory is superseded (13 §9.3). | Ledger P-GROUP and P-ROT: two-family grouping controls and effective-setting/attitude readback. Single-family `ifKGrp=1` success does not establish the full mapping. |
 | 20 | Is there a `-set` key for **GPUs to use**? The GUI has the control; only `appBtnGPUs` / `gpuId` were found | Change the GUI selection and diff an exported `.rcconfig` |
 | 21 | Is there a `-set` key for **Prefer Exif over XMP**? Directly load-bearing for a sidecar-driven pipeline | Same GUI-diff probe |
 | 22 | Is there a `-set` key for **Use relative image paths**? | Same GUI-diff probe |

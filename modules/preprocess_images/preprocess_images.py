@@ -27,6 +27,7 @@ import numpy as np
 
 from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
+from modules.image_exts import is_geometry_image, copy_associated_masks
 
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
 JPEG_QUALITY = 95
@@ -90,6 +91,7 @@ def _process_one(job: tuple[str, str, float, int, bool]) -> str | None:
         image = transform(image)
     if not cv2.imwrite(dst, image, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]):
         return src
+    copy_associated_masks(src, dst)
     return None
 
 
@@ -173,10 +175,11 @@ class PreprocessImages(RSModule):
             rel = os.path.relpath(root, input_dir)
             dest_root = output_dir if rel == '.' else os.path.join(output_dir, rel)
             for name in files:
-                if not name.lower().endswith(IMAGE_EXTENSIONS):
+                if not is_geometry_image(os.path.join(root, name), IMAGE_EXTENSIONS):
                     continue
                 dst = os.path.join(dest_root, name)
                 if os.path.exists(dst):
+                    copy_associated_masks(os.path.join(root, name), dst)
                     skipped += 1
                     continue
                 os.makedirs(dest_root, exist_ok=True)
@@ -216,7 +219,7 @@ class PreprocessImages(RSModule):
             self.logger.warning('...and %d more failures', len(failures) - 10)
 
         return {
-            'Success': True,
+            'Success': not failures,
             'Processed': len(jobs) - len(failures),
             'Skipped (already done)': skipped,
             'Failed': len(failures),

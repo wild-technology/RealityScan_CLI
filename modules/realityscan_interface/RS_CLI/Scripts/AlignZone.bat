@@ -93,6 +93,7 @@ echo Scene Name: %scene_name%
 echo Min Component Size: %min_component_size%
 
 echo Starting RealityScan
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -127,6 +128,14 @@ if defined RS_GEOREG_ONLY (
 )
 
 echo Creating new scene
+:: Fresh alignments require measured priors before -align. Continuation above
+:: retains its saved-scene inputs and bypasses this fresh-input contract.
+if not defined RS_INPUT_PRIOR_MANIFEST ( echo ERROR: input-prior contract required & goto :fail )
+if not defined RS_INPUT_PRIOR_SHA256 ( echo ERROR: input-prior hash required & goto :fail )
+if not defined RS_INPUT_PRIOR_TEMPLATE ( echo ERROR: input-prior report template required & goto :fail )
+if not defined RS_INPUT_PRIOR_REPORT ( echo ERROR: input-prior report path required & goto :fail )
+if not defined RS_INPUT_PRIOR_RESULT ( echo ERROR: input-prior result path required & goto :fail )
+if not defined RS_PYTHON ( echo ERROR: canonical Python interpreter required & goto :fail )
 call :run -newScene || goto :fail
 
 if defined RS_ALIGN_POOL_DIR if not "%RS_ALIGN_POOL_DIR%" == "" goto :addViaList
@@ -136,6 +145,7 @@ echo Adding images to project
 :: preprocessed_images subfolders adds 0 layer images and the flight-log
 :: import then fails err:18002 (observed live on NA156 H2023). Instant
 :: -set, FIFO-ordered before the queued addFolder, no wait needed.
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -set "appIncSubdirs=true"
 call :run -addFolder "%input_dir%" || goto :fail
 goto :imagesAdded
@@ -147,6 +157,12 @@ if not defined zone_list ( echo ERROR: pool mode but no .imagelist in %input_dir
 echo Adding images from %zone_list% (pool: %RS_ALIGN_POOL_DIR%)
 call :run -add "%zone_list%" || goto :fail
 :imagesAdded
+
+:: Explicit per-input use; never inherit masking behavior from a user profile.
+:: Both folder and pool imports converge here. Saved-scene continuation skips
+:: this fresh-input path and keeps its existing input settings.
+call :run -selectAllImages || goto :fail
+call :run -editInputSelection "inpMaskOpts=3" || goto :fail
 
 :: Pin the PROJECT and OUTPUT coordinate systems before importing the
 :: trajectory. RealityScan holds three CRS scopes: project (measuring and
@@ -235,6 +251,7 @@ for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%AlignmentParams%") do (
                 echo ERROR: app-global key "%%A" found in the params file
                 goto :appGlobalKey
             )
+            call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
             %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
             set /a applied_settings+=1
         )
@@ -254,6 +271,16 @@ if not "%flight_log_dir%" == "" (
     echo Importing flight log
     call :run -importFlightLog "%flight_log_dir%" "%flight_log_params_dir%" || goto :fail
 )
+
+:: INPUT_PRIOR_CENSUS_V1: numeric defaults alone do not prove active priors.
+if exist "%RS_INPUT_PRIOR_REPORT%" ( echo ERROR: prior report already exists & goto :fail )
+if exist "%RS_INPUT_PRIOR_RESULT%" ( echo ERROR: prior census already exists & goto :fail )
+call :run -exportReport "%RS_INPUT_PRIOR_REPORT%" "%RS_INPUT_PRIOR_TEMPLATE%" true || goto :fail
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
+pushd "%~dp0..\..\..\.." || goto :fail
+"%RS_PYTHON%" -B -m modules.prior_census --input-manifest "%RS_INPUT_PRIOR_MANIFEST%" --expected-sha256 "%RS_INPUT_PRIOR_SHA256%" --input-report "%RS_INPUT_PRIOR_REPORT%" --output "%RS_INPUT_PRIOR_RESULT%"
+if errorlevel 1 ( popd & goto :fail )
+popd
 
 echo Aligning images - this may take a long time
 call :run -align || goto :fail
@@ -385,6 +412,7 @@ for %%F in ("%latest_dir%\*.rsalign") do call :identityOne "%%~nF" || goto :fail
 echo Identity capture finished after %comp_index% component(s)
 
 echo Shutting down RealityScan instance %RS_INSTANCE% - scene already saved
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
@@ -536,6 +564,7 @@ if errorlevel 1 ( echo ERROR: ceiling harvest move failed & goto :fail )
 echo Identity capture finished after %comp_index% component(s)
 
 echo Shutting down RealityScan instance %RS_INSTANCE% - NO save after identity loop
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
@@ -556,6 +585,7 @@ goto :fail
 
 :fail
 echo ERROR: zone workflow failed - see %ErrorsFile% and the RealityScan log
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
@@ -566,6 +596,7 @@ exit /b 1
 :: -waitCompleted calls with a second grace between them. Do NOT gate on
 :: results log growth (heartbeat processes also write it).
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

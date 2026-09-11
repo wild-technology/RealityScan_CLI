@@ -9,7 +9,7 @@ from datetime import datetime
 import utm
 from PIL import Image
 
-from ..file_metadata_parser import parse_timestamp
+from ..file_metadata_parser import parse_timestamp, navigation_match_timestamp
 from .. import camera_registry
 from .. import declination
 from .. import image_exts
@@ -19,174 +19,23 @@ from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
 
 
-# Mount geometry per FILENAME FAMILY (camera_registry.family), NOT per physical
-# camera. The same Cinema unit sits 10 deg down under legacy 'camlower' names and
-# 45 deg down under WCA 'C###C' names, so keying this off the camera would
-# silently change every legacy dataset by tens of degrees.
-#
-#   fwd  : + ahead of the vehicle reference point (m)
-#   lat  : + to the right (m; zero for every known mount)
-#   down : + below the reference point (m)
-#   pitch: camera down-tilt from the vehicle forward axis (deg)
-#   p_acc: claimed accuracy of that pitch prior (deg)
-#
-# These are the values in force on 2026-09-01 (Zeuss retuned that day; the
-# rest unchanged since 2026-07-26), pinned by testing/test_rig_mounts.py so
-# the table cannot drift unnoticed.
-# superseded-by modules/cameras.json families[].mount - pending migration step (c+)
-MOUNTS: dict[str, dict | None] = {
-    # Zeuss (Hercules) is the one camera on a TILTING HEAD, so its pitch is
-    # not a mount constant at all: owner-stated 2026-09-01, it sits around
-    # 20 deg down for most survey work, NEVER points up, and sometimes goes
-    # almost fully down. 25 deg centres just above the mode, biased into the
-    # nadir tail (the least-squares centre of a right-skewed distribution is
-    # above its mode); 45 deg is wide enough that near-nadir lands ~1.4 sigma
-    # out rather than 2.3, so imagery wins wherever the two disagree.
-    # The one thing that CANNOT be expressed here is the useful half of that
-    # knowledge - priors are symmetric, so any sigma wide enough to reach
-    # nadir allows an equal amount above horizontal, which the head never does.
-    'zeuss': {'fwd': 0.5, 'lat': 0.0, 'down': 0.5, 'pitch': 25.0, 'p_acc': 45.0},
-    # NA168 forward-facing stills. pitch 0 is OWNER-STATED (2026-08-14:
-    # "both stillcam and sonycam are facing forward"); the lever arm is
-    # NOT surveyed and reuses the cinema magnitude. Only the tilt is a
-    # fact here - if the arm is ever measured, replace these.
-    #
-    # na168_stillcam is the SAME optical body as wca_cinema (owner:
-    # "stillcam is actually cinemacam", calibration group 3) but needs its
-    # own family because the family IS the mount identity. When this row
-    # was added wca_cinema still carried 45 deg down (the tilt sat on the
-    # wrong camera until the 2026-08-14 owner correction below); the rows
-    # stay separate so each cruise's mount remains independently editable.
-    'sony_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 10.0},
-    'na168_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 10.0},
-    'legacy_camupper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 70.0, 'p_acc': 10.0},
-    'legacy_cammid': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 20.0, 'p_acc': 10.0},
-    'legacy_camlower': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 10.0, 'p_acc': 10.0},
-    # WCA Port/Cinema lever arms are VALIDATED on two independent metrically
-    # sound solves (bow c2, zone_2/PD-2b): C above P by +1.12 m and +1.03 m
-    # against the +1.00 m implied here. Do NOT flatten them to equal height on
-    # the strength of the 0.22 m / 0.00 m figures in FINDINGS - those came from
-    # the 0.175-scale hull and are scale-corrupted (retracted 2026-07-25, then
-    # briefly re-applied 2026-07-26 until a contradiction audit caught it).
-    # Pitch accuracy is 15 deg, not 3-5: tighter FRAGMENTS the solve (PD-0).
-    'wca_port': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 10.0},
-    # OWNER CORRECTION 2026-08-14: "upper is 45 degrees down, cinema and mid
-    # are pointed directly forward ... it's how they were loaded on this
-    # cruise and NA165". Cinema was carrying 45 deg while wca_starboard (the
-    # upper) carried mount=None - the tilt was on the WRONG camera. Cinema
-    # is now 0 (forward) and the 45 moved to wca_upper below.
-    # BLAST RADIUS: pre-NA168 WCA datasets (the NA156 H2023/H2024 line) were
-    # solved with cinema at 45. The owner vouched for NA168 and NA165 only.
-    # If that line is ever reprocessed, give it a cruise-scoped family
-    # rather than moving this row back.
-    'wca_cinema': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 0.0, 'p_acc': 10.0},
-    # WCA upper stills (U###C). 45 deg down is owner-stated; the lever arm
-    # is NOT surveyed and reuses the cinema magnitude.
-    'wca_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 10.0},
-    # Same camera as wca_upper, reached through the stager's UTC-first
-    # filename (the U###C prefix does not survive the rename).
-    'na168_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 10.0},
-    # Starboard's mount has NEVER been measured. The owner excludes Starboard
-    # from photogrammetry, so this should not be reached - and if it is, the run
-    # must SAY SO rather than invent a zero lever arm and a 0 deg tilt.
-    # Inventing rig numbers is what produced the Port-1 m incident.
-    'wca_starboard': None,
-    # VOYIS stereo eyes take poses from the COLMAP bridge (per-camera
-    # position+orientation in the flight log), so no vehicle-nav lever arm
-    # exists or is wanted. Null = WARN if the ROV-nav path is ever pointed
-    # at these families - that would be a pipeline-selection error.
-    'voyis_left_staged': None,
-    'voyis_right_staged': None,
-    'voyis_left_original': None,
-    'voyis_right_original': None,
-}
-
-
-# End-to-end PER-IMAGE uncertainty written into every flight-log row, NOT
-# the sensor spec. The rig's DVL (~1 m XY) and Paro depth (~0.1 m Z)
-# describe instantaneous sensor precision; the number RealityScan wants
-# also absorbs timestamp matching, nav interpolation, lever arm, and
-# dive-long drift. Claiming the sensor figure (1/1/0.1) measurably
-# FRAGMENTS solves: on the known-good bow fixture, loose gave ONE
-# component at scale ~1.0 under both distortion models, while tight split
-# it into 2-3 and pushed the maximal component's scale further from truth
-# (0.886 / 0.826). See testing/PRIORS_DISTORTION_TEST_PLAN.md "bow 2x2".
-# An intermediate ladder (3/3/0.5 etc.) is untested - queued, and now
-# REACHABLE: these are the defaults of real parameters/flags rather than
-# function locals in two files (audit 2026-08-07 - step 6 of the owner's
-# chain, "calculation/use of uncertainty", had no knob anywhere).
-#
-# Orientation: HONEST 15 deg until the camera mounts are ground-truthed
-# (PD-0/PD-0b dose-response, 2026-07-25: 3-5 deg claimed accuracy
-# FRAGMENTS the solve, 15 deg gains registration; see the
-# PRIORS_DISTORTION_TEST_PLAN orientation-frame caveat). Pitch accuracy is
-# per-mount (MOUNTS[...]['p_acc']) and is deliberately NOT listed here.
-#
-# ONE table, shared by modules/georeference and geoall.py (which already
-# imports MOUNTS from here) so the two implementations cannot drift apart
-# again the way the 3-vs-15 orientation accuracy did.
-# superseded-by modules/cameras.json defaults - pending migration step (c+)
+# The registry is the single source for camera-family geometry and uncertainty.
+# Body offsets use metres (+forward, +right, +down); mount pitch is down-tilt.
+# These are owner-approved priors, not measured calibration or angular bounds.
+MOUNTS: dict[str, dict | None] = camera_registry.mount_defaults()
+_REGISTRY_DEFAULTS = camera_registry.prior_defaults()
 PRIOR_ACCURACY_DEFAULTS: dict[str, float] = {
-    'pos_xy': 5.0,    # X and Y accuracy, metres
-    'alt': 1.0,       # Alt accuracy, metres  (depth is a pressure sensor,
-                      # already far better than horizontal USBL - untouched)
-    'yaw': 5.0,       # Yaw accuracy, degrees
-    'roll': 5.0,      # Roll accuracy, degrees
+    "pos_xy": _REGISTRY_DEFAULTS["position_accuracy_m"]["x"],
+    "alt": _REGISTRY_DEFAULTS["position_accuracy_m"]["alt"],
+    "yaw": _REGISTRY_DEFAULTS["orientation_accuracy_deg"]["yaw"],
+    "roll": _REGISTRY_DEFAULTS["orientation_accuracy_deg"]["roll"],
 }
-# 2026-09-08, OWNER DIRECTIVE. Was pos_xy 10.0 / yaw 15.0 / roll 15.0.
-# This TIGHTENS against recorded counter-evidence and the owner made the call
-# knowing it: PD-0/PD-0b measured 3-5 deg claimed orientation FRAGMENTING the
-# solve where 15 deg gained registration, and PRIORS_DISTORTION_TEST_PLAN
-# ('bow 2x2') had the 1/1/0.1 sensor spec fragmenting a known-good 665-image
-# component and moving hull scale from 1.049/0.989 to 0.886/0.826.
-#
-# The argument FOR, which is specific to dense hover patches: the prior is also
-# the PRE-SELECTION gate. On NA165/H2060 zone_2 - 9,136 images in 44.7 x 41.8 m -
-# a 10 m prior spans 30 m at 3 sigma, i.e. essentially the whole zone, so almost
-# every pair survived gating and the align ran 14.2 h without converging. At 5 m
-# the span is 15 m. So the same number can hurt as a constraint and help as a
-# filter, and which dominates is an empirical question per dive.
-#
-# HOW TO TELL THEM APART on the re-run, because the two look nothing alike:
-#   pruning worked   -> wall-clock drops sharply, registration rate holds
-#   over-constrained -> component COUNT rises, registration RATE falls
-# If the second shape appears, revert this block, not the grouping fix.
-
-
-# The house convention for a camera family whose mount has never been
-# measured: it looks 10 deg down from the vehicle forward axis and otherwise
-# rides the vehicle's attitude (yaw and roll straight from the nav, pitch
-# composed with the vehicle's). Owner-stated 2026-08-31. A MOUNTS entry always
-# WINS over this - the fallback is only ever reached when the family has no
-# measured geometry at all.
-#
-# History, because this reverses a documented decision. Until 2026-08-07 an
-# unmeasured mount fell back to pitch 0 deg ("this camera looks straight
-# ahead") asserted at 10 deg accuracy, and an audit removed it: inventing rig
-# numbers is what produced the Port-1 m incident, and PD-0/PD-0b measured that
-# over-tight orientation accuracy FRAGMENTS solves. The owner's convention is a
-# different claim - 10 deg DOWN, not 0 deg ahead - and it is reinstated as a
-# prior, but deliberately at 30 deg accuracy - looser than every FIXED measured
-# mount (only Zeuss, on a tilting head, claims more). That keeps the geometry
-# honest about being assumed rather than measured, which is the half of the
-# audit that still holds.
-#
-# The LEVER ARM is NOT part of this. An unmeasured mount still contributes
-# (0, 0, 0) metres, exactly as before: the Port-1 m incident was a position
-# invention, and nothing here changes position.
 ASSUMED_MOUNT_DEFAULTS: dict[str, float] = {
-    'pitch': 10.0,    # deg down from the vehicle forward axis
-    'p_acc': 30.0,    # deg; assumed geometry, so looser than every FIXED measured mount
+    "pitch": _REGISTRY_DEFAULTS["assumed_mount"]["pitch_deg"],
+    "p_acc": _REGISTRY_DEFAULTS["assumed_mount"]["pitch_accuracy_deg"],
 }
-
-# Families that must NEVER take the assumed mount. The VOYIS eyes carry
-# per-camera poses from the COLMAP bridge, so a vehicle-nav prior is not
-# merely unmeasured, it is the wrong pipeline - falling back would MASK a
-# pipeline-selection error that the null in MOUNTS exists to surface.
-NO_ASSUMED_MOUNT_FAMILIES: frozenset[str] = frozenset({
-    'voyis_left_staged', 'voyis_right_staged',
-    'voyis_left_original', 'voyis_right_original',
-})
+NO_ASSUMED_MOUNT_FAMILIES = frozenset(
+    _REGISTRY_DEFAULTS["assumed_mount"]["excluded_families"])
 
 
 def assumed_pitch_prior(family: str | None, enabled: bool = True,
@@ -200,6 +49,8 @@ def assumed_pitch_prior(family: str | None, enabled: bool = True,
     must reach this ONLY after MOUNTS has returned nothing, so a measured
     mount can never be overridden.
     """
+    if camera_registry.project_priors_active():
+        enabled, pitch_deg, accuracy_deg = True, None, None
     if not enabled or family in NO_ASSUMED_MOUNT_FAMILIES:
         return (None, None)
     pitch = ASSUMED_MOUNT_DEFAULTS['pitch'] if pitch_deg is None else pitch_deg
@@ -375,12 +226,16 @@ class GeoreferenceImages(RSModule):
     def _accuracy(self, param_name: str, key: str) -> float:
         """A prior-accuracy parameter's value, or its shared default when
         the parameter is absent (direct instantiation in tests/drivers)."""
+        if camera_registry.project_priors_active():
+            return float(PRIOR_ACCURACY_DEFAULTS[key])
         param = (self.params or {}).get(param_name)
         value = None if param is None else param.get_value()
         return float(PRIOR_ACCURACY_DEFAULTS[key] if value is None else value)
 
     def _assumed_mount(self, param_name: str, key: str) -> float:
         """An assumed-mount parameter's value, or its shared default."""
+        if camera_registry.project_priors_active():
+            return float(ASSUMED_MOUNT_DEFAULTS[key])
         param = (self.params or {}).get(param_name)
         value = None if param is None else param.get_value()
         return float(ASSUMED_MOUNT_DEFAULTS[key] if value is None else value)
@@ -430,34 +285,15 @@ class GeoreferenceImages(RSModule):
         return mount
 
     def _get_camera_focal_length(self, filename: str) -> float | None:
-        """35mm-equivalent focal length prior for this image, or None.
+        """Registry focal compatibility field; tested CSV import ignores it.
 
-        THE ONLY ROUTE this value has to RealityScan. It used to travel in
-        an XMP calibration sidecar; sidecars are now forbidden, and neither
-        -setPriorCalibrationGroup nor -setPriorLensGroup carries a focal
-        length (those two are the ONLY prior-setting CLI commands that
-        exist). The WCA units publish no EXIF focal length or lens tag
-        either, so without this column RealityScan solves focal from
-        scratch on the weakest imagery in the set.
-
-        FocalLength is a documented prior-calibration variable of
-        RealityScan.Import.CSVFlightLog - see Help/en-US/tools/
-        defineimportformat.htm. Requires the 14-column format
-        {D1F2A3B4-...}; modules/flightlog_format.assert_format_installed()
-        fails closed if that format is not registered in the RealityScan
-        INSTALL, because a missing format silently drops columns.
-
-        None (empty field) when the family or camera is unknown - the same
-        contract as the pitch prior: say nothing rather than invent a lens.
-
-        RECON 2026-09-03: 'forbidden' above is the remove-xmp-sidecars rule
-        (CLAUDE.md hard rule 0). On the reconciled tree main's align default
-        still delivers calibration via XMP sidecars pending decision D1
-        (FINDINGS [RECON] 2026-09-03); this column is the sidecar-free route
-        and is written regardless of which mechanism is in force.
+        Native XMP supplies focal in the measured v02 native_xmp_csv_g0 lane.
+        Keep the managed 14-column schema, without claiming CSV focal delivery.
+        Unknown cameras retain an empty field. Local import follows the existing
+        canonical geometry delegation and avoids the shared-table import cycle.
         """
-        cam = camera_registry.identify(filename)
-        return cam.focal_length_35mm if cam else None
+        from geoall import get_camera_focal_length
+        return get_camera_focal_length(filename)
 
     def _get_camera_offsets(self, filename: str) -> tuple[float, float, float]:
         """(forward, lateral, down) lever arm in metres; zeros when unknown."""
@@ -509,53 +345,16 @@ class GeoreferenceImages(RSModule):
 
     def _apply_camera_position_offset(self, utm_x: float | None, utm_y: float | None,
                                       altitude: float | None, heading_deg: float | None,
-                                      forward_m: float, lateral_m: float, down_m: float) -> tuple[
+                                      forward_m: float, lateral_m: float, down_m: float,
+                                      *, pitch_deg: float | None = None,
+                                      roll_deg: float | None = None) -> tuple[
         float | None, float | None, float | None]:
-        """
-        Apply camera position offset from vehicle center to world coordinates.
-
-        Args:
-            utm_x, utm_y: Vehicle position in UTM
-            altitude: Vehicle altitude (negative depth)
-            heading_deg: Vehicle heading in degrees (0=North, 90=East, clockwise)
-            forward_m: Camera offset forward from vehicle center
-            lateral_m: Camera offset to right from vehicle center
-            down_m: Camera offset down from vehicle center
-
-        Returns:
-            (adjusted_utm_x, adjusted_utm_y, adjusted_altitude)
-        """
-        if utm_x is None or utm_y is None or heading_deg is None:
-            return utm_x, utm_y, altitude
-
-        # Convert heading to radians for trig functions
-        heading_rad = math.radians(heading_deg)
-
-        # Transform offsets from vehicle frame to world frame
-        # In UTM: X=East, Y=North
-        # Vehicle frame: forward along heading, right perpendicular to heading
-        # Heading 0°=North, 90°=East (clockwise from North)
-
-        # Forward offset contribution:
-        # - East component: forward * sin(heading)
-        # - North component: forward * cos(heading)
-        east_offset = forward_m * math.sin(heading_rad)
-        north_offset = forward_m * math.cos(heading_rad)
-
-        # Lateral offset contribution (right side of vehicle):
-        # - East component: lateral * cos(heading)
-        # - North component: lateral * -sin(heading)
-        east_offset += lateral_m * math.cos(heading_rad)
-        north_offset += lateral_m * (-math.sin(heading_rad))
-
-        # Apply offsets
-        adjusted_utm_x = utm_x + east_offset
-        adjusted_utm_y = utm_y + north_offset
-
-        # Altitude offset (down is negative altitude)
-        adjusted_altitude = altitude - down_m if altitude is not None else None
-
-        return adjusted_utm_x, adjusted_utm_y, adjusted_altitude
+        """Delegate FRD/NED/ENU geometry to the canonical georeferencer."""
+        # Local import avoids the mount-table import cycle at module startup.
+        from geoall import apply_camera_position_offset
+        return apply_camera_position_offset(
+            utm_x, utm_y, altitude, heading_deg, forward_m, lateral_m, down_m,
+            pitch_deg=pitch_deg, roll_deg=roll_deg)
 
     def _convert_to_rc_orientation(self, heading_mag: float | None, pitch_vehicle: float | None,
                                    roll_vehicle: float | None, camera_offset: float,
@@ -681,36 +480,11 @@ class GeoreferenceImages(RSModule):
             return False
 
     def __parse_timestamp_from_filename(self, filename, data_type):
-        """Extract and parse the timestamp from an image filename."""
-        if data_type == "All":
-            try:
-                base_name = os.path.splitext(filename)[0]
-                timestamp_part = base_name.split('_')[1]
-                return datetime.strptime(timestamp_part, self.WCA2025_FILENAME_TIMESTAMP_FORMAT)
-            except (IndexError, ValueError):
-                pass
-
-            timestamp = parse_timestamp(filename)
-            if timestamp is not None and timestamp != datetime(1970, 1, 1, 0, 0, 0):
-                return timestamp
-
-            self.logger.error(f"Error parsing timestamp in filename: {filename}")
-            return None
-
-        elif data_type == "WCA2025":
-            try:
-                base_name = os.path.splitext(filename)[0]
-                timestamp_part = base_name.split('_')[1]
-                return datetime.strptime(timestamp_part, self.WCA2025_FILENAME_TIMESTAMP_FORMAT)
-            except (IndexError, ValueError) as e:
-                self.logger.error(f"Error parsing WCA2025 timestamp in filename: {filename} - {e}")
-                return None
-        else:
-            timestamp = parse_timestamp(filename)
-            if timestamp is None or timestamp == datetime(1970, 1, 1, 0, 0, 0):
-                self.logger.error(f"Error parsing timestamp in filename: {filename}")
-                return None
-            return timestamp
+        """All supported camera types use the same validated timestamp parser."""
+        timestamp = parse_timestamp(filename)
+        if timestamp is None:
+            self.logger.error(f"Missing, invalid or ambiguous timestamp in filename: {filename}")
+        return timestamp
 
     # What this stage can timestamp + open today. Deliberately narrower
     # than modules.image_exts.ALL_IMAGE_EXTS; the difference is REPORTED
@@ -724,11 +498,20 @@ class GeoreferenceImages(RSModule):
 
         jpeg_files = []
         all_names = []
+        identities = {}
         for root, dirs, files in os.walk(image_folder):
-            for filename in files:
+            dirs.sort()
+            for filename in sorted(files):
+                if not image_exts.is_geometry_image(os.path.join(root, filename)):
+                    continue
                 all_names.append(filename)
                 if os.path.splitext(filename.lower())[1] in image_extensions:
                     rel_path = os.path.relpath(os.path.join(root, filename), image_folder)
+                    identity = filename.casefold()
+                    if identity in identities:
+                        raise ValueError(f'Duplicate flight-log image identity: '
+                                         f'{identities[identity]!r} and {rel_path!r}')
+                    identities[identity] = rel_path
                     jpeg_files.append(rel_path)
 
         # A .tif/.heif dataset used to be simply invisible here while the
@@ -757,7 +540,8 @@ class GeoreferenceImages(RSModule):
             if self.__is_image_file(filename, os.path.dirname(full_path)):
                 timestamp = self.__parse_timestamp_from_filename(filename, data_type)
                 if timestamp:
-                    image_data.append({"FILENAME": filename, "TIMESTAMP": timestamp})
+                    image_data.append({"FILENAME": filename, "FULL_PATH": full_path,
+                                       "TIMESTAMP": timestamp})
                 else:
                     ts_parse_failures += 1
             else:
@@ -786,8 +570,9 @@ class GeoreferenceImages(RSModule):
         return idx
 
     def __estimate_location(self, image_data, data_rows, input_type) -> int:
-        """Estimate location and orientation for each image. Accept only matches within 2 seconds."""
-        MATCH_THRESHOLD_SEC = 2.0
+        """Match corrected image UTC within the explicit project tolerance."""
+        navigation = camera_registry.navigation_defaults()
+        MATCH_THRESHOLD_SEC = navigation['max_match_seconds']
 
         matches_made = 0
         exact_matches = 0
@@ -808,10 +593,13 @@ class GeoreferenceImages(RSModule):
         for image in image_data:
             filename = image["FILENAME"]
             image["ACCEPTED"] = False
+            match_timestamp = navigation_match_timestamp(image['TIMESTAMP'])
+            image['MATCH_TIMESTAMP'] = match_timestamp
+            image['CLOCK_OFFSET_SECONDS'] = navigation['clock_offset_seconds']
 
             if data_rows:
-                closest_match = data_rows[self._find_closest_row_index(times, image["TIMESTAMP"])]
-                time_diff = abs(closest_match["TIME"] - image["TIMESTAMP"])
+                closest_match = data_rows[self._find_closest_row_index(times, match_timestamp)]
+                time_diff = abs(closest_match["TIME"] - match_timestamp)
                 diff_sec = time_diff.total_seconds()
 
                 # Contiguous buckets: the old ==0 / 1-4 / 5-15 / >15 split
@@ -833,35 +621,25 @@ class GeoreferenceImages(RSModule):
                 lat, lon = closest_match.get("LAT"), closest_match.get("LONG")
                 utm_x, utm_y = self.__convert_to_utm(lat, lon)
 
-                # Get camera position offsets
-                forward_m, lateral_m, down_m = self._get_camera_offsets(filename)
-
-                # Apply position offsets to get camera location
-                camera_utm_x, camera_utm_y, camera_alt = self._apply_camera_position_offset(
-                    utm_x, utm_y, closest_match.get("DEPTH"),
-                    closest_match.get("HEADING_MAG"),
-                    forward_m, lateral_m, down_m
-                )
+                missing_attitude = [key for key in ("HEADING_MAG", "PITCH", "ROLL")
+                                    if closest_match.get(key) is None
+                                    or not math.isfinite(closest_match[key])]
 
                 image.update({
                     "LAT": lat,
                     "LONG": lon,
-                    "UTM_X": camera_utm_x,
-                    "UTM_Y": camera_utm_y,
-                    "ALTITUDE_EST": camera_alt,
-                    "HEADING_MAG": closest_match.get("HEADING_MAG"),
-                    "PITCH_VEHICLE": closest_match.get("PITCH"),
-                    "ROLL_VEHICLE": closest_match.get("ROLL"),
+                    "VEHICLE_UTM_X": utm_x,
+                    "VEHICLE_UTM_Y": utm_y,
+                    "VEHICLE_ALTITUDE": closest_match.get('DEPTH'),
+                    "POSITION_OFFSET_MISSING_ATTITUDE": missing_attitude,
+                    "HEADING_MAG": closest_match.get("HEADING_MAG") if "HEADING_MAG" not in missing_attitude else None,
+                    "PITCH_VEHICLE": closest_match.get("PITCH") if "PITCH" not in missing_attitude else None,
+                    "ROLL_VEHICLE": closest_match.get("ROLL") if "ROLL" not in missing_attitude else None,
                     "ACCEPTED": True
                 })
                 matches_made += 1
 
-                if camera_utm_x is None or camera_utm_y is None:
-                    accepted_missing_utm += 1
-
-                if (closest_match.get("HEADING_MAG") is None or
-                        closest_match.get("PITCH") is None or
-                        closest_match.get("ROLL") is None):
+                if missing_attitude:
                     accepted_missing_orientation += 1
 
             else:
@@ -869,7 +647,22 @@ class GeoreferenceImages(RSModule):
 
             self._update_loading_bar(bar, 1)
 
+        accepted = [image for image in image_data if image.get('ACCEPTED')]
+        correction = self._resolve_declination(accepted)
+        for image in accepted:
+            heading = image.get('HEADING_MAG')
+            x, y, altitude = self._apply_camera_position_offset(
+                image['VEHICLE_UTM_X'], image['VEHICLE_UTM_Y'], image['VEHICLE_ALTITUDE'],
+                heading + correction if heading is not None else None,
+                *self._get_camera_offsets(image['FILENAME']),
+                pitch_deg=image.get('PITCH_VEHICLE'), roll_deg=image.get('ROLL_VEHICLE'))
+            image.update(UTM_X=x, UTM_Y=y, ALTITUDE_EST=altitude,
+                         DECLINATION_APPLIED_DEG=correction,
+                         POSITION_HEADING_FRAME='true-north ENU approximation; UTM convergence not applied')
+            if x is None or y is None:
+                accepted_missing_utm += 1
         self.stats['examined_images'] = len(image_data)
+        self.stats['navigation_matching'] = navigation
         self.stats['accepted_images'] = matches_made
         self.stats['rejected_time'] = rejected_time
         self.stats['rejected_no_csv'] = rejected_no_csv
@@ -888,8 +681,8 @@ class GeoreferenceImages(RSModule):
         print(f"  Examined images: {self.stats['examined_images']}")
         # ASCII only in console output: Windows cp1252 consoles (and
         # redirected stdout) crash on characters like U+2264.
-        print(f"  Accepted <=2s:   {self.stats['accepted_images']} ({self.stats['accept_rate_pct']:.1f}%)")
-        print(f"  Rejected >2s:    {self.stats['rejected_time']}")
+        print(f"  Accepted <={MATCH_THRESHOLD_SEC:g}s:   {self.stats['accepted_images']} ({self.stats['accept_rate_pct']:.1f}%)")
+        print(f"  Rejected >{MATCH_THRESHOLD_SEC:g}s:    {self.stats['rejected_time']}")
         print(f"  Rejected no CSV: {self.stats['rejected_no_csv']}")
         print("  Time-delta buckets (all pairs, pre-threshold):")
         print(f"    Exact:  {self.stats['bucket_exact']}")
@@ -912,8 +705,62 @@ class GeoreferenceImages(RSModule):
 
         return matches_made
 
+    def _resolve_declination(self, accepted_images):
+        # DECLINATION: estimate always, apply only when the source is magnetic
+        # (owner directive 2026-09-06; see modules/declination.py for why a UTM
+        # zone alone cannot supply this and why most of this project's nav must
+        # NOT be corrected). The estimate keys off the MEDIAN accepted position
+        # and timestamp - both already computed by this point - not off the
+        # zone, because a zone is a 6-degree longitude band with no latitude.
+        params = self.params or {}
+        decl_deg = params['magnetic_declination_deg'].get_value() if 'magnetic_declination_deg' in params else 0.0
+        if decl_deg is not None and not math.isfinite(decl_deg):
+            raise ValueError('Declination must be finite')
+        operator_decl = None
+        decl_param = params.get('magnetic_declination_deg')
+        if decl_param is not None and decl_param.is_explicit():
+            operator_decl = decl_param.get_value()
+        try:
+            lats = sorted(i['LAT'] for i in accepted_images
+                          if i.get('LAT') is not None)
+            lons = sorted(i['LONG'] for i in accepted_images
+                          if i.get('LONG') is not None)
+            times = sorted(i.get('MATCH_TIMESTAMP', i['TIMESTAMP']) for i in accepted_images
+                           if i.get('TIMESTAMP') is not None)
+            med_lat = lats[len(lats) // 2] if lats else None
+            med_lon = lons[len(lons) // 2] if lons else None
+            med_time = times[len(times) // 2] if times else None
+            self.declination_record = declination.resolve(
+                med_lat, med_lon, med_time,
+                nav_path=params['geo_input_flight_log'].get_value()
+                if 'geo_input_flight_log' in params else None,
+                columns=getattr(self, '_nav_columns', None),
+                operator_value=operator_decl,
+                logger_=self.logger)
+            decl_deg = self.declination_record['applied_deg']
+        except Exception as exc:                                  # noqa: BLE001
+            # Never let the estimator stop a georeference run: fall back to
+            # whatever the operator/parameter said, and say what happened.
+            self.logger.warning(
+                'Declination resolution failed (%s: %s) - using %.3f deg as '
+                'supplied.', type(exc).__name__, exc, decl_deg or 0.0)
+            self.declination_record = {
+                'applied_deg': decl_deg or 0.0, 'estimated_deg': None,
+                'reference': 'unknown', 'source': 'parameter',
+                'reason': f'{type(exc).__name__}: {exc}'}
+        self.stats['declination_applied_deg'] = self.declination_record['applied_deg']
+        self.stats['declination_estimated_deg'] = self.declination_record['estimated_deg']
+        self.stats['heading_reference'] = self.declination_record['reference']
+
+        return self.declination_record['applied_deg']
+
     def __generate_flight_log(self, image_data, image_folder):
         """Generate a flight log file with position and orientation accuracy."""
+        accepted_images = [img for img in image_data if img.get("ACCEPTED", False)]
+        decl_deg = (self.declination_record['applied_deg']
+                    if hasattr(self, 'declination_record') else self._resolve_declination(accepted_images))
+        if any(image.get('DECLINATION_APPLIED_DEG', decl_deg) != decl_deg for image in accepted_images):
+            raise ValueError('Position/yaw declination mismatch')
         # NEVER emit a '_UNKNOWN_' tag into a *_UTM.txt name. self.utm_zone
         # is None only when EVERY __convert_to_utm call failed, and the
         # resulting flight_log_UNKNOWN_UTM.txt used to be picked up by
@@ -939,56 +786,13 @@ class GeoreferenceImages(RSModule):
             self.logger.warning(f"Flight log file already exists: {flight_log_filename}, overriding.")
             os.remove(flight_log_filename)
 
-        accepted_images = [img for img in image_data if img.get("ACCEPTED", False)]
-
-        # DECLINATION: estimate always, apply only when the source is magnetic
-        # (owner directive 2026-09-06; see modules/declination.py for why a UTM
-        # zone alone cannot supply this and why most of this project's nav must
-        # NOT be corrected). The estimate keys off the MEDIAN accepted position
-        # and timestamp - both already computed by this point - not off the
-        # zone, because a zone is a 6-degree longitude band with no latitude.
-        decl_deg = self.params['magnetic_declination_deg'].get_value()
-        operator_decl = None
-        decl_param = self.params.get('magnetic_declination_deg')
-        if decl_param is not None and decl_param.is_explicit():
-            operator_decl = decl_param.get_value()
-        try:
-            lats = sorted(i['LAT'] for i in accepted_images
-                          if i.get('LAT') is not None)
-            lons = sorted(i['LONG'] for i in accepted_images
-                          if i.get('LONG') is not None)
-            times = sorted(i['TIMESTAMP'] for i in accepted_images
-                           if i.get('TIMESTAMP') is not None)
-            med_lat = lats[len(lats) // 2] if lats else None
-            med_lon = lons[len(lons) // 2] if lons else None
-            med_time = times[len(times) // 2] if times else None
-            self.declination_record = declination.resolve(
-                med_lat, med_lon, med_time,
-                nav_path=self.params['geo_input_flight_log'].get_value()
-                if 'geo_input_flight_log' in self.params else None,
-                columns=getattr(self, '_nav_columns', None),
-                operator_value=operator_decl,
-                logger_=self.logger)
-            decl_deg = self.declination_record['applied_deg']
-        except Exception as exc:                                  # noqa: BLE001
-            # Never let the estimator stop a georeference run: fall back to
-            # whatever the operator/parameter said, and say what happened.
-            self.logger.warning(
-                'Declination resolution failed (%s: %s) - using %.3f deg as '
-                'supplied.', type(exc).__name__, exc, decl_deg or 0.0)
-            self.declination_record = {
-                'applied_deg': decl_deg or 0.0, 'estimated_deg': None,
-                'reference': 'unknown', 'source': 'parameter',
-                'reason': f'{type(exc).__name__}: {exc}'}
-        self.stats['declination_applied_deg'] = self.declination_record['applied_deg']
-        self.stats['declination_estimated_deg'] = self.declination_record['estimated_deg']
-        self.stats['heading_reference'] = self.declination_record['reference']
-
         # Uncertainty knobs (provenance + defaults: PRIOR_ACCURACY_DEFAULTS
         # at module scope). Operator-settable via --g_pos_accuracy /
         # --g_alt_accuracy / --g_orientation_accuracy since 2026-08-07;
         # before that they were literals here and in geoall.py.
         pos_x_acc = pos_y_acc = self._accuracy('geo_pos_accuracy_m', 'pos_xy')
+        if camera_registry.project_priors_active():
+            pos_y_acc = camera_registry.prior_defaults()['position_accuracy_m']['y']
         alt_acc = self._accuracy('geo_alt_accuracy_m', 'alt')
         yaw_acc = self._accuracy('geo_orientation_accuracy_deg', 'yaw')
         roll_acc = self._accuracy('geo_orientation_accuracy_deg', 'roll')
@@ -996,17 +800,7 @@ class GeoreferenceImages(RSModule):
         self.stats['alt_accuracy_m'] = alt_acc
         self.stats['orientation_accuracy_deg'] = yaw_acc
 
-        with open(flight_log_filename, "w") as f:
-            # 14 columns, matching flight-log format {D1F2A3B4-...}. Column
-            # 13 (FocalLength) is the per-image calibration prior that used
-            # to live in an XMP sidecar; see _get_camera_focal_length.
-            # The format MUST be registered in the RealityScan install or
-            # trailing columns are dropped silently - flightlog_format
-            # .assert_format_installed() gates the import on exactly that.
-            f.write(
-                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy;FocalLength\n"
-            )
-
+        def rows():
             for image in accepted_images:
                 heading_mag = image.get("HEADING_MAG")
                 pitch_vehicle = image.get("PITCH_VEHICLE")
@@ -1019,26 +813,16 @@ class GeoreferenceImages(RSModule):
 
                 pitch_acc = self._get_camera_pitch_accuracy(image["FILENAME"])
 
-                def fmt(val):
-                    return f"{val:.6f}" if val is not None else ""
-
-                line = ";".join([
+                yield [
                     image["FILENAME"],
-                    fmt(image.get("UTM_X")),
-                    fmt(image.get("UTM_Y")),
-                    fmt(image.get("ALTITUDE_EST")),
-                    fmt(pos_x_acc),
-                    fmt(pos_y_acc),
-                    fmt(alt_acc),
-                    fmt(rc_yaw),
-                    fmt(rc_pitch),
-                    fmt(rc_roll),
-                    fmt(yaw_acc),
-                    fmt(pitch_acc),
-                    fmt(roll_acc),
-                    fmt(self._get_camera_focal_length(image["FILENAME"]))
-                ])
-                f.write(line + "\n")
+                    image.get("UTM_X"), image.get("UTM_Y"), image.get("ALTITUDE_EST"),
+                    pos_x_acc, pos_y_acc, alt_acc, rc_yaw, rc_pitch, rc_roll,
+                    yaw_acc, pitch_acc, roll_acc,
+                    self._get_camera_focal_length(image["FILENAME"]),
+                ]
+
+        from geoall import write_flight_log
+        write_flight_log(flight_log_filename, rows())
 
         self.stats['written_to_flight_log'] = len(accepted_images)
         self.stats['rows_without_pitch_prior'] = sum(
@@ -1070,6 +854,8 @@ class GeoreferenceImages(RSModule):
             output_path = self.__generate_flight_log(image_data, input_dir)
 
             output_data['Success'] = True
+            output_data['Effective Project Priors'] = camera_registry.effective_project_priors()
+            output_data['Navigation Matching'] = self.stats.get('navigation_matching')
             output_data['CSV Rows'] = int(self.stats.get('csv_rows', 0))
             output_data['Files Listed'] = int(self.stats.get('files_listed', 0))
             output_data['Files Skipped By Extension'] = int(
@@ -1078,8 +864,12 @@ class GeoreferenceImages(RSModule):
             output_data['Timestamp Parse Failures'] = int(self.stats.get('timestamp_parse_failures', 0))
             output_data['Images With Valid Timestamps'] = int(self.stats.get('images_with_valid_ts', 0))
             output_data['Images Examined'] = int(self.stats.get('examined_images', 0))
-            output_data['Matched <=2s'] = matches_made
-            output_data['Rejected >2s'] = int(self.stats.get('rejected_time', 0))
+            output_data['Matched Within Tolerance'] = matches_made
+            output_data['Rejected Outside Tolerance'] = int(self.stats.get('rejected_time', 0))
+            if camera_registry.navigation_defaults()['max_match_seconds'] == 2.0:
+                # Compatibility for consumers of the historic fixed-2-second lane.
+                output_data['Matched <=2s'] = matches_made
+                output_data['Rejected >2s'] = output_data['Rejected Outside Tolerance']
             output_data['Rejected No CSV'] = int(self.stats.get('rejected_no_csv', 0))
             output_data['Written To Flight Log'] = int(self.stats.get('written_to_flight_log', 0))
             output_data['Acceptance Rate %'] = float(f"{self.stats.get('accept_rate_pct', 0.0):.2f}")
@@ -1091,6 +881,7 @@ class GeoreferenceImages(RSModule):
             }
             output_data['Unknown Camera Images'] = int(self.stats.get('unknown_camera_images', 0))
             output_data['Accepted Field Gaps'] = {
+                "Missing Attitude for Position Offset": int(self.stats.get('accepted_missing_orientation', 0)),
                 "Missing UTM": int(self.stats.get('accepted_missing_utm', 0)),
                 "Missing Orientation": int(self.stats.get('accepted_missing_orientation', 0))
             }
@@ -1116,14 +907,14 @@ class GeoreferenceImages(RSModule):
             gate_detail = (
                 f"examined={output_data['Images Examined']} "
                 f"accepted={matches_made} ({rate:.1f}%) "
-                f"rejected_time={output_data['Rejected >2s']} "
+                f"rejected_time={output_data['Rejected Outside Tolerance']} "
                 f"rejected_no_csv={output_data['Rejected No CSV']} "
                 f"timestamp_parse_failures="
                 f"{output_data['Timestamp Parse Failures']} "
                 f"buckets={output_data['Delta Buckets']}")
             if matches_made == 0:
                 self.logger.error(
-                    'NO image matched the nav table within 2 s - there is no '
+                    'NO image matched the nav table within the configured tolerance - there is no '
                     'flight log worth using. Check that the nav CSV covers '
                     'this dive, that --g_type matches the filename scheme, '
                     'and that the camera clock is not offset. %s', gate_detail)
@@ -1173,8 +964,8 @@ class GeoreferenceImages(RSModule):
         self.logger.info(f"Timestamp Parse Failures: {output_data['Timestamp Parse Failures']}")
         self.logger.info(f"Images With Valid Timestamps: {output_data['Images With Valid Timestamps']}")
         self.logger.info(f"Images Examined: {output_data['Images Examined']}")
-        self.logger.info(f"Matched <=2s: {output_data['Matched <=2s']}")
-        self.logger.info(f"Rejected >2s: {output_data['Rejected >2s']}")
+        self.logger.info(f"Matched within tolerance: {output_data['Matched Within Tolerance']}")
+        self.logger.info(f"Rejected outside tolerance: {output_data['Rejected Outside Tolerance']}")
         self.logger.info(f"Rejected No CSV: {output_data['Rejected No CSV']}")
         self.logger.info(f"Written To Flight Log: {output_data['Written To Flight Log']}")
         self.logger.info(f"Acceptance Rate %: {output_data['Acceptance Rate %']}")

@@ -12,6 +12,7 @@ call "%~dp0SetVariables.bat"
 if errorlevel 1 exit /b 1
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
 
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -22,21 +23,26 @@ call :run -save "%~1" || goto :fail
 :: freed 26 GB and left 918 GB (measured 2026-08-09). 0 = clear ALL;
 :: restored to the documented default afterwards so instance exits do
 :: not silently wipe warm caches from then on.
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -set "appAutoClearCache=0"
 echo Clearing application cache (retention 0 = everything)
 call :run -clearCache || goto :fail
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -set "appAutoClearCache=7"
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 echo Cache flush complete
 exit /b 0
 
 :fail
 echo ERROR: cache flush failed - see %ErrorsFile%
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
 :: run - delegate + double-wait + errors-file check (AlignZone pattern)
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import runpy
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -92,6 +93,7 @@ def test_obj_census_accepts_quoted_page_names_with_spaces(tmp_path):
 
 
 def _cmd_fixture(tmp_path, body, env):
+    shutil.copyfile(SCRIPT.parent / "RuntimeAbortGuard.bat", tmp_path / "RuntimeAbortGuard.bat")
     path = tmp_path / "export_stub.cmd"
     path.write_bytes(body.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
     return subprocess.run(["cmd", "/d", "/c", str(path)], cwd=tmp_path,

@@ -108,7 +108,9 @@ def build_fingerprint(flight_log: str | None,
                       align_settings_xml: str | None,
                       min_component_size: int,
                       rs_executable: str | None = None,
-                      prior_groups: str | None = None) -> dict:
+                      prior_groups: str | None = None,
+                      input_prior_manifest: str | None = None,
+                      input_prior_contract: dict | None = None) -> dict:
     """Identity of everything that determines a zone's aligned output.
 
     align_settings_xml is the RS_ALIGN_PARAMS override when set, else the
@@ -131,11 +133,22 @@ def build_fingerprint(flight_log: str | None,
         "flight_log_params": _file_identity(flight_log_params),
         "align_settings": _file_identity(align_settings_xml),
         "prior_groups": _file_identity(prior_groups),
+        "input_prior_manifest": _file_identity(input_prior_manifest),
         "identity_capture": ("csv" if os.environ.get(
             "RS_LEGACY_XMP_IDENTITY") == "0" else "xmp"),
         "min_component_size": int(min_component_size),
         "repo_sha": _repo_sha(),
     }
+    from dataclasses import asdict
+    from . import camera_registry
+    profile = dict(cameras={key: asdict(value) for key, value in camera_registry.CAMERAS.items()},
+                   effective=camera_registry.effective_project_priors(),
+                   serializer_sha256=sha256_file(camera_registry.__file__))
+    fp['camera_profile'] = dict(path='effective camera registry', sha256=hashlib.sha256(
+        json.dumps(profile, sort_keys=True, allow_nan=False).encode('utf-8')).hexdigest())
+    if input_prior_contract is not None:
+        fp['input_selection'] = dict(path='exact selected images and priors', sha256=hashlib.sha256(
+            json.dumps(input_prior_contract['images'], sort_keys=True, allow_nan=False).encode('utf-8')).hexdigest())
     if rs_executable and os.path.isfile(rs_executable):
         st = os.stat(rs_executable)
         fp["realityscan"] = {"path": os.path.abspath(rs_executable),
@@ -153,6 +166,8 @@ _COMPARED = (
     ("flight_log", "navigation flight log (positions/orientations)"),
     ("flight_log_params", "coordinate-frame template (FlightLogParams)"),
     ("align_settings", "alignment settings XML (detector/priors/model)"),
+    ("camera_profile", "effective camera calibration/mount/accuracy profile"),
+    ("input_selection", "exact pre-alignment image/prior contract"),
 )
 
 #: Fields compared ACROSS zones by modules.verify but not between a zone's

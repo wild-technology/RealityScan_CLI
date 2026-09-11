@@ -1,171 +1,343 @@
 #!/usr/bin/env python3
-"""Scene checkpoint / rollback by project-bundle file copy.
+"""Hash-validated project-bundle checkpoints and staged, recoverable restore.
 
-Lifted verbatim from grow_zone.py (2026-07-24) so the cross-zone merge
-driver shares the SAME battle-tested restore path instead of forking it
-("checkpoint/rollback validated in anger", FINDINGS 2026-07-24).
-grow_zone.py re-exports these names; both drivers must keep importing
-from here (single implementation, hard-rule spirit of CLAUDE.md #1).
+Snapshots are file copies, not component export/import round trips. A manifest
+proves copied byte identity, not RealityScan project validity. Callers must stop
+the scene's writer first: lock markers are a refusal signal; their absence does
+not prove application quiescence. No RealityScan process is started here.
 
-Design (owner-mandated): a checkpoint is a plain file copy of the
-.rsproj plus its companion data folder. Deliberately NOT an
-export/fix/reimport round trip: reimported components do not contain
-never-registered orphan images (silent drop, owner-confirmed
-2026-07-23), and a relocated .rsalign import hangs the instance
-(hard rule 7). The bundle copy avoids both hazards.
+The multi-file commit is not crash-atomic. On failure, original bundle members
+are restored or retained in the named recovery directory; they are never
+deleted to make rollback succeed. Unmanifested legacy checkpoints are refused.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+from pathlib import Path
+import re
 import shutil
+import stat
+import tempfile
+
+
+MANIFEST = '_checkpoint.json'
+
+
+def _candidates(scene: Path) -> list[Path]:
+    stem = scene.with_suffix('')
+    return [scene, stem, Path(str(stem) + '.Data'), Path(str(scene) + '.data')]
 
 
 def scene_bundle(scene_path: str) -> list[str]:
-    """The .rsproj plus its companion data folder. A RealityScan save
-    produces a sibling directory named exactly after the project stem
-    (e.g. zone_1/ next to zone_1.rsproj) holding the bulky state as flat
-    .dat blobs (sfmN.dat, appConfig0.dat, controlpoints0.dat, ...) -
-    verified on D:/na156_h2023/aligned_components 2026-07-23. The extra
-    candidates are defensive, in case a future build renames the folder."""
-    stem = os.path.splitext(scene_path)[0]
-    candidates = [scene_path, stem, stem + '.Data', scene_path + '.data']
-    return [p for p in candidates if os.path.exists(p)]
+    """Existing project and supported companion paths (without following links)."""
+    return [str(p) for p in _candidates(Path(scene_path)) if os.path.lexists(p)]
 
 
-def _tree_size(path: str) -> int:
-    """Bytes under a file or directory (best effort)."""
-    if os.path.isfile(path):
-        try:
-            return os.path.getsize(path)
-        except OSError:
-            return 0
-    total = 0
-    for root, _dirs, files in os.walk(path):
-        for name in files:
-            try:
-                total += os.path.getsize(os.path.join(root, name))
-            except OSError:
-                continue
-    return total
+def _safe_path(path: Path) -> None:
+    """Reject symlinks, junctions/reparse points, hardlinked files and devices."""
+    for part in reversed((path, *path.parents)):
+        if not os.path.lexists(part):
+            continue
+        info = part.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+            raise ValueError(f'Alias/reparse path refused: {part}')
+        if stat.S_ISREG(info.st_mode):
+            if info.st_nlink != 1:
+                raise ValueError(f'Hardlinked file refused: {part}')
+        elif not stat.S_ISDIR(info.st_mode):
+            raise ValueError(f'Non-file/directory refused: {part}')
 
 
-def checkpoint_scene(scene_path: str, checkpoints_dir: str, tag: str,
-                     logger) -> str:
-    dest = os.path.join(checkpoints_dir, tag)
-    # Copy to <dest>.partial and swap only once the copy COMPLETES: the
-    # previous version rmtree'd an existing same-tag checkpoint first, so
-    # an interrupted re-checkpoint under a reused tag destroyed the last
-    # good snapshot (audit 2026-08-07). Tag uniqueness is a caller
-    # contract (grow_zone's tags are unique per pass) - this makes the
-    # function safe even when a caller breaks it.
-    staging = dest + '.partial'
-    if os.path.isdir(staging):
-        shutil.rmtree(staging)
-    os.makedirs(staging)
-    for src in scene_bundle(scene_path):
-        target = os.path.join(staging, os.path.basename(src))
-        if os.path.isdir(src):
-            shutil.copytree(src, target,
-                                ignore=shutil.ignore_patterns(
-                                    '.lock', '*.lock'))
+def _tag(tag: str) -> None:
+    reserved = {'CON', 'PRN', 'AUX', 'NUL', 'CLOCK$', 'CONIN$', 'CONOUT$'}
+    reserved.update(f'{prefix}{n}' for prefix in ('COM', 'LPT') for n in range(1, 10))
+    if (not isinstance(tag, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', tag)
+            or tag.endswith('.') or tag.split('.')[0].upper() in reserved):
+        raise ValueError(f'Unsafe checkpoint tag: {tag!r}')
+
+
+def _paths(scene_path: str, checkpoints_dir: str, tag: str) -> tuple[Path, Path, Path]:
+    _tag(tag)
+    scene = Path(os.path.abspath(scene_path))
+    root = Path(os.path.abspath(checkpoints_dir))
+    if scene.name == MANIFEST:
+        raise ValueError('Project name conflicts with checkpoint manifest')
+    for path in (scene, root, root / tag):
+        _safe_path(path)
+    candidates = _candidates(scene)
+    if len({os.path.normcase(str(p)) for p in candidates}) != len(candidates):
+        raise ValueError('Project must have an extension and distinct bundle names')
+    for member in candidates:
+        if root == member or root in member.parents or member in root.parents:
+            raise ValueError('Checkpoint root overlaps the live scene bundle')
+    return scene, root, root / tag
+
+
+def _is_lock(name: str) -> bool:
+    return name.lower().endswith('.lock')
+
+
+def _hash(path: Path) -> dict:
+    _safe_path(path)
+    before = path.stat()
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    after = path.stat()
+    fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+    if any(getattr(before, k) != getattr(after, k) for k in fields):
+        raise ValueError(f'File changed while hashing: {path}')
+    return {'kind': 'file', 'size': after.st_size, 'sha256': digest.hexdigest()}
+
+
+def _inventory(base: Path, names: list[str], *, ignore_locks: bool = False) -> dict:
+    result = {}
+
+    def visit(path: Path) -> None:
+        _safe_path(path)
+        if ignore_locks and _is_lock(path.name):
+            return
+        relative = path.relative_to(base).as_posix()
+        if path.is_dir():
+            result[relative] = {'kind': 'directory'}
+            for child in sorted(path.iterdir()):
+                visit(child)
+        elif path.is_file():
+            result[relative] = _hash(path)
         else:
-            shutil.copy2(src, target)
-    if os.path.isdir(dest):
-        shutil.rmtree(dest)
-    os.replace(staging, dest)
-    logger.info('checkpoint "%s" -> %s', tag, dest)
-    return dest
+            raise ValueError(f'Missing bundle member: {path}')
+
+    for name in names:
+        visit(base / name)
+    return result
+
+
+def _names(scene: Path) -> list[str]:
+    names = []
+    for index, path in enumerate(_candidates(scene)):
+        _safe_path(path)
+        if os.path.lexists(path):
+            if (index == 0 and not path.is_file()) or (index > 0 and not path.is_dir()):
+                raise ValueError(f'Unexpected bundle member type: {path}')
+            names.append(path.name)
+    return names
+
+
+def _no_locks(scene: Path) -> None:
+    # Refuse even a closed marker: quiescence is unknown.
+    adjacent = [scene.parent / '.lock', Path(str(scene) + '.lock'),
+                Path(str(scene.with_suffix('')) + '.lock')]
+    for path in adjacent:
+        if os.path.lexists(path):
+            raise RuntimeError(f'REFUSING TO ROLL BACK: scene lock present: {path}')
+    for name in _names(scene):
+        path = scene.parent / name
+        if path.is_dir():
+            for directory, dirs, files in os.walk(path, followlinks=False):
+                for child in dirs + files:
+                    item = Path(directory) / child
+                    _safe_path(item)
+                    if _is_lock(child):
+                        raise RuntimeError(f'REFUSING TO ROLL BACK: scene lock present: {item}')
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f'Duplicate manifest key: {key}')
+        result[key] = value
+    return result
+
+
+def _validate(directory: Path, scene: Path) -> dict:
+    _safe_path(directory)
+    manifest_path = directory / MANIFEST
+    _safe_path(manifest_path)
+    if not manifest_path.is_file():
+        raise ValueError(f'Checkpoint has no manifest: {directory}')
+    with manifest_path.open(encoding='utf-8') as stream:
+        manifest = json.load(stream, object_pairs_hook=_unique_pairs)
+    required = {'schema_version', 'source_scene', 'bundle_names', 'entries'}
+    if not isinstance(manifest, dict) or set(manifest) != required:
+        raise ValueError('Invalid checkpoint manifest schema')
+    if (type(manifest['schema_version']) is not int or manifest['schema_version'] != 1
+            or manifest['source_scene'] != os.path.normcase(str(scene))):
+        raise ValueError('Checkpoint version/source scene mismatch')
+    names = manifest['bundle_names']
+    allowed = {p.name for p in _candidates(scene)}
+    if (not isinstance(names, list) or not all(isinstance(n, str) for n in names)
+            or len(set(names)) != len(names) or not set(names) <= allowed
+            or scene.name not in names):
+        raise ValueError('Invalid checkpoint bundle names')
+    if set(p.name for p in directory.iterdir()) != set(names) | {MANIFEST}:
+        raise ValueError('Unexpected checkpoint contents')
+    for name in names:
+        path = directory / name
+        _safe_path(path)
+        if (name == scene.name and not path.is_file()) or (name != scene.name and not path.is_dir()):
+            raise ValueError(f'Invalid checkpoint member type: {name}')
+    entries = _inventory(directory, names)
+    if entries[scene.name]['size'] == 0 or entries != manifest['entries']:
+        raise ValueError(f'Checkpoint hash/content mismatch or empty project: {directory}')
+    if any(_is_lock(Path(name).name) for name in entries):
+        raise ValueError('Checkpoint contains lock markers')
+    return manifest
+
+
+def _copy(base: Path, target: Path, names: list[str], *, ignore_locks=False) -> None:
+    for name in names:
+        source = base / name
+        _safe_path(source)
+        if source.is_dir():
+            ignore = (lambda _d, children: [n for n in children if _is_lock(n)]) if ignore_locks else None
+            shutil.copytree(source, target / name, ignore=ignore)
+        else:
+            shutil.copy2(source, target / name)
+
+
+def _cleanup(path: Path, parent: Path, logger) -> None:
+    """Only remove an explicitly owned, contained directory after safe traversal."""
+    try:
+        if path.parent != parent or path == parent:
+            raise ValueError(f'Cleanup outside expected parent: {path}')
+        _safe_path(path)
+        if path.exists():
+            for directory, dirs, files in os.walk(path, followlinks=False):
+                for name in dirs + files:
+                    _safe_path(Path(directory) / name)
+            shutil.rmtree(path)
+    except (OSError, ValueError) as exc:
+        logger.warning('Retained directory %s: %s', path, exc)
+
+
+def checkpoint_scene(scene_path: str, checkpoints_dir: str, tag: str, logger) -> str:
+    scene, root, dest = _paths(scene_path, checkpoints_dir, tag)
+    if not scene.is_file() or scene.stat().st_size == 0:
+        raise ValueError(f'Cannot checkpoint missing/empty project: {scene}')
+    names = _names(scene)
+    entries = _inventory(scene.parent, names, ignore_locks=True)
+    if dest.exists():
+        _validate(dest, scene)
+    root.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix='.checkpoint-', dir=root))
+    backup = None
+    try:
+        _copy(scene.parent, staging, names, ignore_locks=True)
+        if (_names(scene) != names or _inventory(scene.parent, names, ignore_locks=True) != entries
+                or _inventory(staging, names) != entries):
+            raise ValueError('Scene changed or checkpoint copy differs; previous snapshot retained')
+        manifest = {'schema_version': 1, 'source_scene': os.path.normcase(str(scene)),
+                    'bundle_names': names, 'entries': entries}
+        (staging / MANIFEST).write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
+        _validate(staging, scene)
+        if dest.exists():
+            backup = Path(tempfile.mkdtemp(prefix='.checkpoint-recovery-', dir=root))
+            os.replace(dest, backup / tag)
+        try:
+            os.replace(staging, dest)
+        except OSError as exc:
+            if backup is not None:
+                try:
+                    os.replace(backup / tag, dest)
+                except OSError as rollback:
+                    raise RuntimeError(f'Checkpoint publish/rollback failed; previous snapshot retained at '
+                                       f'{backup / tag}: {rollback}') from exc
+            raise
+        if backup is not None:
+            _cleanup(backup, root, logger)
+        logger.info('checkpoint "%s" -> %s', tag, dest)
+        return str(dest)
+    finally:
+        _cleanup(staging, root, logger)
 
 
 def restore_scene(scene_path: str, checkpoints_dir: str, tag: str, logger) -> None:
-    """Rollback = restore the pre-pass scene snapshot to the SAME path.
-
-    The live bundle must be removed before the copy so stale sidecar data
-    cannot mix with the restored snapshot - which means there is a window
-    where the scene path holds NOTHING. Two guards around it
-    (audit 2026-08-07): a free-space precheck before the delete (bundles
-    are multi-GB and this path had no disk floor at all, while run_models
-    has MIN_FREE_GB=50), and a named RuntimeError if the copy dies, because
-    grow_zone calls this in four places with no try/except and the run
-    otherwise ended with an empty scene path and no message saying the
-    intact copy is still in checkpoints/<tag>. Re-running the same restore
-    finishes the job; it is retry-safe.
-    """
-    src_dir = os.path.join(checkpoints_dir, tag)
-    if not os.path.isdir(src_dir):
-        raise FileNotFoundError(f'checkpoint "{tag}" not found in {checkpoints_dir}')
-    scene_dir = os.path.dirname(os.path.normpath(scene_path)) or '.'
-    needed = _tree_size(src_dir)
+    scene, _, checkpoint = _paths(scene_path, checkpoints_dir, tag)
+    manifest = _validate(checkpoint, scene)
+    _no_locks(scene)
+    current = _names(scene)
+    current_entries = _inventory(scene.parent, current)
+    needed = sum(e.get('size', 0) for e in manifest['entries'].values())
     try:
-        free = shutil.disk_usage(scene_dir).free
-    except OSError:
-        free = None
-    if free is not None and free < needed:
-        raise RuntimeError(
-            f'REFUSING TO ROLL BACK: checkpoint "{tag}" needs '
-            f'{needed / 1024**3:.1f} GB but only {free / 1024**3:.1f} GB is '
-            f'free on {scene_dir}. The rollback deletes the live scene '
-            'before copying, so starting it now would leave the scene path '
-            f'empty. Free space, then re-run - the snapshot is intact in '
-            f'{src_dir}.')
-    # Remove the rejected bundle first so stale sidecar data can never
-    # mix with the restored snapshot. LOCK-TOLERANT (2026-08-12): a LIVE
-    # instance holds <companion>\.lock open; rmtree dies on it (WinError
-    # 32) - and because dotfiles sort first it dies BEFORE touching any
-    # scene data, leaving the bundle intact but the rollback failed.
-    # Locks are runtime artifacts, never scene data: skip them during
-    # the clear (checkpoints exclude them on the way in already); any
-    # OTHER locked file still fails loudly.
-    def _clear_tree(root):
-        for r, dirs, files in os.walk(root, topdown=False):
-            for f in files:
-                if f.endswith('.lock'):
-                    continue
-                os.remove(os.path.join(r, f))
-            for d in dirs:
-                try:
-                    os.rmdir(os.path.join(r, d))
-                except OSError:
-                    pass  # still holds a .lock - fine
-    for cur in scene_bundle(scene_path):
-        if os.path.isdir(cur):
-            _clear_tree(cur)
-        elif os.path.isfile(cur):
-            os.remove(cur)
-    try:
-        for name in os.listdir(src_dir):
-            src = os.path.join(src_dir, name)
-            target = os.path.join(scene_dir, name)
-            if os.path.isdir(src):
-                # dirs_exist_ok: the lock-tolerant clear leaves the live
-                # companion dir in place (it still holds the .lock).
-                shutil.copytree(src, target,
-                                ignore=shutil.ignore_patterns(
-                                    '.lock', '*.lock'),
-                                dirs_exist_ok=True)
-            else:
-                shutil.copy2(src, target)
+        free = shutil.disk_usage(scene.parent).free
     except OSError as exc:
-        raise RuntimeError(
-            f'ROLLBACK INCOMPLETE: {scene_path} is now partial or absent '
-            f'({exc}). The INTACT snapshot is {src_dir} - re-run the same '
-            'restore to finish it (it is retry-safe). Do not start another '
-            'workflow against this scene first.') from exc
+        raise RuntimeError('REFUSING TO ROLL BACK: cannot establish free space') from exc
+    if free < needed:
+        raise RuntimeError(f'REFUSING TO ROLL BACK: need {needed} bytes, have {free}; '
+                           f'live scene unchanged; snapshot: {checkpoint}')
+    staging = Path(tempfile.mkdtemp(prefix='.scene-restore-', dir=scene.parent))
+    try:
+        _copy(checkpoint, staging, manifest['bundle_names'])
+        if _inventory(staging, manifest['bundle_names']) != manifest['entries']:
+            raise ValueError('Staged restore differs from checkpoint')
+        _validate(checkpoint, scene)
+        _no_locks(scene)
+        if _names(scene) != current or _inventory(scene.parent, current) != current_entries:
+            raise ValueError('Live scene changed during restore staging')
+    except (OSError, ValueError, RuntimeError) as exc:
+        _cleanup(staging, scene.parent, logger)
+        raise RuntimeError(f'ROLLBACK INCOMPLETE: staging refused ({exc}); live scene unchanged. '
+                           f'Checkpoint {checkpoint}; retry-safe after resolving the cause.') from exc
+    backup = Path(tempfile.mkdtemp(prefix='.scene-recovery-', dir=scene.parent))
+    moved, installed = [], []
+    try:
+        for name in current:
+            os.replace(scene.parent / name, backup / name)
+            moved.append(name)
+        for name in manifest['bundle_names']:
+            os.replace(staging / name, scene.parent / name)
+            installed.append(name)
+        _no_locks(scene)
+        if _inventory(scene.parent, manifest['bundle_names']) != manifest['entries']:
+            raise ValueError('Committed restore differs from checkpoint')
+    except (OSError, ValueError, RuntimeError) as exc:
+        failures = []
+        for name in reversed(installed):
+            try:
+                os.replace(scene.parent / name, staging / name)
+            except OSError as failure:
+                failures.append(str(failure))
+        for name in moved:
+            try:
+                if os.path.lexists(scene.parent / name):
+                    raise OSError(f'Refusing to overwrite occupied recovery target: {name}')
+                os.replace(backup / name, scene.parent / name)
+            except OSError as failure:
+                failures.append(str(failure))
+        if not failures:
+            _cleanup(backup, scene.parent, logger)
+            _cleanup(staging, scene.parent, logger)
+        raise RuntimeError(f'ROLLBACK INCOMPLETE: {exc}. '
+                           + (f'Original members retained in {backup} or their live paths; '
+                              f'recovery failures: {failures}. Staged files: {staging}. '
+                              if failures else 'Original live bundle restored; ')
+                           + f'checkpoint remains at {checkpoint}.') from exc
+    _cleanup(backup, scene.parent, logger)
+    _cleanup(staging, scene.parent, logger)
     logger.info('rolled back scene from checkpoint "%s"', tag)
 
 
 def prune_checkpoints(checkpoints_dir: str, keep: set[str], logger) -> None:
-    """Scene bundles are large (multi-GB); keep only the initial
-    checkpoint and the most recent one."""
-    if not os.path.isdir(checkpoints_dir):
+    """Prune only validated checkpoints; retain unknown and recovery directories."""
+    root = Path(os.path.abspath(checkpoints_dir))
+    _safe_path(root)
+    if not root.is_dir():
         return
-    for name in os.listdir(checkpoints_dir):
-        if name in keep:
+    for path in root.iterdir():
+        if path.name in keep or path.name.startswith('.'):
             continue
-        path = os.path.join(checkpoints_dir, name)
-        if os.path.isdir(path):
-            try:
-                shutil.rmtree(path)
-                logger.info('pruned checkpoint "%s"', name)
-            except OSError as exc:
-                logger.warning('could not prune checkpoint %s: %s', name, exc)
+        try:
+            _tag(path.name)
+            _safe_path(path / MANIFEST)
+            with (path / MANIFEST).open(encoding='utf-8') as stream:
+                manifest = json.load(stream, object_pairs_hook=_unique_pairs)
+            scene, _, _ = _paths(manifest['source_scene'], str(root), path.name)
+            _validate(path, scene)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            logger.warning('Retained unvalidated checkpoint %s: %s', path, exc)
+            continue
+        _cleanup(path, root, logger)

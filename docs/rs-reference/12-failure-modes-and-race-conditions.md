@@ -528,6 +528,16 @@ Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
 - **[OPEN]** Whether the hand-merged format survives an app update.
 
 ### F-16 — `-update` silently re-orients or re-scales a weakly-constrained component
+
+**Later evidence, reconciled 2026-09-11:** BUGS B19's September 9 addendum records
+component-specific scale factors and a regression on zone_4 c0 (0.9377 to 1.1470),
+despite improvement on zone_3. `AlignZone.bat` now issues post-align `-update`
+when a flight log exists unless skipped. That implementation is not proof of a
+reliably corrective objective. Official `allcommands` describes a rigid fit of
+components/models, whereas `tutorials/scaling` describes selected-component
+coordinates and child-model scale. Preserve both scopes and test them.
+See [ledger UPD-001/002 and P-UPDATE](../EVIDENCE_LEDGER.json).
+The following ranked causes are hypotheses, not a proven optimizer description.
 - **Symptom.** The delivered model sits ~45° off the true ground plane on a flat mud site,
   while the alignment that produced it is provably correct.
 - **Cause (ranked, not established).** `-update` is a similarity/rigid fit to the scene's
@@ -657,17 +667,19 @@ Each entry: **Symptom / Cause / Detected by / Mitigation / Detection test.**
   looks right in plan view, and is **wrong in depth by a fixed amount** — 72.7 m at NA168
   H2080, 70.4 m in the Solomon Sea, 27.1 m the *other* way in the Gulf of Mexico.
 - **Cause.** The exported Z is a depth below the **sea surface** (`geoall.py:320` writes
-  `-abs(kalman_depth)`), i.e. an orthometric height on the geoid. Cesium — and any
-  ellipsoid-referenced consumer — reads it as height above the **WGS84 ellipsoid**. Every
-  CRS in the chain is 2D, so nothing ever declares which. The gap is the geoid undulation N.
+  `-abs(kalman_depth)`), approximated as an orthometric height by the geoid-only
+  placement model. Instantaneous sea level is not exactly the geoid. Cesium reads
+  ellipsoidal height; the audited 2D UTM path does not declare the vertical datum.
+  Geoid undulation is one correction term, not proof of the telemetry reference.
   [VERIFIED: FINDINGS 2026-08-31] See `06-…` §3.5.
 - **Detected by.** Decoding `root.transform` from the published asset's own `tileset.json`
   and comparing the implied height against `-depth + N`. Nothing inside RealityScan can see
   it: the error is a rigid translation along the ellipsoid normal, so scale oracles, merge
   censuses and visual inspection are all blind to it.
-- **Mitigation.** `h = H + N` with `H = -depth`, per site, before upload
-  (`modules/cesium_placement.py`). Never a project-wide constant — N moves ~23.6 m along
-  the Hawaiian chain alone.
+- **Mitigation.** `h = H + N`, using an explicitly approximate
+  `H ≈ -depth - down_offset + sea_surface_offset` for this telemetry path. Apply
+  the lever arm once and record omitted tide/sea-surface corrections and uncertainty.
+  Geoid lookup is per site. See [ledger DAT-001, P-DATUM](../EVIDENCE_LEDGER.json).
 - **Detection test.** Republish and read the tileset back; the residual must be under 1 m.
   *If the residual equals N, the correction was computed and then dropped.*
 
@@ -1332,9 +1344,18 @@ with no documented meaning. Everything below is [UNDOCUMENTED] behaviour establi
 - **Cause.** Growth outcomes are not order- or subset-invariant.
 - **Mitigation.** **Verify camera counts after every grow step**; checkpoint before every
   mutating attempt. Checkpoint = a plain **file copy of the `.rsproj` bundle**; restore =
-  copy back. Battle-tested in anger (a growth run killed mid-pass was fully recovered).
+  copy back. Historical report: a growth run killed mid-pass was recovered; this
+  does not establish safety for missing snapshots, locked scenes or interrupted copies.
   **Component reimport is NOT a valid checkpoint** — it drops non-member images.
   [VERIFIED: NA167 #29; FINDINGS 2026-07-23/24]
+
+  **2026-09-11 implementation boundary:** `module_base/scene_checkpoint.py` now
+  requires manifest/hash validation, complete staging and backup retention through
+  restore commit; lock markers cause refusal. Legacy unmanifested snapshots are
+  refused. Scoped offline failure-injection tests passed; application reload and
+  caller quiescence are unproved. See [CKP-001..005 and P-CHECKPOINT](../EVIDENCE_LEDGER.json)
+  and [verification limits](../VERIFICATION_STATUS.md). File hashes are not an
+  application-level validity oracle, and multi-file commit is not power-loss atomic.
 
 ### F-44 — Pose locking is unusable as a growth anchor
 - **Symptom.** `-editInputSelection inpPose=3` (Exact/Locked) takes effect, and `-align`
@@ -2191,7 +2212,15 @@ Numbered from F-101 so the 2026-08-04 numbering stays stable.
 **Symptom:** a workflow aborts on a step that did not fail, or an optional step's failure kills the whole run. **Cause:** `errors_<instance>.txt` persists for the session and records the last error from ANY source; `:run` tests only "non-empty". **Detected by:** the error text names a process id and code that belong to an earlier step. **Mitigation:** an optional step is a SKIP or an `expected_<reason>_<instance>.txt` MOVE (`try_delete_model` pattern), never a caught error; read the FIRST line of the file, not the last. `lastError:` from `-getStatus` behaves alike: sticky while the instance is idle, cleared when the next operation starts (FINDINGS 2026-08-04, 2026-08-07). `11` A1. [VERIFIED: FINDINGS 2026-09-02]
 
 ### F-102 — `-selectModel` on a missing name is a silent no-op, so a blind `-deleteSelectedModel` deletes the wrong model
-**Symptom:** a working or high-poly model vanishes; every command reported success. **Cause:** inside a populated component a bogus name leaves the previous selection live with `lastError:0`. **Detected by:** re-reading the selected model's name from `-exportReport SelectedModel.html`. **Mitigation:** never issue a destructive command after an unverified select; treat an absent name as a safe skip. `ModelToFinal.bat` still carries the pattern (owner's call). `02` A1. [VERIFIED: FINDINGS 2026-09-03]
+**Symptom:** a working or high-poly model vanishes after a blind selection/delete.
+**Recorded cause:** in the populated H2060 component a bogus name retained the
+previous selection with `lastError:0`; other contexts can error. **Oracle:** read
+the selected model name from `-exportReport SelectedModel.html`. **Mitigation:**
+require identity readback before dependent destructive work. Current `ModelToFinal.bat`
+and `ExportDeliverables.bat` contain verification helpers; the old current-code
+claim about blind cleanup pairs is superseded. Helper presence does not certify
+all callers. [VERIFIED: historical probe 2026-09-03; VERIFIED-by-inspection: 0c9224e]
+See `02` A1 and [ledger SEL-001/002, P-SELECT](../EVIDENCE_LEDGER.json).
 
 ### F-103 — `AdaptiveTexelSize` unwrap fails silently on a particular mesh and an untextured model still exports
 **Symptom:** OBJ exported "OK", passes a geometry census, has no texture (`.mtl` without `map_Kd`). **Cause:** `-unwrap` returned `0x83000003` in 3 s with `rev` unchanged; `-reprojectTexture` then `0x8200001F`; export does not care. **Detected by:** the model report shows no unwrapping style / `Textured False`. **Mitigation:** census `Textured` and texture count; fall back to `MaxTexturesCount` 4 × 4096 (which unwrapped the same mesh). Since D13 (2026-09-05) `GenerateModel.bat` and `ModelToFinal.bat` retry with `Unwrapping_MaxCount4_4k.xml` through `:try_unwrap` (`11` §2.3): GenerateModel triggers on a non-empty errors marker (evidence `expected_unwrap_adaptive_<inst>_<tag>.txt`), ModelToFinal on a failed `:run` or an unchanged `rev`; an unwrap that neither errors nor mutates is invisible to both — the model report / `run_decimate.py` census remains the proof. `10` A5. [VERIFIED: FINDINGS 2026-09-03, 2026-09-05] [OPEN: why]

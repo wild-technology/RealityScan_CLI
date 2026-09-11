@@ -1562,6 +1562,17 @@ They can also be attached explicitly with `-setImageLayer` / `-setImagesLayer` (
 
 ### 18.4 Using masks
 
+**2026-09-11 primary-source recheck:**
+[Epic's input-selection table](https://rshelp.capturingreality.com/en-US/tutorials/editselectioncommand.htm)
+defines `inpMaskOpts=3` for alignment plus meshing. Explicit native usage is being
+implemented by Ampere/Carver. Keep three separate claims: correct file/layer naming,
+successful live attachment, and actual stage use. An attached mask does not prove
+the selected usage flags or processing effect. No texturing claim follows from 3.
+[Polarity](https://rshelp.capturingreality.com/en-US/tools/mask.htm) and
+[naming](https://rshelp.capturingreality.com/en-US/tools/imglayers.htm) were rechecked
+the same day: white includes, black excludes; `<original filename>.mask.png`.
+See `../EVIDENCE_LEDGER.json:mask_usage_official_recheck` for the scoped status.
+
 Per-input, via `-editInputSelection "inpMaskOpts=<n>"`:
 
 | Value | Meaning |
@@ -1625,16 +1636,18 @@ to the project. Instead, they are exported directly alongside the depth maps."
 
 ### 18.6 Status in this repository
 
-- **No mask has ever been driven through this CLI.** No empirical RealityScan masking
-  result exists here. [OPEN]
+- **No empirical mask-CLI result was identified in the audited record.** The mask
+  sections describe official support, not H2101 deployment verification. The
+  [ledger MASK-001/002 and P-MASK](../EVIDENCE_LEDGER.json) records the required
+  association, polarity, fresh-cache feature and separate texturing checks. [OPEN]
 - A staff caution against **over-masking** is recorded second-hand (COLMAP fact base
   F-20260723-31, quoted in HANDOFF); it is relevant to turbid underwater imagery where a
   mask can remove the only textured pixels in a frame.
   [VERIFIED-second-hand; not reproduced here]
-- **`masking.py` at the repository root is NOT a masking tool.** It renames
-  `cam*_YYYYMMDDTHHMMSSZ.jpg` to a timestamp-first form and validates JPEG integrity with
-  PIL. Do not mistake it for mask generation.
-  [VERIFIED-by-inspection: `masking.py`, 2026-08-04]
+- **Historical filename, not a current mask implementation:** the August 4 inspection
+  described a root `masking.py` renamer/JPEG validator. That root file is absent
+  from the audited `0c9224e` tree. Do not use the old path as evidence that mask
+  generation or consumption is implemented. [VERIFIED-by-inspection: 2026-09-11]
 
 ---
 
@@ -2007,5 +2020,5 @@ Facts established after this document was written (2026-08-04), carried here so 
 ### A1. Selection and grouping from the delegated CLI
 
 - `-selectImage <regexp> union` is hazardous: after it, the next delegated command errored `0x8000FFFF`; the mode-less `-selectImage <regexp>` and the full-path+union form (`GrowZone.bat`) behaved. [VERIFIED: FINDINGS 2026-08-08]
-- Whether `-setPriorCalibrationGroup` / `-setPriorLensGroup` take effect from the delegated CLI is an **open contradiction** (measured non-functional 2026-08-08; used unmeasured on two campaigns) — `02-command-reference.md` A5, `docs/DECISIONS.md` D1. Grouping is the only per-camera calibration control the CLI offers; `sfmDistortionModel` is global and no command sets a per-camera distortion model (`02` §, FINDINGS 2026-08-14).
+- Delegated `-setPriorCalibrationGroup` / `-setPriorLensGroup` failed in the recorded August 8 fixture and September 8 no-import control. Documented availability and unmeasured campaign use are not contrary measurements. `ifKGrp=1` grouped the recorded single-family fixture, but mixed-family mapping remains open. Other per-input calibration settings are documented via `-editInputSelection`; do not describe grouping as the only CLI calibration control. See `02-command-reference.md` A5 and [ledger CAL-001..005](../EVIDENCE_LEDGER.json).
 - `-exportXMP` is silently gated by `-setMinComponentSize`: a 6-image scene that fragmented 3+3 exported nothing until the minimum was lowered to 2 — the same silent-nothing class as the selection-export trap. [VERIFIED: FINDINGS 2026-08-08]

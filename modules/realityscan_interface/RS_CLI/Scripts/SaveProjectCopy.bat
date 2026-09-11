@@ -35,6 +35,7 @@ echo Scene: %scene_path%
 echo Dated copy: %dest_path%
 
 echo Starting RealityScan
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
@@ -45,17 +46,20 @@ echo Saving dated copy
 call :run -save "%dest_path%" || goto :fail
 
 echo Shutting down RealityScan instance %RS_INSTANCE%
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 0
 
 :fail
 echo ERROR: dated copy failed - see %ErrorsFile% and the RealityScan log
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
 :: :run - delegate one operation, double-wait, abort on reported error
 :: (see AlignZone.bat for the rationale).
 :run
+call "%~dp0RuntimeAbortGuard.bat" || exit /b 1223
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*

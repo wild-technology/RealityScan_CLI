@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import csv
+import filecmp
 import glob
 import math
 import os
@@ -31,6 +32,8 @@ from modules.georeference.georeference_images import (
     ASSUMED_MOUNT_DEFAULTS as _ASSUMED_MOUNT,
     assumed_pitch_prior as _assumed_pitch_prior)
 from modules import camera_registry as _camera_registry
+from modules.image_exts import associated_masks, is_geometry_image
+from modules.file_metadata_parser import navigation_match_timestamp
 
 import utm
 from PIL import Image
@@ -64,7 +67,7 @@ WCA2025_FILENAME_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 
 # Fixed parameters
 MAGNETIC_DECLINATION_DEG = 0.0
-MATCH_THRESHOLD_SEC = 2.0
+MATCH_THRESHOLD_SEC = _camera_registry.navigation_defaults()['max_match_seconds']
 NUM_WORKERS = max(1, cpu_count() - 1)  # Leave one CPU free
 
 # Pre-compiled regex patterns for performance
@@ -172,25 +175,34 @@ def get_camera_offsets(filename: str) -> tuple[float, float, float]:
 
 def apply_camera_position_offset(utm_x: float | None, utm_y: float | None,
                                  altitude: float | None, heading_deg: float | None,
-                                 forward_m: float, lateral_m: float, down_m: float) -> tuple[
+                                 forward_m: float, lateral_m: float, down_m: float,
+                                 *, pitch_deg: float | None = None,
+                                 roll_deg: float | None = None) -> tuple[
     float | None, float | None, float | None]:
-    """Apply camera position offset from vehicle center to world coordinates."""
-    if utm_x is None or utm_y is None or heading_deg is None:
-        return utm_x, utm_y, altitude
+    """Rotate FRD lever arm by Rz(heading) Ry(pitch) Rx(roll) into NED,
+    then ENU. Pitch is nose-up, roll right-down, heading clockwise from
+    north. The caller supplies the navigation heading; magnetic/grid/true
+    north reconciliation remains a separate frame decision. This does not
+    define RealityScan's camera Euler convention.
 
-    heading_rad = math.radians(heading_deg)
-
-    east_offset = forward_m * math.sin(heading_rad)
-    north_offset = forward_m * math.cos(heading_rad)
-
-    east_offset += lateral_m * math.cos(heading_rad)
-    north_offset += lateral_m * (-math.sin(heading_rad))
-
-    adjusted_utm_x = utm_x + east_offset
-    adjusted_utm_y = utm_y + north_offset
-    adjusted_altitude = altitude - down_m if altitude is not None else None
-
-    return adjusted_utm_x, adjusted_utm_y, adjusted_altitude
+    Missing/nonfinite attitude makes the camera position unavailable; never
+    silently substitute a level vehicle. Coordinates remain independently
+    nullable. Callers report missing attitude in their per-image flags.
+    """
+    if not all(value is not None and math.isfinite(value)
+               for value in (heading_deg, pitch_deg, roll_deg)):
+        return None, None, None
+    if not all(math.isfinite(value) for value in (forward_m, lateral_m, down_m)):
+        raise ValueError("Camera lever arm must contain finite metre values")
+    h, p, r = map(math.radians, (heading_deg, pitch_deg, roll_deg))
+    right = math.cos(r) * lateral_m - math.sin(r) * down_m
+    down = math.sin(r) * lateral_m + math.cos(r) * down_m
+    forward = math.cos(p) * forward_m + math.sin(p) * down
+    down = -math.sin(p) * forward_m + math.cos(p) * down
+    north = math.cos(h) * forward - math.sin(h) * right
+    east = math.sin(h) * forward + math.cos(h) * right
+    return tuple(value + offset if value is not None and math.isfinite(value) else None
+                 for value, offset in ((utm_x, east), (utm_y, north), (altitude, -down)))
 
 
 def convert_to_rc_orientation(heading_mag: float | None, pitch_vehicle: float | None,
@@ -216,29 +228,9 @@ def convert_to_rc_orientation(heading_mag: float | None, pitch_vehicle: float | 
 
 
 def parse_timestamp_from_filename(filename: str) -> datetime | None:
-    """
-    Extract and parse the timestamp from an image filename.
-    Handles formats: 20250705T130954Z, 20250705130954, and variations.
-    """
-    base_name = os.path.splitext(filename)[0]
-
-    # Try WCA2025 format: YYYYMMDDTHHMMSSZ (e.g., 20250705T130954Z)
-    try:
-        match = REGEX_WCA2025.search(base_name)
-        if match:
-            return datetime.strptime(match.group(1), WCA2025_FILENAME_TIMESTAMP_FORMAT)
-    except ValueError as e:
-        print(f"Debug: Failed to parse WCA2025 format from {filename}: {e}")
-
-    # Try WCA/Zeuss format: YYYYMMDDHHMMSS (14 digits, e.g., 20250705130954)
-    try:
-        match = REGEX_WCA_ZEUSS.search(base_name)
-        if match:
-            return datetime.strptime(match.group(1), WCA_FILENAME_TIMESTAMP_FORMAT)
-    except ValueError as e:
-        print(f"Debug: Failed to parse WCA format from {filename}: {e}")
-
-    return None
+    """Use the shared basename-only timestamp contract for every family."""
+    from modules.file_metadata_parser import parse_timestamp
+    return parse_timestamp(filename)
 
 
 def convert_to_utm(lat, lon, utm_zone_cache: dict):
@@ -371,14 +363,13 @@ def read_image_filenames(edt_dirs: list[str]) -> list[dict]:
     all_jpeg_files = []
 
     seen_files = set()
-    for edt_dir in set(edt_dirs):
+    for edt_dir in sorted(set(edt_dirs)):
         if not os.path.isdir(edt_dir):
             continue
-        for filename in os.listdir(edt_dir):
+        for filename in sorted(os.listdir(edt_dir)):
             if filename.startswith("."):
                 continue
-            ext = os.path.splitext(filename)[1].lower()
-            if ext in jpeg_extensions:
+            if is_geometry_image(os.path.join(edt_dir, filename), jpeg_extensions):
                 full_path = os.path.join(edt_dir, filename)
                 if full_path in seen_files:
                     continue
@@ -455,9 +446,16 @@ def find_closest_timestamp_index(times: list[datetime], target_time: datetime) -
     return idx
 
 
-def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_cache: dict) -> tuple[list[dict], dict]:
+def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_cache: dict,
+                      *, declination_deg: float = 0.0) -> tuple[list[dict], dict]:
     """Estimate location and orientation for each image using binary search."""
+    navigation = _camera_registry.navigation_defaults()
+    match_threshold_sec = navigation['max_match_seconds']
+    if not math.isfinite(declination_deg):
+        raise ValueError('Declination must be finite')
     stats = {
+        'navigation_matching': navigation,
+        'effective_project_priors': _camera_registry.effective_project_priors(),
         'matches_made': 0,
         'exact_matches': 0,
         'matches_0_4': 0,
@@ -482,12 +480,13 @@ def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_ca
             continue
 
         # Use binary search instead of linear scan
-        closest_idx = find_closest_timestamp_index(times, image["TIMESTAMP"])
+        match_timestamp = navigation_match_timestamp(image['TIMESTAMP'])
+        closest_idx = find_closest_timestamp_index(times, match_timestamp)
         if closest_idx < 0:
             continue
 
         closest_match = data_rows[closest_idx]
-        time_diff = abs(closest_match["TIME"] - image["TIMESTAMP"])
+        time_diff = abs(closest_match["TIME"] - match_timestamp)
         diff_sec = time_diff.total_seconds()
 
         # Contiguous buckets - the old ==0 / 1-4 / 5-15 / >15 split dropped
@@ -501,12 +500,12 @@ def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_ca
         else:
             stats['matches_gt15'] += 1
 
-        if diff_sec > MATCH_THRESHOLD_SEC:
+        if diff_sec > match_threshold_sec:
             stats['rejected_time'] += 1
             if len(rejection_examples) < 3:
                 rejection_examples.append({
                     'filename': image["FILENAME"],
-                    'image_time': image["TIMESTAMP"],
+                    'image_time': match_timestamp,
                     'closest_csv_time': closest_match["TIME"],
                     'diff_sec': diff_sec
                 })
@@ -519,9 +518,14 @@ def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_ca
 
         camera_utm_x, camera_utm_y, camera_alt = apply_camera_position_offset(
             utm_x, utm_y, closest_match.get("DEPTH"),
-            closest_match.get("HEADING_MAG"),
-            forward_m, lateral_m, down_m
+            (closest_match['HEADING_MAG'] + declination_deg
+             if closest_match.get('HEADING_MAG') is not None else None),
+            forward_m, lateral_m, down_m,
+            pitch_deg=closest_match.get("PITCH"), roll_deg=closest_match.get("ROLL")
         )
+        missing_attitude = [key for key in ("HEADING_MAG", "PITCH", "ROLL")
+                            if closest_match.get(key) is None
+                            or not math.isfinite(closest_match[key])]
 
         camera_type = get_camera_type(image["FILENAME"])
         stats['camera_type_counts'][camera_type] += 1
@@ -530,14 +534,19 @@ def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_ca
             "FILENAME": image["FILENAME"],
             "FULL_PATH": image["FULL_PATH"],
             "TIMESTAMP": image["TIMESTAMP"],
+            "MATCH_TIMESTAMP": match_timestamp,
+            "CLOCK_OFFSET_SECONDS": navigation['clock_offset_seconds'],
+            "DECLINATION_APPLIED_DEG": declination_deg,
+            "POSITION_HEADING_FRAME": 'true-north ENU approximation; UTM convergence not applied',
             "LAT": lat,
             "LONG": lon,
             "UTM_X": camera_utm_x,
             "UTM_Y": camera_utm_y,
             "ALTITUDE_EST": camera_alt,
-            "HEADING_MAG": closest_match.get("HEADING_MAG"),
-            "PITCH_VEHICLE": closest_match.get("PITCH"),
-            "ROLL_VEHICLE": closest_match.get("ROLL"),
+            "POSITION_OFFSET_MISSING_ATTITUDE": missing_attitude,
+            "HEADING_MAG": closest_match.get("HEADING_MAG") if "HEADING_MAG" not in missing_attitude else None,
+            "PITCH_VEHICLE": closest_match.get("PITCH") if "PITCH" not in missing_attitude else None,
+            "ROLL_VEHICLE": closest_match.get("ROLL") if "ROLL" not in missing_attitude else None,
             "CAMERA_TYPE": camera_type
         }
 
@@ -547,9 +556,7 @@ def estimate_location(image_data: list[dict], data_rows: list[dict], utm_zone_ca
         if camera_utm_x is None or camera_utm_y is None:
             stats['accepted_missing_utm'] += 1
 
-        if (closest_match.get("HEADING_MAG") is None or
-                closest_match.get("PITCH") is None or
-                closest_match.get("ROLL") is None):
+        if missing_attitude:
             stats['accepted_missing_orientation'] += 1
 
     if rejection_examples:
@@ -570,6 +577,8 @@ def _copy_single_image(args: tuple) -> dict:
     """
     image, dive_number, output_dir = args
     src_path = image["FULL_PATH"]
+    if not is_geometry_image(src_path):
+        return {'success': False, 'error': 'Not a geometry image', 'filename': image['FILENAME']}
     dive_image_dir = os.path.join(output_dir, dive_number)
 
     # Create camera-specific subdirectory
@@ -579,18 +588,34 @@ def _copy_single_image(args: tuple) -> dict:
     dst_path = os.path.join(camera_subdir, image["FILENAME"])
 
     try:
-        if os.path.exists(dst_path):
-            if os.path.getsize(src_path) == os.path.getsize(dst_path):
-                return {'success': True, 'camera_type': image["CAMERA_TYPE"], 'skipped': True}
-
-        shutil.copy2(src_path, dst_path)
-        return {'success': True, 'camera_type': image["CAMERA_TYPE"], 'skipped': False}
+        pairs = [(src_path, dst_path)]
+        for mask in associated_masks(src_path):
+            pairs.append((str(mask), os.path.join(
+                camera_subdir, os.path.relpath(mask, os.path.dirname(src_path)))))
+        # Preflight every layer before writing any; equal size is not identity.
+        for source, destination in pairs:
+            if os.path.exists(destination) and not filecmp.cmp(source, destination, shallow=False):
+                raise ValueError(f'Destination collision with different content: {destination}')
+        skipped = True
+        for source, destination in pairs:
+            if not os.path.exists(destination):
+                os.makedirs(os.path.dirname(destination), exist_ok=True)
+                shutil.copy2(source, destination)
+                skipped = False
+        return {'success': True, 'camera_type': image["CAMERA_TYPE"], 'skipped': skipped,
+                'masks': len(pairs) - 1}
     except Exception as e:
         return {'success': False, 'error': str(e), 'filename': image["FILENAME"]}
 
 
 def copy_matched_images(matched_images: list[dict], dive_number: str, output_dir: str) -> tuple[int, int, dict]:
     """Copy matched images to dive-specific subdirectory using multiprocessing."""
+    destinations = set()
+    for image in matched_images:
+        identity = (image['CAMERA_TYPE'].casefold(), image['FILENAME'].casefold())
+        if identity in destinations:
+            raise ValueError(f'Duplicate staged image identity: {identity!r}')
+        destinations.add(identity)
     dive_image_dir = os.path.join(output_dir, dive_number)
 
     if not os.path.exists(dive_image_dir):
@@ -682,7 +707,7 @@ def validate_and_cleanup_images(output_dir: str, dive_numbers: list[str],
                 continue
 
             jpeg_files = [os.path.join(camera_path, f) for f in os.listdir(camera_path)
-                         if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                         if is_geometry_image(os.path.join(camera_path, f), {'.jpg', '.jpeg', '.png'})]
 
             for filepath in jpeg_files:
                 all_image_files.append(filepath)
@@ -782,10 +807,50 @@ def validate_and_cleanup_images(output_dir: str, dive_numbers: list[str],
     return validation_stats
 
 
+FLIGHT_LOG_COLUMNS = (
+    'filename', 'X (East)', 'Y (North)', 'Alt', 'X Accuracy', 'Y Accuracy',
+    'Alt Accuracy', 'Yaw', 'Pitch', 'Roll', 'Yaw Accuracy', 'Pitch Accuracy',
+    'Roll Accuracy', 'FocalLength',
+)
+
+
+def get_camera_focal_length(filename: str) -> float | None:
+    """Registry focal for the compatibility column, not proof of CSV delivery.
+
+    The v02 four-image probe reads CSV focal as zero. Native XMP supplies focal
+    in the measured native_xmp_csv_g0 sequence; retain column 14 for the managed
+    format without treating its presence as a successfully consumed prior.
+    """
+    camera = _camera_registry.identify(filename)
+    return camera.focal_length_35mm if camera else None
+
+
+def write_flight_log(filename: str, rows) -> None:
+    """Serialize the shared managed 14-column format for both entry points.
+
+    Rows contain an image path followed by numeric priors (None means absent).
+    Camera/frame calculations and row selection remain the callers' responsibility.
+    """
+    with open(filename, 'w', newline='') as stream:
+        writer = csv.writer(stream, delimiter=';', lineterminator=os.linesep)
+        writer.writerow(FLIGHT_LOG_COLUMNS)
+        for row in rows:
+            if len(row) != len(FLIGHT_LOG_COLUMNS):
+                raise ValueError('Flight-log rows must contain exactly 14 columns')
+            writer.writerow([row[0], *(f'{value:.6f}' if value is not None else ''
+                                      for value in row[1:])])
+
+
 def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: str | None,
                         output_dir: str, accuracies: dict | None = None,
                         declination_deg: float | None = None) -> str:
     """Generate a flight log file with position and orientation accuracy. Includes camera subfolder in image paths."""
+    decl = (MAGNETIC_DECLINATION_DEG if declination_deg is None
+            else float(declination_deg))
+    if not math.isfinite(decl):
+        raise ValueError('Declination must be finite')
+    if any(image.get('DECLINATION_APPLIED_DEG', decl) != decl for image in matched_images):
+        raise ValueError('Position/yaw declination mismatch; recompute positions with the same correction')
     # Never emit a '_UNKNOWN_' tag into a *_UTM.txt name: it parses as "no
     # zone tag", which every downstream consumer reads as a LOCAL-frame
     # campaign (audit 2026-08-07). Same rule as the module's writer.
@@ -808,8 +873,11 @@ def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: 
     # two could - and did - disagree; --pos-accuracy/--alt-accuracy/
     # --orientation-accuracy override them per run (audit 2026-08-07).
     acc = dict(_ACCURACY_DEFAULTS)
-    acc.update(accuracies or {})
+    if not _camera_registry.project_priors_active():
+        acc.update(accuracies or {})
     pos_x_acc = pos_y_acc = float(acc['pos_xy'])
+    if _camera_registry.project_priors_active():
+        pos_y_acc = _camera_registry.prior_defaults()['position_accuracy_m']['y']
     alt_acc = float(acc['alt'])
     yaw_acc = float(acc['yaw'])
     roll_acc = float(acc['roll'])
@@ -819,14 +887,7 @@ def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: 
     assumed_pitch_acc = float(
         acc.get('assumed_pitch_acc', _ASSUMED_MOUNT['p_acc']))
     assume_pitch = assumed_pitch >= 0.0
-    decl = (MAGNETIC_DECLINATION_DEG if declination_deg is None
-            else float(declination_deg))
-
-    with open(flight_log_filename, "w") as f:
-        f.write(
-            "Name;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
-        )
-
+    def rows():
         for image in matched_images:
             heading_mag = image.get("HEADING_MAG")
             pitch_vehicle = image.get("PITCH_VEHICLE")
@@ -843,28 +904,17 @@ def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: 
                 image["FILENAME"], assume_pitch=assume_pitch,
                 pitch_deg=assumed_pitch, accuracy_deg=assumed_pitch_acc)
 
-            def fmt(val):
-                return f"{val:.6f}" if val is not None else ""
-
             # Include camera subfolder in the image path for RealityScan
             image_path = f"{image['CAMERA_TYPE']}/{image['FILENAME']}"
-
-            line = ";".join([
+            yield [
                 image_path,
-                fmt(image.get("UTM_X")),
-                fmt(image.get("UTM_Y")),
-                fmt(image.get("ALTITUDE_EST")),
-                fmt(pos_x_acc),
-                fmt(pos_y_acc),
-                fmt(alt_acc),
-                fmt(rc_yaw),
-                fmt(rc_pitch),
-                fmt(rc_roll),
-                fmt(yaw_acc),
-                fmt(pitch_acc),
-                fmt(roll_acc)
-            ])
-            f.write(line + "\n")
+                image.get("UTM_X"), image.get("UTM_Y"), image.get("ALTITUDE_EST"),
+                pos_x_acc, pos_y_acc, alt_acc, rc_yaw, rc_pitch, rc_roll,
+                yaw_acc, pitch_acc, roll_acc,
+                get_camera_focal_length(image["FILENAME"]),
+            ]
+
+    write_flight_log(flight_log_filename, rows())
 
     return flight_log_filename
 
@@ -878,8 +928,10 @@ def print_dive_summary(dive_number: str, csv_rows: int, examined: int, stats: di
     print(f"{'='*80}")
     print(f"CSV Rows Loaded:          {csv_rows}")
     print(f"Images Examined:          {examined}")
-    print(f"Matched (<=2s):           {stats['matches_made']} ({100.0 * stats['matches_made'] / examined:.1f}%)" if examined > 0 else "Matched (<=2s):           0 (0.0%)")
-    print(f"Rejected (>2s):           {stats['rejected_time']}")
+    tolerance = stats.get('navigation_matching', _camera_registry.navigation_defaults())['max_match_seconds']
+    print(f"Matched (<={tolerance:g}s):           {stats['matches_made']} ({100.0 * stats['matches_made'] / examined:.1f}%)" if examined > 0 else f"Matched (<={tolerance:g}s):           0 (0.0%)")
+    print(f"Rejected (>{tolerance:g}s):           {stats['rejected_time']}")
+    print(f"Navigation matching:      {stats.get('navigation_matching')}")
     print(f"\nTime-Delta Buckets (all pairs, pre-threshold):")
     print(f"  Exact matches:          {stats['exact_matches']}")
     print(f"  0-4 seconds:            {stats['matches_0_4']}")
@@ -981,24 +1033,30 @@ def main(argv: list[str] | None = None):
     declination = settings.ask_float(
         "geoall", "declination_deg", args.declination,
         MAGNETIC_DECLINATION_DEG)
-    accuracies = {
-        'pos_xy': settings.ask_float("geoall", "pos_accuracy_m",
-                                     args.pos_accuracy,
-                                     _ACCURACY_DEFAULTS['pos_xy']),
-        'alt': settings.ask_float("geoall", "alt_accuracy_m",
-                                  args.alt_accuracy,
-                                  _ACCURACY_DEFAULTS['alt']),
-        'yaw': settings.ask_float("geoall", "orientation_accuracy_deg",
-                                  args.orientation_accuracy,
-                                  _ACCURACY_DEFAULTS['yaw']),
-        'assumed_pitch': settings.ask_float(
-            "geoall", "assumed_pitch_deg", args.assumed_pitch,
-            _ASSUMED_MOUNT['pitch']),
-        'assumed_pitch_acc': settings.ask_float(
-            "geoall", "assumed_pitch_accuracy_deg",
-            args.assumed_pitch_accuracy, _ASSUMED_MOUNT['p_acc']),
-    }
-    accuracies['roll'] = accuracies['yaw']
+    if _camera_registry.project_priors_active():
+        # The explicit project file is authoritative over legacy CLI/store values.
+        accuracies = dict(_ACCURACY_DEFAULTS, assumed_pitch=_ASSUMED_MOUNT['pitch'],
+                          assumed_pitch_acc=_ASSUMED_MOUNT['p_acc'])
+        print(f"Project camera priors: {_camera_registry.effective_project_priors()}")
+    else:
+        accuracies = {
+            'pos_xy': settings.ask_float("geoall", "pos_accuracy_m",
+                                         args.pos_accuracy,
+                                         _ACCURACY_DEFAULTS['pos_xy']),
+            'alt': settings.ask_float("geoall", "alt_accuracy_m",
+                                      args.alt_accuracy,
+                                      _ACCURACY_DEFAULTS['alt']),
+            'yaw': settings.ask_float("geoall", "orientation_accuracy_deg",
+                                      args.orientation_accuracy,
+                                      _ACCURACY_DEFAULTS['yaw']),
+            'assumed_pitch': settings.ask_float(
+                "geoall", "assumed_pitch_deg", args.assumed_pitch,
+                _ASSUMED_MOUNT['pitch']),
+            'assumed_pitch_acc': settings.ask_float(
+                "geoall", "assumed_pitch_accuracy_deg",
+                args.assumed_pitch_accuracy, _ASSUMED_MOUNT['p_acc']),
+        }
+        accuracies['roll'] = accuracies['yaw']
 
     print("="*80)
     print("GEOREFERENCE IMAGES - MULTI-DIVE PROCESSOR (OPTIMIZED)")
@@ -1081,7 +1139,8 @@ def main(argv: list[str] | None = None):
                 print(f"  CSV time range: {data_rows[0]['TIME']} to {data_rows[-1]['TIME']}")
 
             utm_zone_cache = {}
-            matched_images, stats = estimate_location(all_images, data_rows, utm_zone_cache)
+            matched_images, stats = estimate_location(
+                all_images, data_rows, utm_zone_cache, declination_deg=declination)
 
             utm_zone = utm_zone_cache.get('zone')
 
