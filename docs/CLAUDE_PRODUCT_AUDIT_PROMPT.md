@@ -44,6 +44,14 @@ H2101 evidence must remain separate from general deployment acceptance.
 
 ## Review method
 
+Include the latest `checkpoint_reload_validation` and
+`navigation_angular_and_gate_audit` ledger entries. Challenge their scope:
+four-input import-only restoration does not establish aligned/model recovery;
+the H2101 filter comparison had no angular branch crossings, so use the independent
+synthetic posterior tests for that defect. The observed-history USBL policy was
+retained; rejection counts and depth eligibility do not establish position truth
+or measured DVL bottom lock.
+
 Trace each workflow through public UI, controller, persisted state and executor.
 Check normal behavior, rejection, cancellation, restart and stale/tampered artifacts.
 A unit pass proves its assertions; a process exit or saved file does not prove

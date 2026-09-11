@@ -7,6 +7,18 @@ hashes, contradictions and probes live in [EVIDENCE_LEDGER.json](EVIDENCE_LEDGER
 
 ## Current evidence
 
+Latest full Windows suite: **2891 passed, 1 skipped in 367.01 s**. Vendored
+navigation suite: **157 passed in 3.39 s**. These scopes are not additive;
+earlier counts below retain their historical snapshot scope.
+
+Fresh native checkpoint reload passed on an isolated four-input local-Euclidean
+scene. After deliberate damage and canonical restoration, native readback retained
+all priors, camera groups and four pixel-identical masks; independent comparison
+was **COMPLETE_MATCH**, zero violations. Both owned runtimes released ownership,
+and the scheduled task returned 0. This is import-only restoration evidence;
+aligned components, models, scientific frames and power-loss recovery remain open.
+See [comparison](F:/NA171/proc/tmp/checkpoint_reload_probe_01/comparison_final.json).
+
 | Area | Evidence available | Limit / next acceptance check |
 |---|---|---|
 | Navigation | Complete vendored suite: **147 passed in 9.34 s** (reported). H2101 candidate has 54,344 finite pose rows, UTM 55N and no reported gaps greater than 1 s. | Absolute accuracy, clock/frame/datum and filter assumptions remain under audit. |
@@ -84,10 +96,10 @@ records unchanged SHA/mtime for the5681-byte project and162,482,968-byte invento
 no submitted work, lease, source-byte scan or approvals, and zero denied Python
 write attempts. This global-Python UI smoke is not managed-runtime/scientific acceptance.
 
-Final full Windows suite: **2854 passed, 1 skipped, 0 failed in 364.10 s**
+Historical implementation suite: **2854 passed, 1 skipped, 0 failed in 364.10 s**
 (main-reported, session 89101). The prior obsolete mock was corrected without
-production changes; the clean-baseline rerun passed. Code and documentation are
-frozen for main's commit/push. V05 is independently COMPLETE_MATCH; neither result
+production changes; the clean-baseline rerun passed. Code and documentation
+were frozen for that commit/push. V05 is independently COMPLETE_MATCH; neither result
 settles the owner decisions or scientific acceptance below. Historical test counts
 remain in [EVIDENCE_LEDGER.json](EVIDENCE_LEDGER.json), not as current totals.
 Scoped settings dependencies are implemented and included in the final offline validation.
@@ -141,9 +153,16 @@ Runtime fixture locks are isolated; main coordinates full-suite execution.
   reference unknown-camera occurrences are neither auto-excluded nor approved.
   This is an acceptance limit, not blanket source readiness.
 - Validate navigation clock, frame, vertical datum and uncertainty independently.
-  Finite output and a 6.8e-9 m inverse-projection discrepancy do not establish
-  absolute accuracy. Kalman/angular-history, 3-sigma and depth-only bottom-lock
-  questions remain open; those policies were not tuned by the integrity fixes.
+  Finite output and inverse-projection consistency do not establish accuracy.
+  The angular branch-crossing defect is corrected using continuous roll/pitch
+  history and shortest angular updates, with noise unchanged; 10 new regressions
+  pass against an independent batch-posterior oracle and policy counterexamples.
+  The full navigation suite passed157 tests in3.39s. Isolated H2101 comparison preserved all non-orientation
+  columns exactly and changed angles by less than 3e-14 degrees. It was not adopted
+  as project navigation. USBL uses the last20 observed fixes including rejections;
+  accepted-only history would reject17546/17548 reference fixes, so no silent policy
+  switch was made. Global3-sigma orientation rejection and depth-only DVL eligibility
+  remain scientific assumptions. Depth does not establish measured bottom lock.
 - Prove actual scene reload after checkpoint restore and interrupted-transaction
   recovery. Hash/staging/rollback tests alone do not establish application reload
   or quiescence. `.lock` absence alone is insufficient; multi-file commit is not

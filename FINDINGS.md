@@ -563,3 +563,39 @@ The five isolated entrypoint regressions plus desktop suite passed151 tests in
 25.90s (session23407), after the full run; these scopes are not additive.
 Absolute .rovscan association forwarding was separately checked with mocked Qt
 and real argument parsing; this is not new-machine on-screen acceptance.
+
+## [NAVIGATION] 2026-09-11 - circular roll/pitch fix and observed-history policy clarified
+
+The scalar roll/pitch update and wrapped RTS histories mishandled branch crossings.
+Nearest-branch observations and continuous histories now retain the short angular
+change; output wrapping and noise parameters remain unchanged. Primary basis:
+FilterPy KalmanFilter.update/rts_smoother implementation. Ten new production-path
+tests passed against an independent batch-posterior oracle and gate examples;
+the complete navigation suite passed157 tests in3.39s.
+An isolated run on54344 H2101 rows left every non-orientation column identical;
+roll/pitch differ below3e-14deg, with no branch crossings in this reference input.
+Original candidate and approvals were unchanged. EVIDENCE_LEDGER records hashes.
+
+The code comment claiming20 accepted USBL fixes was WRONG: the gate uses20 observed
+fixes, including rejected observations. A counterfactual on17548 reference fixes
+reproduced1044 current rejections but17546 accepted-only rejections. Therefore a
+comment-driven accepted-only change would freeze acceptance after two fixes here;
+no such policy change was applied. Rejection counts are not correctness labels.
+DVL depth<=-30m is eligibility, not measured bottom lock; report metadata now makes
+this explicit. Global3-sigma orientation filtering still needs labeled validation.
+
+## [CHECKPOINT] 2026-09-11 - fresh native reload after deliberate owned-copy damage
+
+The scheduler-owned checkpoint_reload_probe_01 completed at 22:49:43Z. The
+canonical checkpoint helper restored five bundle files byte-for-byte after
+deliberate damage to the owned copy. A fresh RealityScan 2.2 process loaded it
+without reimport, pose/group repair, mask attachment or save. Native census kept
+four unaligned inputs, pose/accuracy values and active flags, CRS, focal/lens and
+camera groups; four exported masks matched expected pixels exactly.
+Independent comparison_final.json is COMPLETE_MATCH with zero violations.
+Both runtime journals record return code 0 and ownership_retained false;
+scheduler result is 0 and the subsequent native process census is empty.
+All 74 protected v05 baseline files remain unchanged. Manifest and evidence are
+indexed in EVIDENCE_LEDGER.json. This supersedes the absence of native reload
+evidence only for this import-only local-Euclidean fixture. Aligned/model scenes,
+scientific frames and power-loss recovery remain unverified.

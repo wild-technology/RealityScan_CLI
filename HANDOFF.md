@@ -1,5 +1,38 @@
 # HANDOFF — generalized Hercules deployment
 
+## 2026-09-11 — navigation arithmetic and native checkpoint validation passed
+
+Base pushed commit `9152f9a`. The current uncommitted filter correction keeps
+roll/pitch continuous through forward filtering and RTS; only output angles wrap.
+157 navigation tests pass (3.39 s), including ten new production-path contracts
+against an independent batch-posterior oracle. The final isolated H2101 comparison
+is under `F:/NA171/proc/tmp/nav_angular_validation_20260911T222855Z_07a37ec6/final`:
+54,344 rows; every non-orientation column unchanged; angle roundoff below3e-14deg.
+Original candidate/source and project approvals are unchanged. The observed-history
+USBL policy is retained: accepted-only would reject17,546/17,548 reference fixes.
+Reports now distinguish that policy and unmeasured DVL bottom lock.
+
+The checkpoint harness extension is frozen with108 focused passes (13.63 s).
+Main full Windows suite passed2891 tests with1 skip in367.01s (session31690).
+Prepared manifest:
+`F:/NA171/proc/tmp/checkpoint_reload_probe_01/probe.json`, SHA256
+`45ea5fd8618fa19c3088f9526c9359ff06b3b63308ad3dbc4f3f7d4c4087d434`.
+Owned-copy checkpoint/damage/restore passed; all 74 v05 baseline files are unchanged.
+Native readback and independent comparison passed: `comparison_final.json` is
+COMPLETE_MATCH with zero violations, four inputs and four pixel-identical masks.
+The on-demand task `ROV_NA171_H2101_CheckpointReload_v01_20260911` completed
+2026-09-11T22:49:43Z, scheduler result 0. Both runtime records release ownership;
+the subsequent native process census is empty. Do not restart this completed probe.
+Its reviewed action uses the managed Python and this probe's `run_sequence.py`;
+`scheduler_plan.json` records exact arguments and script/manifest hashes.
+Sequence: report_control, then fresh checkpoint_reload. No imports, alignment,
+pose/group repair, mask attachment or save occur in the reload cell. This is a
+local-Euclidean four-input fixture, not scientific/full-model acceptance.
+
+Source choices and remaining project approval gates are still pending. No regular
+pipeline attempt exists, and no old source masks have been physically deleted.
+Main owns dispatch, full tests, final evidence/docs, commit and authorized push.
+
 ## 2026-09-11 — selection-resolution follow-up
 
 The deployment implementation was committed and pushed as `69297cf` to

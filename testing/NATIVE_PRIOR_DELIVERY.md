@@ -264,3 +264,52 @@ comparison_complete_01.json, v05_result_01.json, cold_process_observation_01.jso
 the production_mask_cold input-prior census, all four exported masks, and the
 per-cell runtime journals. Earlier v03/v04 evidence stays unchanged. The live
 dependency pin period has ended; the full-suite code/test freeze remains active.
+# Owned checkpoint restore and reload control (2026-09-11)
+
+`rs_prior_import_probe.py` supports an opt-in `checkpoint_reload` cell, paired
+only with `report_control`. This validates a four-image **local Euclidean,
+import-only** saved fixture. It does not authorize or validate alignment,
+models, UTM/geodetic placement, or physical camera axes.
+
+Preparation takes `--source-root <immutable-prior-probe-root>` and
+`--checkpoint-scene <saved-cell/readback.rsproj>`. The general harness verifies
+the actual baseline input census, relative scene dependencies and explicit
+local project CRS, and pins all files under the immutable baseline root.
+It copies the scene bundle, images, masks and calibration/verification inputs
+into the new cell's `live` directory. It rebases only its copied verification
+CSV; this CSV is never imported in the reload cell.
+
+Before copy, checkpoint, damage and restore, the canonical read-only
+`RealityScanCLI._process_inventory()` must establish that no RealityScan
+process exists. Unknown process-census status and scene locks refuse the step.
+`checkpoint_scene` and `restore_scene` operate on the same newly owned scene
+path. Only that copied scene file receives deliberately invalid bytes; those
+bytes are retained separately. All scene/companion hashes must return to the
+pre-damage values. Timings, quiescence observations, CRS and hashes are saved
+in `restore_evidence.json`; failures preserve the fixture and checkpoint.
+The checkpoint module and comparator are hash-pinned dependencies.
+
+Prepare (does not launch RealityScan):
+
+```powershell
+python -B testing/rs_prior_import_probe.py prepare --project-root <project> --source-root <baseline-probe> --install-dir <RS-install> --instance <dedicated-instance> --run-name <new-name> --reserve-gib 50 --cells report_control checkpoint_reload --checkpoint-scene <baseline-probe/cell/readback.rsproj>
+```
+
+The existing scheduler sequence calls `run(manifest, reviewed_sha, cell)` for
+`report_control` and then `checkpoint_reload`. The latter starts a fresh native
+instance through the same `RealityScanCLI.run_batch_script` and canonical
+`:run` wrapper. Its commands are limited to load, report export, image selection
+and mask export. It never imports images/CSV/XMP, sets pose/calibration/CRS/mask
+options, attaches masks, saves the scene, or aligns. The shipped Overview
+report runs before custom reports.
+
+Acceptance requires the actual four copied input paths, unaligned flags,
+three active-prior flags, all 12 pose/accuracy values, baseline input CRS,
+calibration/lens groups, focal and lens model, and four exact decoded mask
+pixel comparisons. Saved project/companion bytes and the complete baseline
+tree must remain unchanged. Native cell elapsed time includes loading and
+readback exports; it is not an isolated load-time measurement. The saved
+project CRS is checked from its pinned scene declaration; input CRS is also
+checked through native report readback. Physical axes and mask feature/mesh
+semantics remain unproven. A successful byte restore during preparation is
+explicitly `NATIVE_RELOAD_PENDING`, never native acceptance.

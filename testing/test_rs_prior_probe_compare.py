@@ -51,11 +51,12 @@ def test_known_csv_sentinels_and_undocumented_enum_are_distinct():
     assert row['matching_sentinels'] == dict(position=['CSV_FIRST'], orientation=['CSV_FIRST'], accuracy=['CSV'])
 
 
-@pytest.mark.parametrize('cell', ['production_calibration_csv', 'production_mask_control', 'production_mask_cold'])
+@pytest.mark.parametrize('cell', ['production_calibration_csv', 'production_mask_control', 'production_mask_cold', 'checkpoint_reload'])
 @pytest.mark.parametrize('bad', [None, 'group', 'focal', 'accuracy_flag'])
 @pytest.mark.parametrize('group_type', [int, str])
 def test_production_uses_exact_xmp_calibration_and_active_csv(cell, bad, group_type):
-    detail, evidence = fixture(cell, ('added', 'csv_first'))
+    final_stage = 'reloaded' if cell == 'checkpoint_reload' else 'csv_first'
+    detail, evidence = fixture(cell, ('reloaded',) if cell == 'checkpoint_reload' else ('added', 'csv_first'))
     for expected in detail['expected']:
         for key in ('xmp_calibration_group', 'xmp_distortion_group'):
             expected[key] = group_type(expected[key])
@@ -65,7 +66,7 @@ def test_production_uses_exact_xmp_calibration_and_active_csv(cell, bad, group_t
             if stage == 'added':
                 row.update({key: 'False' for key in compare.FLAGS})
                 row.update(zip(compare.ACCURACY, map(str, GLOBALS.values())))
-    row = evidence['reports']['csv_first'][0]
+    row = evidence['reports'][final_stage][0]
     if bad == 'group':
         row['calibrationGroup'] = '999'
     elif bad == 'focal':
@@ -74,7 +75,7 @@ def test_production_uses_exact_xmp_calibration_and_active_csv(cell, bad, group_t
         row['inputIsPriorAccuracy'] = 'False'
     value = result(detail, evidence)
     assert value['control_contract'] == ('MISMATCH' if bad else 'MATCH')
-    assert value['stages']['csv_first']['focal_authority'] == 'XMP'
+    assert value['stages'][final_stage]['focal_authority'] == 'XMP'
 
 
 def test_negative_control_flags_do_not_claim_default_values_are_priors():

@@ -29,6 +29,15 @@ This revision does not tune 3-sigma rejection, Kalman noise, bottom-lock policy
 or uncertainty interpretation. A comparison of existing raw copies does not
 authorize a fresh navigation run or establish absolute accuracy.
 
+The later angular-arithmetic correction uses nearest-branch roll/pitch updates
+and continuous RTS history; it changes no noise or gate threshold. An isolated
+H2101 filter comparison retained all 54,344 rows and every non-orientation column
+exactly; angular differences were below 3e-14 degrees (no observed branch crossing
+in this dive). Synthetic crossing tests are the discriminating validation.
+The prior source/candidate and project approvals were preserved. USBL history is
+observed-fix history, not the previously claimed accepted-only history; that
+numerical policy was retained after measuring the accepted-only freeze hazard.
+
 The subsequent inventory latency correction separates `source_window` (shared
 delivery/dive-report validation only) from full `source_plan` coverage. The full
 planner accepts caller-owned metadata-identity coverage caching and cooperative

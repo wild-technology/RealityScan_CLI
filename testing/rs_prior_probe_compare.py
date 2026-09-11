@@ -123,7 +123,7 @@ def compare_cell(detail, evidence, cell, globals_):
     if evidence['cell'] != cell or evidence['alignment_performed'] is not False:
         raise ValueError('Cell identity/alignment policy mismatch')
     result = dict(cell=cell, stages={}, violations=[], open_claims=[])
-    production = cell in ('production_calibration_csv', 'production_mask_control', 'production_mask_cold')
+    production = cell in ('production_calibration_csv', 'production_mask_control', 'production_mask_cold', 'checkpoint_reload')
     global_accuracy = [globals_[key] for key in ('X', 'Y', 'Z', 'Yaw', 'Pitch', 'Roll')]
 
     def require(condition, stage, filename, claim):
@@ -137,7 +137,7 @@ def compare_cell(detail, evidence, cell, globals_):
             raise ValueError(f'{stage}: duplicate/missing/unexpected filenames')
         output = dict(rows=[], groups={}, production_requirements={})
         native = cell.startswith('native_xmp') or stage == 'explicit_xmp_reimport'
-        csv_stage = stage in ('csv_first', 'csv_second', 'groups_then_csv_g1', 'rotation_setter')
+        csv_stage = stage in ('csv_first', 'csv_second', 'groups_then_csv_g1', 'rotation_setter', 'reloaded')
         for key, sentinel in expected.items():
             row = indexed[key]
             flags = {field: flag(row[field]) for field in FLAGS}
@@ -275,13 +275,13 @@ def compare(manifest, expected_sha256, cells=None):
                 if len(raw) != len(evidence['reports'][report['stage']]) or normalize(raw) != normalize(evidence['reports'][report['stage']]):
                     raise ValueError('Readback JSON differs from raw report')
                 hashes[report['path']] = sha256(report['path'])
-            if cell == 'report_control':
+            if cell in ('report_control', 'checkpoint_reload'):
                 builtin = Path(plan['root']) / cell / 'builtin_overview.html'
                 if not builtin.is_file() or builtin.stat().st_size == 0:
                     raise ValueError('Missing shipped Overview positive control')
                 hashes[str(builtin)] = sha256(builtin)
             item = compare_cell(detail, evidence, cell, dict(zip(('X', 'Y', 'Z', 'Yaw', 'Pitch', 'Roll'), (17, 19, 23, 29, 31, 37))))
-            if cell in ('production_calibration_csv', 'production_mask_control', 'production_mask_cold'):
+            if cell in ('production_calibration_csv', 'production_mask_control', 'production_mask_cold', 'checkpoint_reload'):
                 from modules.prior_census import assert_input_priors
                 contract = detail['production_contract']
                 expected_path = contract['RS_INPUT_PRIOR_MANIFEST']
@@ -290,9 +290,14 @@ def compare(manifest, expected_sha256, cells=None):
                 item['input_census'] = assert_input_priors(load(expected_path), contract['RS_INPUT_PRIOR_REPORT'])
                 for key in ('RS_INPUT_PRIOR_MANIFEST', 'RS_INPUT_PRIOR_REPORT'):
                     hashes[contract[key]] = sha256(contract[key])
-                if cell in ('production_mask_control', 'production_mask_cold'):
+                if cell in ('production_mask_control', 'production_mask_cold', 'checkpoint_reload'):
                     from testing.rs_prior_import_probe import verify_mask_exports
                     item['mask_evidence'] = verify_mask_exports(detail)
+                if cell == 'checkpoint_reload':
+                    from testing.rs_prior_import_probe import verify
+                    verify(manifest, cell)
+                    item['restore_evidence'] = detail['restore_evidence']
+                    item['open_claims'].append('Import-only checkpoint reload; no model or scientific reconstruction tested')
             item.update(evidence_status='COMPLETE', evidence_sha256=hashes)
         except FileNotFoundError as exc:
             item = dict(cell=cell, evidence_status='PENDING', error=str(exc))

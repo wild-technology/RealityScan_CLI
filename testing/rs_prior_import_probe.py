@@ -8,6 +8,8 @@ See rs_prior_import_probe.md for evidence limits and the cell matrix.
 from __future__ import annotations
 
 import argparse
+import csv
+import datetime
 import hashlib
 import json
 import logging
@@ -17,6 +19,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import time
 from uuid import UUID, uuid4
 import xml.etree.ElementTree as ET
 
@@ -52,6 +55,7 @@ CELLS = (
     'production_calibration_csv',
     'production_mask_control',
     'production_mask_cold',
+    'checkpoint_reload',
 )
 REPORT_TEMPLATE = '''$Using("RealityScan.Report.IteratorsFunctionSet")
 $Using("RealityScan.Report.SfmExportFunctionSet")
@@ -149,7 +153,8 @@ def source_images(source_root):
     return result
 
 
-def build_plan(project_root, source_root, install_dir, instance, run_name, reserve_gib=50, cells=None):
+def build_plan(project_root, source_root, install_dir, instance, run_name, reserve_gib=50, cells=None,
+               checkpoint_scene=None):
     project, source, install = map(safe_path, (project_root, source_root, install_dir))
     if not project.is_dir() or not source.is_dir():
         raise ValueError('Project and source roots must already exist')
@@ -164,12 +169,26 @@ def build_plan(project_root, source_root, install_dir, instance, run_name, reser
         raise ValueError('Probe root must be owned project proc/tmp, outside source')
     if root.exists():
         raise ValueError(f'Probe destination already exists; choose a new run-name: {root}')
-    selected_cells = list(CELLS if cells is None else cells)
+    selected_cells = list([cell for cell in CELLS if cell != 'checkpoint_reload'] if cells is None else cells)
     if (not selected_cells or len(set(selected_cells)) != len(selected_cells) or
             any(cell not in CELLS for cell in selected_cells) or selected_cells[0] != 'report_control'):
         raise ValueError('Select unique known cells beginning with report_control')
-    references = source_images(source)
+    checkpoint = None
+    if 'checkpoint_reload' in selected_cells:
+        if selected_cells != ['report_control', 'checkpoint_reload'] or not checkpoint_scene:
+            raise ValueError('Checkpoint reload requires a saved scene and exactly report_control, checkpoint_reload')
+        scene = safe_path(checkpoint_scene)
+        if not scene.is_relative_to(source):
+            raise ValueError('Checkpoint scene must be within the read-only baseline root')
+        checkpoint = inspect_checkpoint_source(scene, source)
+    elif checkpoint_scene:
+        raise ValueError('checkpoint-scene requires checkpoint_reload cell')
+    references = source_images(Path(checkpoint_scene).resolve().parent if checkpoint else source)
     installed = check_install(install)
+    if checkpoint:
+        for dependency in ('module_base/scene_checkpoint.py', 'testing/rs_prior_probe_compare.py'):
+            path = REPO / dependency
+            installed[str(path)] = digest(path)
     channels = {}
     for cell in selected_cells:
         run_id = uuid4().hex
@@ -181,6 +200,8 @@ def build_plan(project_root, source_root, install_dir, instance, run_name, reser
     needed = sum(row['size'] for row in references) * len(selected_cells) + 64 * 1024**2
     mask_cells = sum(cell in ('production_mask_control', 'production_mask_cold') for cell in selected_cells)
     needed += mask_cells * sum(row['width'] * row['height'] * 10 for row in references)
+    if checkpoint:
+        needed += 4 * sum(Path(path).stat().st_size for path in checkpoint['copy_files'])
     if shutil.disk_usage(project).free < needed + reserve_gib * 1024**3:
         raise ValueError('Insufficient space after source copies and required reserve')
     return dict(schema_version=1, project_root=str(project), source_root=str(source),
@@ -188,7 +209,8 @@ def build_plan(project_root, source_root, install_dir, instance, run_name, reser
                 cache=str(project / 'proc/tmp/cache'), reserve_gib=reserve_gib,
                 source_references=references, dependency_hashes=installed,
                 cells=selected_cells, runtime_channels=channels, estimated_copy_bytes=needed,
-                alignment_allowed=False, source_writes_allowed=False)
+                alignment_allowed=False, source_writes_allowed=False,
+                **({'checkpoint_source': checkpoint} if checkpoint else {}))
 
 
 def cell_channels(plan, cell):
@@ -285,12 +307,245 @@ def write_text(path, text, crlf=False):
         stream.write(text.rstrip('\n') + '\n')
 
 
+def tree_hashes(root):
+    """Inventory every baseline file; aliases and links cannot enter a copy proof."""
+    from module_base.scene_checkpoint import _safe_path
+    root = Path(root)
+    _safe_path(root)
+    result = {}
+    for path in sorted(root.rglob('*')):
+        _safe_path(path)
+        if path.is_file():
+            result[str(path.relative_to(root))] = digest(path)
+    return result
+
+
+def inspect_checkpoint_source(scene, baseline):
+    from module_base.scene_checkpoint import scene_bundle
+    hashes = tree_hashes(baseline)
+    xml = ET.parse(scene).getroot()
+    inputs = xml.findall('./source/input')
+    if xml.tag != 'RealityScan' or len(inputs) != 4:
+        raise ValueError('Checkpoint proof requires a saved four-input RealityScan scene')
+    files = {scene}
+    for node in xml.iter():
+        name = node.get('fileName')
+        if name is None:
+            continue
+        relative = Path(name.replace('\\', '/'))
+        path = (scene.parent / relative).resolve()
+        if relative.is_absolute() or ':' in name or '..' in relative.parts or not path.is_relative_to(scene.parent):
+            raise ValueError('Scene dependency must be relative and contained in the copied fixture')
+        if not path.is_file():
+            raise ValueError(f'Scene dependency missing: {path}')
+        files.add(path)
+    for raw in scene_bundle(str(scene)):
+        member = Path(raw)
+        files.update([member] if member.is_file() else [p for p in member.rglob('*') if p.is_file()])
+    for node in inputs:
+        if len(node.findall('./layer[@type="mask"]')) != 1:
+            raise ValueError('Each saved input must have exactly one mask layer')
+        files.add((scene.parent / node.get('fileName')).with_suffix('.xmp'))
+    contract_path = scene.parent / 'input_priors/expected.json'
+    contract = json.loads(contract_path.read_text(encoding='utf-8'))
+    prior_census.assert_input_priors(contract, scene.parent / 'input_priors/readback.html')
+    project_coordinates = xml.find('./coordinates/projectCoordinates')
+    systems = xml.findall('./coordinates/coordinateSystem')
+    if project_coordinates is None:
+        raise ValueError('Saved scene has no explicit project coordinate system')
+    selected = [node for node in systems if node.get('index') == project_coordinates.get('index')]
+    if (len(selected) != 1 or contract['coordinate_system'] != 'local:1 - Euclidean' or
+            selected[0].get('name', '').casefold() != contract['coordinate_system'].casefold()):
+        raise ValueError('Checkpoint probe requires the baseline local Euclidean project/input CRS')
+    project_crs = dict(project_coordinates=project_coordinates.attrib, coordinate_system=selected[0].attrib)
+    if len(contract['images']) != 4:
+        raise ValueError('Checkpoint baseline census must cover four inputs')
+    scene_images = {(scene.parent / node.get('fileName')).resolve() for node in inputs}
+    if scene_images != {Path(row['filename']).resolve() for row in contract['images']}:
+        raise ValueError('Saved scene and baseline census image identities differ')
+    files.update((Path(contract['flight_log']), Path(contract['flight_log_params'])))
+    files.add(scene.parent / 'mask_export.xml')
+    for path in files:
+        if not path.is_relative_to(scene.parent) or not path.is_file():
+            raise ValueError('Fixture dependency missing or outside scene directory')
+    return dict(scene=str(scene), baseline_root=str(baseline), baseline_hashes=hashes,
+                copy_files=[str(path) for path in sorted(files)], contract=contract, project_crs=project_crs)
+
+
+def assert_checkpoint_baseline(plan):
+    source = plan['checkpoint_source']
+    if tree_hashes(source['baseline_root']) != source['baseline_hashes']:
+        raise ValueError('Read-only checkpoint baseline changed')
+
+
+def checkpoint_quiescence(scene):
+    """Conservative proof for this newly owned fixture: no RS process anywhere."""
+    from modules.realityscan_interface.realityscan_cli import RealityScanCLI
+    processes = []
+    try:
+        inventory = RealityScanCLI._process_inventory()
+        for process in inventory:
+            name = process['Name']
+            if name.casefold().startswith(('realityscan', 'realitycapture')):
+                processes.append(process)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError('Cannot prove absence of RealityScan writers') from exc
+    if processes:
+        raise ValueError(f'RealityScan writer may be active: {processes}')
+    if any(Path(scene).parent.rglob('*.lock')):
+        raise ValueError('Scene lock marker present')
+    return dict(at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                scene=str(scene), realityscan_processes=processes, process_count=len(inventory),
+                method='RealityScanCLI._process_inventory')
+
+
+def prepare_checkpoint_cell(plan, directory, template):
+    """Copy, actually checkpoint/damage/restore, then plan native readback only."""
+    from module_base.scene_checkpoint import checkpoint_scene, restore_scene, scene_bundle
+    source = plan['checkpoint_source']
+    original = Path(source['scene'])
+    assert_checkpoint_baseline(plan)
+    copy_quiescence = checkpoint_quiescence(original)
+    live = directory / 'live'
+    live.mkdir()
+    for raw in source['copy_files']:
+        path = Path(raw)
+        target = live / path.relative_to(original.parent)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+        if digest(path) != digest(target):
+            raise ValueError('Fixture copy differs from baseline')
+    scene = live / original.name
+    def bundle_hashes():
+        result = {}
+        for raw in scene_bundle(str(scene)):
+            member = Path(raw)
+            paths = [member] if member.is_file() else [p for p in member.rglob('*') if p.is_file()]
+            result.update({str(p.relative_to(live)): digest(p) for p in paths})
+        return result
+    before = bundle_hashes()
+    checkpoints = directory / 'checkpoints'
+    log = directory / 'checkpoint.log'
+    handler = logging.FileHandler(log, mode='x', encoding='utf-8')
+    logger = logging.getLogger('checkpoint-probe.' + plan['runtime_channels']['checkpoint_reload']['RS_RUN_ID'])
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    measurements = dict(copy_quiescence=copy_quiescence, before=before)
+    try:
+        measurements['checkpoint_quiescence'] = checkpoint_quiescence(scene)
+        start = time.perf_counter()
+        checkpoint = checkpoint_scene(str(scene), str(checkpoints), 'before_damage', logger)
+        measurements['checkpoint_seconds'] = time.perf_counter() - start
+        measurements['damage_quiescence'] = checkpoint_quiescence(scene)
+        damaged = b'INTENTIONALLY INVALID OWNED CHECKPOINT PROBE SCENE\n'
+        (directory / 'damaged_scene.bin').write_bytes(damaged)
+        scene.write_bytes(damaged)
+        measurements['damaged_sha256'] = digest(scene)
+        if measurements['damaged_sha256'] == before[scene.name]:
+            raise ValueError('Deliberate damage did not change scene')
+        measurements['restore_quiescence'] = checkpoint_quiescence(scene)
+        start = time.perf_counter()
+        restore_scene(str(scene), str(checkpoints), 'before_damage', logger)
+        measurements['restore_seconds'] = time.perf_counter() - start
+        measurements['after'] = bundle_hashes()
+        if before != measurements['after']:
+            raise ValueError('Restored bundle differs from pre-damage copy')
+        measurements.update(verdict='VERIFIED_BYTE_RESTORE_NATIVE_RELOAD_PENDING',
+                            checkpoint=str(checkpoint), scene=str(scene),
+                            project_crs=source['project_crs'],
+                            checkpoint_manifest_sha256=digest(Path(checkpoint) / '_checkpoint.json'))
+    except BaseException:
+        logger.exception('Checkpoint preparation failed; all owned evidence retained')
+        raise
+    finally:
+        handler.flush()
+        os.fsync(handler.stream.fileno())
+        logger.removeHandler(handler)
+        handler.close()
+    write_text(directory / 'restore_evidence.json', json.dumps(measurements, indent=2))
+    # Rebase only the copied verification CSV. It is NEVER imported on reload.
+    old_contract = source['contract']
+    csv_path = live / Path(old_contract['flight_log']).relative_to(original.parent)
+    with csv_path.open(encoding='utf-8-sig', newline='') as stream:
+        rows = list(csv.reader(stream, delimiter=';'))
+    mapping = {str(Path(row['filename']).resolve()).casefold(): str(live / Path(row['filename']).relative_to(original.parent))
+               for row in old_contract['images']}
+    for row in rows[1:]:
+        if not row:
+            continue
+        old = Path(row[0])
+        key = str((old if old.is_absolute() else Path(old_contract['flight_log']).parent / old).resolve()).casefold()
+        if key not in mapping:
+            raise ValueError('Cannot map baseline CSV identity into copied fixture')
+        row[0] = mapping[key]
+    with csv_path.open('w', encoding='utf-8', newline='') as stream:
+        csv.writer(stream, delimiter=';', lineterminator='\n').writerows(rows)
+    images = [Path(value) for value in mapping.values()]
+    params = live / Path(old_contract['flight_log_params']).relative_to(original.parent)
+    expected = prior_census.build_input_prior_manifest(images, csv_path, params)
+    for old, new in zip(sorted(old_contract['images'], key=lambda r: Path(r['filename']).name),
+                        sorted(expected['images'], key=lambda r: Path(r['filename']).name)):
+        for key in ('position', 'orientation', 'accuracy', 'focal', 'calibration_group', 'distortion_group', 'lens'):
+            if old[key] != new[key]:
+                raise ValueError(f'Copied verification expectation differs from baseline: {key}')
+    contract = prior_census.write_input_prior_contract(expected, directory / 'input_priors')
+    expectations, masks = [], []
+    xml = ET.parse(scene).getroot()
+    for index, row in enumerate(expected['images']):
+        image = Path(row['filename'])
+        values = sentinels(index)
+        values.update(image=str(image), family=row['family'], csv_position=row['position'],
+                      csv_ypr=row['orientation'], csv_accuracy=row['accuracy'], csv_focal=row['focal'],
+                      xmp_focal=row['focal'], xmp_calibration_group=row['calibration_group'],
+                      xmp_distortion_group=row['distortion_group'])
+        expectations.append(values)
+        node = next(node for node in xml.findall('./source/input') if (live / node.get('fileName')).resolve() == image)
+        mask = live / node.find('./layer[@type="mask"]').get('fileName')
+        masks.append(dict(image=str(image), path=str(mask), sha256=digest(mask)))
+    mask_params = directory / 'mask_export.xml'
+    shutil.copy2(original.parent / 'mask_export.xml', mask_params)
+    exported = directory / 'exported_masks'
+    exported.mkdir()
+    commands = [f'-load "{scene}" deleteAutosave',
+                f'-exportReport "{directory / "builtin_overview.html"}" "{Path(plan["install_dir"]) / "Reports/Overview.html"}" true',
+                f'-exportReport "{directory / "reloaded.html"}" "{template}" true',
+                f'-exportReport "{contract["RS_INPUT_PRIOR_REPORT"]}" "{contract["RS_INPUT_PRIOR_TEMPLATE"]}" true',
+                '-selectAllImages', f'-exportMasks "{exported}" "{mask_params}"']
+    assert_checkpoint_baseline(plan)
+    return dict(commands=commands, reports=[dict(stage='reloaded', path=str(directory / 'reloaded.html'))],
+                expected=expectations, python_log=str(directory / 'driver.log'), production_contract=contract,
+                masks=masks, mask_export=str(exported), mask_positive_export=None,
+                mask_attachment_mode='saved_scene_reload_only', restore_evidence=measurements,
+                mask_option_readback='UNOBSERVABLE_NO_DOCUMENTED_REPORT_VARIABLE')
+
+
+def write_probe_batch(directory, commands, production_contract, run_tail):
+    script = '\n'.join([
+        '@echo off', 'setlocal', f'call "{SCRIPTS / "SetVariables.bat"}"',
+        'if errorlevel 1 exit /b 1', 'set "ErrorsFile=%ErrorPath%\\errors_%RS_INSTANCE%.txt"',
+        f'call "{SCRIPTS / "RuntimeAbortGuard.bat"}" || exit /b 1223',
+        f'call "{SCRIPTS / "startRealityScan.bat"}"', 'if errorlevel 1 exit /b 1',
+        *[f'call :run {command} || goto :fail' for command in commands],
+        *([f'pushd "{REPO}" || goto :fail',
+           f'"%RS_PYTHON%" -B -m modules.prior_census --input-manifest "{production_contract["RS_INPUT_PRIOR_MANIFEST"]}" --expected-sha256 "{production_contract["RS_INPUT_PRIOR_SHA256"]}" --input-report "{production_contract["RS_INPUT_PRIOR_REPORT"]}" --output "{production_contract["RS_INPUT_PRIOR_RESULT"]}"',
+           'if errorlevel 1 ( popd & goto :fail )', 'popd'] if production_contract else []),
+        f'call "{SCRIPTS / "RuntimeAbortGuard.bat"}" || exit /b 1223',
+        '%RealityScan% -delegateTo %RS_INSTANCE% -quit', 'exit /b 0', ':fail',
+        'echo ERROR: probe command failed; no scientific conclusion.', 'exit /b 1', run_tail,
+    ])
+    batch = directory / 'import_probe.bat'
+    write_text(batch, script, crlf=True)
+    return str(batch)
+
+
 def prepare(plan):
     """Materialize reviewed inputs only; this function cannot launch RS."""
     root = safe_path(plan['root'])
     project, source = map(safe_path, (plan['project_root'], plan['source_root']))
     if not root.is_relative_to(project / 'proc/tmp') or root.is_relative_to(source) or root.exists():
         raise ValueError('Refused existing/unowned probe root')
+    if 'checkpoint_source' in plan:
+        assert_checkpoint_baseline(plan)
     for path, expected in plan['dependency_hashes'].items():
         if digest(path) != expected:
             raise ValueError(f'Dependency changed after planning: {path}')
@@ -317,6 +572,14 @@ def prepare(plan):
     for cell in plan['cells']:
         directory = root / cell
         directory.mkdir()
+        if cell == 'checkpoint_reload':
+            try:
+                detail = prepare_checkpoint_cell(plan, directory, template)
+            finally:
+                assert_checkpoint_baseline(plan)
+            detail['batch'] = write_probe_batch(directory, detail['commands'], detail['production_contract'], run_tail)
+            plan['cell_details'][cell] = detail
+            continue
         images, expectations, masks = [], [], []
         production = cell in ('production_calibration_csv', 'production_mask_control', 'production_mask_cold')
         native = cell.startswith('native_xmp')
@@ -476,21 +739,7 @@ def prepare(plan):
                 commands = positive + commands
             commands += ['-selectAllImages', f'-exportMasks "{mask_export}" "{mask_params}"']
         commands += ['-deselectAllImages', f'-save "{directory / "readback.rsproj"}"']
-        script = '\n'.join([
-            '@echo off', 'setlocal', f'call "{SCRIPTS / "SetVariables.bat"}"',
-            'if errorlevel 1 exit /b 1', 'set "ErrorsFile=%ErrorPath%\\errors_%RS_INSTANCE%.txt"',
-            f'call "{SCRIPTS / "RuntimeAbortGuard.bat"}" || exit /b 1223',
-            f'call "{SCRIPTS / "startRealityScan.bat"}"', 'if errorlevel 1 exit /b 1',
-            *[f'call :run {command} || goto :fail' for command in commands],
-            *([f'pushd "{REPO}" || goto :fail',
-               f'"%RS_PYTHON%" -B -m modules.prior_census --input-manifest "{production_contract["RS_INPUT_PRIOR_MANIFEST"]}" --expected-sha256 "{production_contract["RS_INPUT_PRIOR_SHA256"]}" --input-report "{production_contract["RS_INPUT_PRIOR_REPORT"]}" --output "{production_contract["RS_INPUT_PRIOR_RESULT"]}"',
-               'if errorlevel 1 ( popd & goto :fail )', 'popd'] if production_contract else []),
-            f'call "{SCRIPTS / "RuntimeAbortGuard.bat"}" || exit /b 1223',
-            '%RealityScan% -delegateTo %RS_INSTANCE% -quit', 'exit /b 0', ':fail',
-            'echo ERROR: probe command failed; no scientific conclusion.', 'exit /b 1', run_tail,
-        ])
-        batch = directory / 'import_probe.bat'
-        write_text(batch, script, crlf=True)
+        batch = write_probe_batch(directory, commands, production_contract, run_tail)
         plan['cell_details'][cell] = dict(batch=str(batch), reports=reports, expected=expectations,
                                           commands=commands, python_log=str(directory / 'driver.log'),
                                           production_contract=production_contract,
@@ -502,6 +751,8 @@ def prepare(plan):
                                           sentinel_global_overrides=GLOBALS if production else {},
                                           mask_option_readback='UNOBSERVABLE_NO_DOCUMENTED_REPORT_VARIABLE',
                                           mask_export_params_status='UNVERIFIED_EMPTY_CONFIGURATION' if masks else 'NOT_TESTED')
+    if 'checkpoint_source' in plan:
+        assert_checkpoint_baseline(plan)
     plan['artifact_hashes'] = {str(path.relative_to(root)): digest(path)
                               for path in sorted(root.rglob('*')) if path.is_file()}
     manifest = root / 'probe.json'
@@ -561,23 +812,34 @@ def verify(manifest, cell):
                         valid = False
                     if not valid:
                         missing.append(dict(stage=stage, filename=row['filename'], field=field, raw=row[field]))
-    if cell == 'report_control':
+    if cell in ('report_control', 'checkpoint_reload'):
         builtin = Path(plan['root']) / cell / 'builtin_overview.html'
         if not builtin.is_file() or builtin.stat().st_size == 0:
             raise ValueError('Shipped Overview report positive control is missing/empty')
-    if cell in ('production_calibration_csv', 'production_mask_control', 'production_mask_cold'):
+    if cell in ('production_calibration_csv', 'production_mask_control', 'production_mask_cold', 'checkpoint_reload'):
         contract = detail['production_contract']
         with open(contract['RS_INPUT_PRIOR_RESULT'], encoding='utf-8') as stream:
             result = json.load(stream)
         if result.get('verdict') != 'VERIFIED_INPUT_PRIORS' or result.get('expected_sha256') != contract['RS_INPUT_PRIOR_SHA256']:
             raise ValueError('Production input census failed or refers to another contract')
-    mask_evidence = verify_mask_exports(detail) if cell in ('production_mask_control', 'production_mask_cold') else None
+    if cell == 'checkpoint_reload':
+        assert_checkpoint_baseline(plan)
+        if digest(contract['RS_INPUT_PRIOR_MANIFEST']) != contract['RS_INPUT_PRIOR_SHA256']:
+            raise ValueError('Reload census contract changed')
+        expected = json.loads(Path(contract['RS_INPUT_PRIOR_MANIFEST']).read_text(encoding='utf-8'))
+        prior_census.assert_input_priors(expected, contract['RS_INPUT_PRIOR_REPORT'])
+        restored = detail['restore_evidence']
+        for name, sha in restored['before'].items():
+            if digest(Path(restored['scene']).parent / name) != sha:
+                raise ValueError('Saved scene bundle changed during reload')
+    mask_evidence = verify_mask_exports(detail) if cell in ('production_mask_control', 'production_mask_cold', 'checkpoint_reload') else None
     production = cell in ('production_calibration_csv', 'production_mask_control', 'production_mask_cold')
     return dict(cell=cell, alignment_performed=False, reports=reports,
                 mask_evidence=mask_evidence,
                 missing_measurements=missing,
                 expected=detail['expected'], global_accuracy=GLOBALS,
                 verdict=('INCOMPLETE_READBACK' if missing else
+                         'VERIFIED_CHECKPOINT_RELOAD' if cell == 'checkpoint_reload' else
                          'VERIFIED_PRODUCTION_IMPORT' if production else 'READBACK_ONLY_REQUIRES_SENTINEL_COMPARISON'),
                 open_claim='Import readback alone does not establish physical camera/world axis semantics')
 
@@ -638,6 +900,8 @@ def run(manifest, expected_sha256, cell):
     for path, expected in plan['dependency_hashes'].items():
         if digest(path) != expected:
             raise ValueError(f'Probe dependency changed: {path}')
+    if 'checkpoint_source' in plan:
+        assert_checkpoint_baseline(plan)
     detail = plan['cell_details'][cell]
     if cell != 'report_control':
         verify(manifest, 'report_control')
@@ -672,11 +936,14 @@ def run(manifest, expected_sha256, cell):
         os.environ.update(environment)
         from modules.realityscan_interface.realityscan_cli import RealityScanCLI
         cli = RealityScanCLI(logger, instance_name=plan['instance'])
+        started = time.perf_counter()
         result = cli.run_batch_script(detail['batch'], [], str(root / cell / 'logs'))
+        elapsed = time.perf_counter() - started
         logger.info('RealityScanCLI result: %s', result)
         if not result.success or result.ownership_retained:
             raise RuntimeError(f'RealityScanCLI probe workflow failed: {result}')
         evidence = verify(manifest, cell)
+        evidence['native_cell_seconds'] = elapsed
         write_text(root / cell / 'readback.json', json.dumps(evidence, indent=2))
         logger.info('Readback recorded: %s', evidence['verdict'])
         return evidence
@@ -693,6 +960,8 @@ def run(manifest, expected_sha256, cell):
         os.fsync(handler.stream.fileno())
         logger.removeHandler(handler)
         handler.close()
+        if 'checkpoint_source' in plan:
+            assert_checkpoint_baseline(plan)
 
 
 def main():
@@ -704,6 +973,7 @@ def main():
             command.add_argument('--' + name, required=True)
         command.add_argument('--reserve-gib', type=float, default=50)
         command.add_argument('--cells', nargs='+', choices=CELLS)
+        command.add_argument('--checkpoint-scene')
     for action in ('verify', 'run'):
         command = actions.add_parser(action)
         command.add_argument('--manifest', required=True)

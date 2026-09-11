@@ -412,6 +412,10 @@ def process_data(raw_dir, processed_dir):
             """Apply a 1-D measurement update on a single state component."""
             H = np.zeros((1, 8))
             H[0, state_index] = 1.0
+            if state_index in (3, 4):
+                # Use the equivalent observation nearest the continuous angle
+                # estimate: +179 -> -179 is +2 degrees, not -358 degrees.
+                value = kf.x[state_index] + wrap_angle(float(value) - kf.x[state_index])
             kf.update(np.array([float(value)]), H=H, R=np.array([[variance]]))
 
         for i, row in df.iterrows():
@@ -432,7 +436,9 @@ def process_data(raw_dir, processed_dir):
                 scalar_update(row["Herc_Depth_1"], 2, 0.1 ** 2)
                 updates_applied += 1
 
-            # USBL update with a 3-sigma outlier gate over the last 20 accepted fixes.
+            # USBL gate over the last 20 observed fixes, including rejected ones.
+            # This permits reacquisition but can widen the gate during bad bursts;
+            # changing that scientific policy requires separate validation.
             if not np.isnan(row.get("x_usbl", np.nan)) and not np.isnan(row.get("y_usbl", np.nan)):
                 accept = True
                 if len(recent_usbl_x) >= 2:
@@ -458,8 +464,8 @@ def process_data(raw_dir, processed_dir):
                 else:
                     usbl_rejected += 1
 
-            # DVL update only at depth (<= -30 m), i.e. where the DVL has bottom
-            # lock and its dead-reckoning solution is trustworthy.
+            # Depth-eligible dead reckoning (<= -30 m), not measured bottom lock.
+            # The imported fields contain no per-sample beam/lock validity proof.
             # NOTE: the original condition was `>= -30`, which combined with the
             # depth <= -20 pre-filter meant DVL was only used in a 10 m band and,
             # in practice, never (verified on NA167/H2075: 0 of 48,805 DVL fixes used).
@@ -504,11 +510,9 @@ def process_data(raw_dir, processed_dir):
                 scalar_update(row["Pitch_rad"], 4, 0.017 ** 2)
                 updates_applied += 1
 
-            # Wrap orientation angles.
-            kf.x[3] = wrap_angle(kf.x[3])
-            kf.x[4] = wrap_angle(kf.x[4])
-
-            # Record post-update state for the backward smoothing pass.
+            # Keep roll/pitch continuous through the linear RTS backward pass.
+            # Wrapping here would reintroduce a 2*pi jump into its residuals.
+            # Only the published degree columns are wrapped below.
             xs_hist.append(kf.x.copy())
             Ps_hist.append(kf.P.copy())
             Fs_hist.append(F)
@@ -630,6 +634,9 @@ def process_data(raw_dir, processed_dir):
         report.metric("dvl_position_updates", dvl_updates)
         report.metric("dvl_fixes_gated_out", dvl_rejected)
         report.metric("usbl_fixes_gated_out", usbl_rejected)
+        report.metric("usbl_gate_history", "last_20_observed_fixes_including_rejections")
+        report.metric("dvl_bottom_lock_evidence", "unavailable; depth eligibility is not measured lock")
+        report.metric("orientation_filter", "nearest_branch_updates_continuous_rts_output_wrap")
         report.metric("rts_smoother", "applied" if len(Xs) >= 2 else "skipped (too few rows)")
         if dvl_updates == 0 and dvl_success > 0:
             report.anomaly("dvl-unused",

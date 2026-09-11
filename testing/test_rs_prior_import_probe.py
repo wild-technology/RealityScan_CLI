@@ -11,6 +11,187 @@ from PIL import Image
 from testing import rs_prior_import_probe as probe
 
 
+@pytest.fixture
+def checkpoint_plan(plan, monkeypatch):
+    """Owned offline saved-scene bytes; native loading is deliberately untested."""
+    import xml.etree.ElementTree as ET
+    from modules.realityscan_interface.realityscan_cli import RealityScanCLI
+    from testing.test_native_prior_delivery import report_text as census_text
+    monkeypatch.setattr(RealityScanCLI, '_process_inventory', staticmethod(lambda: []))
+    baseline = probe.build_plan(plan['project_root'], plan['source_root'], plan['install_dir'],
+                                plan['instance'], 'baseline', 1,
+                                cells=['report_control', 'production_mask_cold'])
+    probe.prepare(baseline)
+    detail = baseline['cell_details']['production_mask_cold']
+    folder = Path(baseline['root']) / 'production_mask_cold'
+    contract = json.loads(Path(detail['production_contract']['RS_INPUT_PRIOR_MANIFEST']).read_text())
+    Path(detail['production_contract']['RS_INPUT_PRIOR_REPORT']).write_text(census_text(contract))
+    xml = ET.Element('RealityScan')
+    coordinates = ET.SubElement(xml, 'coordinates')
+    ET.SubElement(coordinates, 'coordinateSystem', name='Local:1 - Euclidean', index='1')
+    ET.SubElement(coordinates, 'projectCoordinates', index='1')
+    source = ET.SubElement(xml, 'source')
+    for row in detail['masks']:
+        node = ET.SubElement(source, 'input', fileName=Path(row['image']).name)
+        ET.SubElement(node, 'layer', type='mask', fileName=Path(row['path']).name)
+    (folder / 'readback').mkdir()
+    for name in ('entities', 'animation', 'controlpoints', 'appConfig'):
+        relative = f'readback/{name}0.dat'
+        (folder / relative).write_bytes(('offline ' + name).encode())
+        ET.SubElement(xml, name, fileName=relative)
+    scene = folder / 'readback.rsproj'
+    ET.ElementTree(xml).write(scene, encoding='utf-8')
+    return probe.build_plan(plan['project_root'], baseline['root'], plan['install_dir'],
+                            plan['instance'], 'checkpoint', 1,
+                            cells=['report_control', 'checkpoint_reload'], checkpoint_scene=scene)
+
+
+def test_checkpoint_uses_real_restore_and_readback_only(checkpoint_plan, monkeypatch):
+    from module_base import scene_checkpoint
+    original_restore = scene_checkpoint.restore_scene
+    calls = []
+    def restore(scene, root, tag, logger):
+        calls.append((scene, root, tag))
+        assert Path(scene).read_bytes().startswith(b'INTENTIONALLY INVALID')
+        assert Path(scene).is_relative_to(Path(checkpoint_plan['root']))
+        original_restore(scene, root, tag, logger)
+    monkeypatch.setattr(scene_checkpoint, 'restore_scene', restore)
+    baseline = probe.tree_hashes(checkpoint_plan['source_root'])
+    result = probe.prepare(checkpoint_plan)
+    detail = checkpoint_plan['cell_details']['checkpoint_reload']
+    evidence = detail['restore_evidence']
+    assert len(calls) == 1 and evidence['before'] == evidence['after']
+    assert evidence['damaged_sha256'] != evidence['before']['readback.rsproj']
+    assert evidence['restore_seconds'] >= 0 and evidence['checkpoint_seconds'] >= 0
+    assert evidence['verdict'] == 'VERIFIED_BYTE_RESTORE_NATIVE_RELOAD_PENDING'
+    assert baseline == probe.tree_hashes(checkpoint_plan['source_root'])
+    assert str(probe.REPO / 'module_base/scene_checkpoint.py') in checkpoint_plan['dependency_hashes']
+    assert detail['commands'][0].startswith('-load ') and detail['commands'][0].endswith(' deleteAutosave')
+    assert all(command.startswith(('-load ', '-exportReport ', '-selectAllImages', '-exportMasks ')) for command in detail['commands'])
+    assert len(detail['expected']) == len(detail['masks']) == 4
+    assert b'\n' not in Path(detail['batch']).read_bytes().replace(b'\r\n', b'')
+    assert not Path(detail['python_log']).exists()
+    with pytest.raises(FileNotFoundError):
+        probe.verify(result['manifest'], 'checkpoint_reload')
+
+
+@pytest.mark.parametrize('defect', ['baseline_changed', 'writer', 'access_denied', 'restore_failure'])
+def test_checkpoint_failures_never_launch_or_damage_baseline(checkpoint_plan, monkeypatch, defect):
+    from modules.realityscan_interface.realityscan_cli import RealityScanCLI
+    from module_base import scene_checkpoint
+    if defect == 'baseline_changed':
+        (Path(checkpoint_plan['source_root']) / 'unexpected.txt').write_text('changed')
+    elif defect == 'writer':
+        monkeypatch.setattr(RealityScanCLI, '_process_inventory', staticmethod(lambda: [dict(ProcessId=123, Name='RealityScan.exe')]))
+    elif defect == 'access_denied':
+        def inaccessible(*args):
+            raise OSError('process census denied')
+        monkeypatch.setattr(RealityScanCLI, '_process_inventory', staticmethod(inaccessible))
+    else:
+        def fail_restore(*args):
+            raise RuntimeError('restore sentinel failure')
+        monkeypatch.setattr(scene_checkpoint, 'restore_scene', fail_restore)
+    before = probe.tree_hashes(checkpoint_plan['source_root'])
+    with pytest.raises((ValueError, RuntimeError)):
+        probe.prepare(checkpoint_plan)
+    assert before == probe.tree_hashes(checkpoint_plan['source_root'])
+    assert not (Path(checkpoint_plan['root']) / 'probe.json').exists()
+    if defect == 'restore_failure':
+        cell = Path(checkpoint_plan['root']) / 'checkpoint_reload'
+        assert (cell / 'damaged_scene.bin').exists()
+        assert (cell / 'checkpoints/before_damage/_checkpoint.json').exists()
+        assert 'restore sentinel failure' in (cell / 'checkpoint.log').read_text()
+
+
+@pytest.mark.parametrize('defect', ['escaping', 'missing', 'absolute', 'mask_missing', 'census_mismatch', 'crs'])
+def test_checkpoint_rejects_incomplete_or_unowned_scene_references(checkpoint_plan, defect):
+    import xml.etree.ElementTree as ET
+    scene = Path(checkpoint_plan['checkpoint_source']['scene'])
+    xml = ET.parse(scene)
+    node = xml.getroot().find('./source/input')
+    if defect == 'crs':
+        xml.getroot().find('./coordinates/coordinateSystem').set('name', 'EPSG:32610')
+    elif defect == 'mask_missing':
+        node.remove(node.find('layer'))
+    else:
+        node.set('fileName', {'escaping': '../escape.jpeg', 'missing': 'missing.jpeg',
+                             'absolute': str(scene), 'census_mismatch': 'first.csv'}[defect])
+    xml.write(scene)
+    with pytest.raises(ValueError):
+        probe.inspect_checkpoint_source(scene, Path(checkpoint_plan['source_root']))
+
+
+def test_checkpoint_checks_quiescence_again_before_restore(checkpoint_plan, monkeypatch):
+    from modules.realityscan_interface.realityscan_cli import RealityScanCLI
+    observations = []
+    def processes(*args):
+        observations.append(len(observations))
+        return [dict(ProcessId=123, Name='RealityScan.exe')] if len(observations) == 4 else []
+    monkeypatch.setattr(RealityScanCLI, '_process_inventory', staticmethod(processes))
+    with pytest.raises(ValueError, match='writer may be active'):
+        probe.prepare(checkpoint_plan)
+    assert len(observations) == 4
+    assert (Path(checkpoint_plan['root']) / 'checkpoint_reload/damaged_scene.bin').exists()
+
+
+@pytest.mark.parametrize('bad', [None, 'position', 'pitch_accuracy', 'flags', 'crs', 'mask', 'bundle', 'baseline', 'contract'])
+def test_checkpoint_actual_census_and_pixel_verifier_fail_closed(checkpoint_plan, bad):
+    import shutil
+    from testing.test_native_prior_delivery import report_text as census_text
+    from testing.rs_prior_probe_compare import compare
+    result = probe.prepare(checkpoint_plan)
+    detail = checkpoint_plan['cell_details']['checkpoint_reload']
+    contract = detail['production_contract']
+    expected = json.loads(Path(contract['RS_INPUT_PRIOR_MANIFEST']).read_text())
+    text = census_text(expected)
+    Path(contract['RS_INPUT_PRIOR_REPORT']).write_text(text)
+    census = probe.prior_census.assert_input_priors(expected, contract['RS_INPUT_PRIOR_REPORT'])
+    census['expected_sha256'] = contract['RS_INPUT_PRIOR_SHA256']
+    Path(contract['RS_INPUT_PRIOR_RESULT']).write_text(json.dumps(census))
+    lines = text.replace('INPUT_PRIORS=1', 'PROBE_SCHEMA=1').replace('END_INPUT_PRIORS', 'END_PROBE').splitlines()
+    raw_lines = []
+    for line in lines:
+        if line.startswith('PRIOR|'):
+            fields = line.split('|')
+            values = dict(zip(probe.prior_census.INPUT_FIELDS, fields[2:]))
+            values.update(inputIsOpkRotationPrior='False', inputOmega='0', inputPhi='0', inputKappa='0')
+            line = '|'.join(fields[:2] + [values[field] for field in probe.PRIOR_FIELDS])
+        raw_lines.append(line)
+    raw = '\n'.join(raw_lines)
+    Path(detail['reports'][0]['path']).write_text(raw)
+    directory = Path(checkpoint_plan['root']) / 'checkpoint_reload'
+    (directory / 'builtin_overview.html').write_text('offline report control')
+    for row in detail['masks']:
+        shutil.copy2(row['path'], Path(detail['mask_export']) / Path(row['path']).name)
+    if bad in ('position', 'pitch_accuracy', 'flags', 'crs'):
+        field = {'position': 'inputX', 'pitch_accuracy': 'inputAccuracyPitch',
+                 'flags': 'inputIsOrientationPrior', 'crs': 'inputCS'}[bad]
+        lines = text.splitlines()
+        fields = lines[2].split('|')
+        fields[2 + probe.prior_census.INPUT_FIELDS.index(field)] = 'False' if bad == 'flags' else '999'
+        lines[2] = '|'.join(fields)
+        Path(contract['RS_INPUT_PRIOR_REPORT']).write_text('\n'.join(lines))
+    elif bad == 'mask':
+        next(Path(detail['mask_export']).iterdir()).unlink()
+    elif bad == 'bundle':
+        (Path(detail['restore_evidence']['scene']).parent / 'readback/appConfig0.dat').write_bytes(b'changed')
+    elif bad == 'baseline':
+        (Path(checkpoint_plan['source_root']) / 'extra.txt').write_text('changed')
+    elif bad == 'contract':
+        Path(contract['RS_INPUT_PRIOR_MANIFEST']).write_text('{}')
+    if bad:
+        with pytest.raises((ValueError, RuntimeError)):
+            probe.verify(result['manifest'], 'checkpoint_reload')
+    else:
+        value = probe.verify(result['manifest'], 'checkpoint_reload')
+        assert value['verdict'] == 'VERIFIED_CHECKPOINT_RELOAD'
+        assert len(value['mask_evidence']['images']) == 4
+        (directory / 'readback.json').write_text(json.dumps(value))
+        comparison = compare(result['manifest'], result['sha256'], cells=['checkpoint_reload'])
+        assert comparison['cells'][0]['control_contract'] == 'MATCH'
+        assert comparison['cells'][0]['input_census']['cameras'] == 4
+
+
 @pytest.mark.parametrize('failure', [None, 'missing', 'wrong_pixels', 'duplicate', 'unknown', 'source_changed'])
 def test_mask_export_requires_exact_attachment_pixels(tmp_path, failure):
     mask = tmp_path / 'camupper_probe.jpg.mask.png'

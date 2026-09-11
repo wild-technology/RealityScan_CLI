@@ -1262,8 +1262,12 @@ confirmed mechanism that was never linked to the symptom.]
 manifest/hash-validated staging and retains the original bundle until restore
 commit succeeds. It refuses lock markers and legacy unmanifested snapshots.
 Callers must establish writer quiescence before restore; absence of a lock is
-insufficient. The new implementation has scoped offline failure-injection evidence,
-not a live RealityScan reload proof. See [CKP-001..005 / P-CHECKPOINT](../EVIDENCE_LEDGER.json)
+insufficient. Offline failure-injection tests and a fresh native reload now pass
+for an owned copy of a four-input, unaligned local-Euclidean scene: checkpoint,
+deliberate scene damage, byte restoration, then native census and four exact mask
+pixel readbacks without reimport or repair. This does not verify aligned/model
+bundles, scientific coordinate frames or power-loss recovery. See
+[checkpoint_reload_validation / CKP-001..005](../EVIDENCE_LEDGER.json)
 and [verification status](../VERIFICATION_STATUS.md) for recovery and crash limits.
 
 The growth loop's invariant is textbook:

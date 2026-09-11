@@ -69,6 +69,25 @@ commit, inputs, outputs, row counts, and every event.
 
 ## Data-handling conventions
 
+Roll and pitch observations are mapped to the nearest equivalent angle of the
+current estimate. Their internal histories remain continuous through RTS
+smoothing; only published degrees wrap to [-180, 180). This prevents a
+179-to-minus-179 transition from being treated as a 358-degree turn. Noise
+parameters are unchanged. The linear update and smoother residuals are documented
+in [FilterPy's implementation](https://filterpy.readthedocs.io/en/latest/_modules/filterpy/kalman/kalman_filter.html).
+
+The USBL 3-sigma gate uses the last 20 **observed** fixes, including rejected
+ones. Earlier wording claiming accepted-only history was incorrect. This policy
+can reacquire a moving track but can also widen its gate during bad bursts;
+it is not a demonstrated truth classifier. Changing it to accepted-only history
+requires a validated reacquisition policy. An H2101 counterfactual rejected
+17,546 of 17,548 fixes under accepted-only history, versus the current 1,044.
+Those counts do not identify which observations are scientifically correct.
+
+DVL depth eligibility at or below -30 m is not measured bottom-lock evidence.
+The imported fields contain no per-sample beam/lock validity. The existing depth
+and innovation gates remain unchanged, and filter reports state this limitation.
+
 The vendored SDYN parser requires a valid NMEA checksum. Prefixed records use
 their explicit UTC receipt date and the nearest adjacent-day GGA acquisition
 time, with at most 60 seconds disagreement; receipt time does not replace the
