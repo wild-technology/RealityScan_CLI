@@ -8,7 +8,7 @@ from PIL import Image
 from modules.source_inventory import (
     scan_source, hash_identities, apply_dive_window, verify_images, stage_inventory,
     approval_token, summarize_inventory, assert_source_unchanged, source_fingerprint,
-    SourceInventory, SourceItem, copy_verified,
+    SourceInventory, SourceItem, copy_verified, reconcile_image_identities,
 )
 
 
@@ -16,6 +16,41 @@ def image(path, color="white", size=(12, 8)):
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", size, color).save(path)
     return path
+
+
+def test_selected_variants_reconcile_without_rehash_and_preserve_other_errors(tmp_path, monkeypatch):
+    source = tmp_path / 'source'
+    name = 'camupper_20250524T010000Z.jpg'
+    image(source / 'original' / name, 'white')
+    image(source / 'processed' / name, 'black')
+    items = scan_source(source)
+    hash_identities(items)
+    retained, excluded = items
+    retained.exception += '; independent decode finding'
+    excluded.included = False
+    from modules import source_inventory as module
+    monkeypatch.setattr(module, 'file_hash', lambda *a, **k: pytest.fail('Selection must not rehash sources'))
+    reconcile_image_identities(items)
+    assert retained.exception == 'independent decode finding'
+    assert excluded.exception == ''
+    assert summarize_inventory(items)['cameras']['starboard']['conflicting_names'] == 1
+    excluded.included = True
+    reconcile_image_identities(items)
+    assert all('different image content' in item.exception for item in items)
+    assert 'independent decode finding' in retained.exception
+
+
+def test_identity_reconciliation_rejects_missing_hash_before_changing_records(tmp_path):
+    source = tmp_path / 'source'
+    image(source / 'a' / 'camupper_20250524T010000Z.jpg')
+    image(source / 'b' / 'camupper_20250524T010000Z.jpg')
+    items = scan_source(source)
+    hash_identities(items)
+    items[-1].sha256 = ''
+    before = [vars(item).copy() for item in items]
+    with pytest.raises(ValueError, match='hashes are required'):
+        reconcile_image_identities(items)
+    assert [vars(item) for item in items] == before
 
 
 def test_source_mismatch_reports_actual_expected_observed_and_root(tmp_path, monkeypatch):

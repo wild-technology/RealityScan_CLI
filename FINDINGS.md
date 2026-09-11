@@ -537,3 +537,29 @@ rig-mount geo fixture, and reports removal of it and the stale unattended re-ena
 workaround. The targeted order-dependent check is next; no post-fix full-suite
 pass is claimed. Main reports the complete vendored suite at 147 passed in 9.34 s.
 These are main-reported results, not new tests run by this documentation worker.
+
+## [INVENTORY] 2026-09-11 - selection edits must reconcile identity conflicts and duplicate references
+
+Code inspection and a public-controller regression reproduced two defects after
+69297cf: excluding an unwanted content variant left the retained image flagged;
+excluding a canonical identical copy left retained duplicates pointing at it.
+The shared classifier now recomputes selection conflicts and copy references
+from existing hashes after decisions, preserving unrelated findings. Confirmation
+and actual staging pass after both exclusions; re-including conflicting content
+blocks approval again. Targeted tests:184 passed in19.10s. Read-only simulations
+against the saved H2101 census resolved both possible upper-camera choices with
+zero retained conflicts/excluded duplicate targets;61 unknown images remain.
+No source, inventory decision or approval was changed. Full follow-up suite:
+2857 passed,1 skipped in371.35s (session79800).
+See docs/INVENTORY_CHECKPOINT.md and EVIDENCE_LEDGER.json for the maintained rule
+and exact scope. The source census retains observed conflicting-name counts.
+
+## [DESKTOP] 2026-09-11 - normalize relative project arguments at the application boundary
+
+The packaging audit reproduced exit2 for documented `python app.py project.rovscan`:
+ProjectDocument.load requires an absolute path. The entrypoint now uses Path.absolute
+before loading; the strict loader and lexical traversal guard remain unchanged.
+The five isolated entrypoint regressions plus desktop suite passed151 tests in
+25.90s (session23407), after the full run; these scopes are not additive.
+Absolute .rovscan association forwarding was separately checked with mocked Qt
+and real argument parsing; this is not new-machine on-screen acceptance.

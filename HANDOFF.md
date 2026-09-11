@@ -1,5 +1,33 @@
 # HANDOFF — generalized Hercules deployment
 
+## 2026-09-11 — selection-resolution follow-up
+
+The deployment implementation was committed and pushed as `69297cf` to
+`origin/agent-native-execution`; the precommit section below is historical.
+This continuation found a concrete backend defect: excluding a different-content
+variant left the kept image's conflict flag, and removing an identical canonical
+copy left retained copies pointing at it. The shared identity classifier now runs
+after selection edits as well as hashing, preserving unrelated findings and
+invalidating approval. GUI filtering/visible-row bulk selection is explained.
+
+Targeted source/controller suite: **184 passed in 19.10 s**. Read-only hypothetical
+selection checks against the saved H2101 census left zero selected name conflicts
+and zero excluded duplicate targets for either upper-camera variant choice.
+Both retained 103,840 unique image identities, including the 61 unresolved unknowns;
+neither scenario was saved or approved. Source bytes were not read or modified;
+the saved inventory bytes were confirmed unchanged. Full follow-up suite:
+**2857 passed, 1 skipped in 371.35 s** (session79800).
+
+A packaging audit also reproduced the documented relative project argument
+failing the absolute-only loader. `app.py` now makes it absolute at the boundary,
+retaining strict validation. Five entrypoint tests were added after full-suite
+session79800 started; the subsequent entrypoint/desktop run passed **151 tests
+in 25.90 s** (session23407), including all five new cases. These scopes are not
+additive. No new-machine GUI or RealityScan startup claim follows from mocked tests.
+
+Owner source choices, remaining review/settings gates and scientific validation
+still block full processing. The approved project root remains F:/NA171.
+
 ## 2026-09-11 — current state; goal INCOMPLETE
 
 Build the general native Windows 11/Python 3.13 deployment product; H2101 is reference

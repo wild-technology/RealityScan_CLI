@@ -59,6 +59,21 @@ question. Worker completion lifts the inventory/checkpoint code freeze.
 
 ## Tests and current validation
 
+Selection-resolution follow-up after `69297cf`: excluding a conflicting variant
+now removes only the derived identity conflict from the retained selection;
+excluding a canonical identical copy promotes a retained copy. Re-inclusion
+restores conflicts and requires renewed approval. **184 source/controller tests
+passed in 19.10 s**, including confirmation and actual staging after both decisions.
+Read-only H2101 census simulations for either upper-camera variant choice produced
+zero selected filename conflicts and zero duplicate references to excluded copies;
+61 unknown-camera images remain flagged. No choice or approval was saved. The GUI
+now explains filtered Ctrl+A and shows the exact bulk exclusion count. The full
+follow-up suite passed **2857 tests with 1 skip in 371.35 s** (session79800).
+The later relative-project-entrypoint fix and five new regressions were validated
+with the desktop suite: **151 passed in 25.90 s** (session23407). These scopes are
+not additive; the five new cases were not collected by the earlier full run.
+The 2854 count below is historical evidence for the prior commit.
+
 Actual reference UI read-only smoke loaded **175,761 rows / 48,426 flagged rows**:
 read6.662 s, hydration9.189 s, with **one2.335 s heartbeat gap** under concurrent
 suite load, so this is not a freeze-free claim. All-files/flags filters took

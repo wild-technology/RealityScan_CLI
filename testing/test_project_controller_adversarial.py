@@ -22,7 +22,7 @@ from modules.project_staging import materialize_selection
 from modules.project_workspace import ProjectDocument
 from modules.source_inventory import (
     apply_dive_window, approval_token, file_hash, hash_identities,
-    scan_source, source_fingerprint, verify_images,
+    scan_source, source_fingerprint, stage_inventory, verify_images,
 )
 from modules.spatial_review import assess_spatial
 
@@ -108,6 +108,56 @@ def wait(controller):
 def snapshot(root):
     return {path.relative_to(root).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
             for path in root.rglob("*") if path.is_file()}
+
+
+def test_variant_choice_and_duplicate_reselection_can_be_approved_and_staged(tmp_path, controller):
+    source = tmp_path / 'source'
+    paths = [source / folder / 'camupper_20250524T010000Z.jpg'
+             for folder in ('a-original', 'b-processed', 'c-copy')]
+    for path, color in zip(paths, ('white', 'black', 'white')):
+        path.parent.mkdir(parents=True)
+        Image.new('RGB', (16, 12), color).save(path)
+    paths[2].write_bytes(paths[0].read_bytes())
+    items = scan_source(source)
+    apply_dive_window(items, '2025-05-24T00:00:00Z', '2025-05-24T02:00:00Z')
+    verify_images(items)
+    hash_identities(items)
+    project = ProjectDocument.create('NA999', 'H9999', tmp_path / 'project', [source])
+    claim_root(project)
+    project.create_layout()
+    store = ReviewStore(project)
+    store.save_inventory(items, source_mask_policy='ignore_existing')
+    project.save()
+    original = snapshot(source)
+    with pytest.raises(ValueError, match='flagged files'):
+        controller.confirm_inventory(project, approval_token(items), 'fixture reviewer')
+
+    controller.set_inventory_decisions(project, [str(paths[1])], False, 'Keep original image content')
+    selected = store.inventory()
+    assert not any(item.exception for item in selected if item.included)
+    controller.confirm_inventory(project, approval_token(selected), 'fixture reviewer')
+    assert store.inventory(approved=True)
+
+    # Removing the preferred identical copy promotes a retained copy immediately.
+    controller.set_inventory_decision(project, str(paths[0]), False, 'Use the retained identical copy')
+    with pytest.raises(ValueError, match='review must be confirmed'):
+        store.require_approved('inventory')
+    selected = store.inventory()
+    retained = next(item for item in selected if item.included)
+    assert retained.path == str(paths[2]) and not retained.duplicate_of
+    controller.confirm_inventory(project, approval_token(selected), 'fixture reviewer')
+    stage_inventory(store.inventory(approved=True), tmp_path / 'staged', reserve_bytes=0,
+                    approved_token=approval_token(selected))
+    output = tmp_path / 'staged' / 'proc' / 'images' / 'starboard' / paths[2].name
+    assert output.read_bytes() == paths[2].read_bytes()
+    assert snapshot(source) == original
+
+    # Reintroducing a different-content version requires resolution and approval again.
+    controller.set_inventory_decision(project, str(paths[1]), True, 'Reconsider processed version')
+    selected = store.inventory()
+    assert all('different image content' in item.exception for item in selected if item.included)
+    with pytest.raises(ValueError, match='flagged files'):
+        controller.confirm_inventory(project, approval_token(selected), 'fixture reviewer')
 
 
 @pytest.mark.parametrize("bad_path", ["unknown", "valid_mask"])

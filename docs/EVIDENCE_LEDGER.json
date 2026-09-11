@@ -1,4 +1,28 @@
 {
+  "relative_project_entrypoint_followup": {
+    "date": "2026-09-11",
+    "base_commit": "69297cf",
+    "defect": "Documented relative project arguments reached the absolute-only loader unchanged and failed",
+    "fix": "Path.absolute at the app entry boundary; strict loader unchanged",
+    "tests": {"session": 23407, "passed": 151, "seconds": 25.90, "scope": "desktop UI plus five new entrypoint cases; not additive with the full suite"},
+    "limits": "Mocked Qt/controller startup does not establish new-machine on-screen Qt acceptance"
+  },
+  "selection_resolution_followup": {
+    "date": "2026-09-11",
+    "base_commit": "69297cf",
+    "defects": ["Excluded variants left retained conflict flags", "Excluded canonical copies left retained duplicate references"],
+    "targeted_tests": {"passed": 184, "seconds": 19.10},
+    "reference_mode": "read_only_in_memory_hypotheticals_no_approval",
+    "inventory_sha256": "278b25d3d4c83ebce47e8fd6539121d84541d3324893bf68a0bb829833efe258",
+    "scenarios": [
+      {"choice": "original_conflicting_variants", "excluded_occurrences": 22062, "retained_occurrences": 106304, "retained_unique": 103840},
+      {"choice": "batched_conflicting_variants", "excluded_occurrences": 21980, "retained_occurrences": 106386, "retained_unique": 103840}
+    ],
+    "both_scenarios": {"remaining_selected_name_conflicts": 0, "excluded_duplicate_targets": 0, "unresolved_selected_images": 61},
+    "source_writes": false,
+    "inventory_bytes_unchanged": true,
+    "full_suite": {"session": 79800, "passed": 2857, "skipped": 1, "seconds": 371.35, "scope": "collected before five new entrypoint cases and boundary fix; validated separately afterward"}
+  },
   "reference_ui_readonly_smoke": {
     "observed_at_utc": "2026-09-11T21:54:09.115355+00:00",
     "evidence_kind": "inspected_provenance_json_plus_main_reported_layout_limit",

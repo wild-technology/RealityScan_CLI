@@ -350,6 +350,38 @@ def apply_dive_window(items: list[SourceItem], launch: str, recovery: str) -> di
     return result
 
 
+def reconcile_image_identities(items: list[SourceItem], *, cancelled=None) -> None:
+    """Recompute selection conflicts and canonical copies from verified hashes.
+
+    This does not read or change source files. Excluded variants remain in the
+    census, but only competing retained content blocks processing. Other camera,
+    time and decode findings are preserved. Call after every inclusion change.
+    """
+    groups = defaultdict(list)
+    for item in items:
+        _check_cancelled(cancelled)
+        if item.kind == 'image':
+            if not re.fullmatch('[0-9a-f]{64}', item.sha256):
+                raise ValueError('Verified image hashes are required to reconcile selection')
+            groups[(item.camera, Path(item.path).name.casefold())].append(item)
+    conflict = 'Same camera/filename has different image content'
+    for group in groups.values():
+        _check_cancelled(cancelled)
+        competing = len({item.sha256 for item in group if item.included}) > 1
+        copies = defaultdict(list)
+        for item in group:
+            item.exception = '; '.join(x for x in item.exception.split('; ') if x != conflict)
+            item.duplicate_of = ''
+            if competing and item.included:
+                _issue(item, conflict)
+            copies[item.sha256].append(item)
+        for identical in copies.values():
+            canonical = min(identical, key=lambda im: (not im.included, im.relative_path))
+            for item in identical:
+                if item is not canonical:
+                    item.duplicate_of = canonical.path
+
+
 def hash_identities(items: list[SourceItem], *, cancelled=None, progress=None,
                     resume: bool = False) -> None:
     """Hash identities, with progress(done, total, path) for ALL inventory files.
@@ -366,7 +398,6 @@ def hash_identities(items: list[SourceItem], *, cancelled=None, progress=None,
         items.hashing_complete = False
     _check_cancelled(cancelled)
     assert_source_unchanged(items, cancelled=cancelled)
-    seen = defaultdict(list)
     for index, item in enumerate(items, 1):
         _check_cancelled(cancelled)
         path = Path(item.path)
@@ -378,25 +409,9 @@ def hash_identities(items: list[SourceItem], *, cancelled=None, progress=None,
             item.sha256 = file_hash(path, cancelled=cancelled)
         if _identity(path.stat()) != _identity(before):
             raise ValueError(f"Source changed during hashing: {path}")
-        if item.kind == 'image':
-            item.duplicate_of = ''
-            key = (item.camera, path.name.casefold())
-            seen[key].append(item)
         if progress is not None and index < len(items):
             progress(index, len(items), item.path)
-    for group in seen.values():
-        _check_cancelled(cancelled)
-        if len({item.sha256 for item in group}) > 1:
-            for item in group:
-                _check_cancelled(cancelled)
-                _issue(item, 'Same camera/filename has different image content')
-        else:
-            # An explicitly excluded copy must never become the only proc source.
-            canonical = min(group, key=lambda im: (not im.included, im.relative_path))
-            for item in group:
-                _check_cancelled(cancelled)
-                if item is not canonical:
-                    item.duplicate_of = canonical.path
+    reconcile_image_identities(items, cancelled=cancelled)
     assert_source_unchanged(items, cancelled=cancelled)
     if progress is not None:
         progress(len(items), len(items), items[-1].path if items else '')

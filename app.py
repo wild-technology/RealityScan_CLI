@@ -1,5 +1,6 @@
 """Launch the native ROVScan frontend with the existing project controller."""
 import argparse
+from pathlib import Path
 import sys
 
 
@@ -28,7 +29,7 @@ def main(argv=None, *, controller=None):
     project = None
     if args.project:
         try:
-            project = ProjectDocument.load(args.project)
+            project = ProjectDocument.load(Path(args.project).absolute())
         except (ValueError, OSError) as exc:
             QMessageBox.critical(None, "Cannot open project", str(exc))
             return 2

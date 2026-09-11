@@ -25,6 +25,20 @@ modifies source data, loads selection decisions, or grants approval.
 
 ## What is repeated and what is reused
 
+Changing a reviewed inclusion uses `reconcile_image_identities` on the saved
+hashes; it does not reread source bytes. Only distinct retained contents with the
+same camera/filename remain a processing conflict. Excluded variants stay in the
+source census, so its historical conflicting-name count can remain nonzero after
+the selection is resolved. Identical-copy references are recalculated immediately
+and prefer a retained copy. Other decode, camera and timestamp findings remain.
+Each decision invalidates approval and downstream reviews; reintroducing a
+competing variant restores the conflict and blocks confirmation.
+
+In the GUI, filter by the literal source-folder path, click the table and press
+Ctrl+A to select visible rows. The bulk button counts only included flagged files
+that it will exclude, and requires a reason. This supports large variant deliveries
+without choosing a preferred version automatically.
+
 1. Call the existing `scan_source` on every invocation. It checks the whole
    source tree before and after discovery. There is no second image scanner.
 2. Validate the exact metadata snapshot against the fresh scan, including paths,

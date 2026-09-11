@@ -134,6 +134,11 @@ class SourceTable(QWidget):
         filter_row.addWidget(self.filter_choice)
         filter_row.addWidget(self.search, 1)
         layout.addLayout(filter_row)
+        filter_help = QLabel("Filter matches literal text, ignoring case; use the folder path including separators. "
+                             "Click the table, then Ctrl+A to select all visible rows for Exclude selected flagged files. "
+                             "Only currently included flagged files will be excluded.")
+        filter_help.setWordWrap(True)
+        layout.addWidget(filter_help)
         self.model = RecordTableModel([("Path", "path"), ("Filename family", "family"), ("Optical camera", "camera"),
                                        ("Kind", "kind"), ("Bytes", "size_bytes"),
                                        ("Exception / decision", "exception")], check_key="included", parent=self)
@@ -172,7 +177,9 @@ class SourceTable(QWidget):
         return paths
 
     def _selection_changed(self, *args):
-        self.exclude_selected.setEnabled(bool(self.selected_flagged_paths()))
+        count = len(self.selected_flagged_paths())
+        self.exclude_selected.setEnabled(bool(count))
+        self.exclude_selected.setText(f"Exclude selected flagged files ({count:,})…")
 
     @property
     def items(self):

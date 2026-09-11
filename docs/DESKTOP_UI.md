@@ -12,6 +12,10 @@ installation produces an error and exit 2, not a simulated operating frontend.
 For embedding and tests, instantiate
 `desktop.main_window.MainWindow(controller=controller, project=document)`.
 `app.main(argv, controller=controller)` also supports explicit injection.
+The optional project argument may be relative to the launch directory, including
+quoted paths with spaces. The entrypoint makes it absolute before calling the
+strict loader; lexical traversal and project validation remain enforced. Open
+does not save, create the processing layout or start processing.
 
 The production entry point automatically opens the installation/storage check
 dialog after showing the window. It calls `deployment_preflight.inspect_deployment`

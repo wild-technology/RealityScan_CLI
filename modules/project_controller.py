@@ -22,7 +22,7 @@ from uuid import uuid4
 from .project_reviews import ReviewStore, claim_root, digest, write_json
 from .project_runtime import ExecutionControl, OwnershipUnconfirmed
 from .source_inventory import (approval_token, assert_source_unchanged,
-    file_hash, stage_inventory, summarize_inventory)
+    file_hash, reconcile_image_identities, stage_inventory, summarize_inventory)
 
 REPO = Path(__file__).resolve().parent.parent
 GIB = 1024 ** 3
@@ -619,6 +619,7 @@ class ProjectController:
                 raise ValueError("Fix the image/time/camera exception before including this image")
         for item in matching:
             item.included = included
+        reconcile_image_identities(items)
         for mask in items:
             if mask.kind == "mask" and mask.mask_for in selected:
                 mask.included = (value["payload"].get("source_mask_policy") != "ignore_existing"
