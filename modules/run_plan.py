@@ -893,24 +893,18 @@ def export_names_file(session: Session) -> None:
     """Author exports/components.names from the merge report (BOM-free)."""
     ws = session.workspace()
     merge = ws.latest_merge()
-    if not merge:
-        return
-    rep = _load_json(merge / "merge_report.json")
+    rep = _load_json(merge / "merge_report.json") if merge else {}
     names = [c.get("key", "").split("/")[-1]
              for rec in _records(rep, "clusters")
              for c in _records(rec, "final_components")]
     names = [n for n in names if n]
-    # `if names:` is deliberate but has a sharp edge the caller must cover:
-    # when the CURRENT report yields nothing this returns without touching
-    # an existing components.names, so a stale list survives. The export
-    # stage re-resolves both --project and --names at launch time
-    # (refresh_export_command below; the archived TUI does the same) for
-    # exactly that reason.
-    if names:
-        ws.exports.mkdir(parents=True, exist_ok=True)
-        with open(ws.exports / "components.names", "w",
-                  encoding="utf-8", newline="\r\n") as fh:
-            fh.write("\n".join(names) + "\n")
+    # Always replace the generated list, even when the report is absent,
+    # unreadable or empty. The driver's empty-list gate then refuses before
+    # boot; returning early here would export the previous run's names.
+    ws.exports.mkdir(parents=True, exist_ok=True)
+    with open(ws.exports / "components.names", "w",
+              encoding="utf-8", newline="\r\n") as fh:
+        fh.write("\n".join(names) + ("\n" if names else ""))
 
 
 def refresh_export_command(argv: list[str], session: Session) -> list[str]:

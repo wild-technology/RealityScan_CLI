@@ -419,40 +419,31 @@ FINDINGS 2026-07-28]. (That same H2023 observation is one side of the
 `_HighPoly_Raw` conflict in §5.4 — it is good evidence for exact matching and
 inconclusive about raw-model survival.)
 
-Selecting a name that does not exist produces **`err:5601` "model name not
-found"**, surfaced through the process trigger as **`2147942487`
-(`0x80070057`, `E_INVALIDARG`)** — the generic empty/no-op-selection code
-[VERIFIED: FINDINGS 2026-07-29; SURVEY_empirical §1 result-code table].
+Selecting without component context can produce **`err:5601` "model name not
+found"**, surfaced as **`2147942487` (`0x80070057`, `E_INVALIDARG`)** even when
+the model exists elsewhere in the project. Inside a populated component, a
+missing model name can instead silently leave the previous selection active.
+Select the component, then verify the selected model through the report before
+mutating it. [VERIFIED: A2; rs-reference 12 F-102; FINDINGS 2026-09-02/03.]
 
 ### 5.4 Renaming rewrites identity — the defect class
 
 `-renameSelectedModel` **removes the old name from the project**. Two
 production consequences, both paid for:
 
-1. **`<comp>_HighPoly_Raw` does not survive the production recipe when the
-   filter steps fire.** Mechanism: step `[2/8]` renames the selected model to
-   `_Cleanup1` as soon as the marginal-triangle filter produces a model, so the
-   raw name leaves the project, and `_Cleanup1` is then deleted by the cleanup
-   loop. Probed directly on the H2024 assembly:
-   `-selectModel cluster_4_a1_c0_HighPoly_Raw` → `err:5601` 'not found'. **The
-   models that actually persist per component there are `_HighPoly_Textured`,
-   `_Simplified_Textured`, plus one default-named residual**
-   [VERIFIED: FINDINGS 2026-07-29].
-   *Queued fix if raw retention is wanted:* `-duplicateSelectedModel`
-   immediately after `[1/8]`, before the filter chain touches it.
-
-   **The survival is conditional, and the repo record still disagrees with
-   itself** [CONTRADICTED, internal]: `:try_filter` skips its rename when the
-   selection is empty (§11), so on a mesh with no marginal triangles the raw
-   name is never consumed. The H2023 PD6 deliverable is recorded as keeping all
-   three models including `_HighPoly_Raw` [FINDINGS 2026-07-28, HANDOFF
-   2026-07-29 §"THE DELIVERABLE"], while the H2024 probe found it absent
-   [FINDINGS 2026-07-29]. **Do not assume either outcome — check by
-   `-selectModel` before depending on the name.** Both `HANDOFF.md` ("Three
-   kept models each: `_HighPoly_Raw`, …") and the `GenerateModel.bat` docstring
-   ("Models kept … `<comp>_HighPoly_Raw`") **still state the unconditional
-   version and are still wrong as shipped** [VERIFIED-by-inspection:
-   `GenerateModel.bat` lines 26–30, `HANDOFF.md` line 38, 2026-08-04].
+1. **The former missing-raw-model diagnosis is superseded as an explanation
+   of the export failure.** The July H2024 probe returned `err:5601` for a raw
+   model, and this section inferred that a filter/rename had consumed it.
+   That select result alone cannot establish absence: it also occurs without
+   an active component. H2060's completed master retained raw, textured and
+   simplified textured models for all 20 components; selecting the component
+   first fixed dense PLY export (A2). Do not add a duplicate or substitute a
+   textured source based on the old hypothesis. The current export selects
+   the component and proves the raw model name through `:select_verified`
+   before coloring (§13.7). This is an actual-project check, not a promise
+   that any arbitrary saved project contains the expected model.
+   [Historical probe: FINDINGS 2026-07-29; correction: 2026-09-02;
+   current guard: FINDINGS `[EXPORT]` 2026-09-09.]
 2. **Fixed model names across a per-component loop against one shared project
    created duplicate names**, and name-resolved steps (`-reprojectTexture`,
    delete-by-name) then crossed components with a clean exit status — one
@@ -510,9 +501,12 @@ if exist "%ErrorsFile%" (
 exit /b 0
 ```
 
-`ExportDeliverables.bat` carries the same subroutine with one addition: it
-flattens spaces in the evidence file name (`set "evname=%evname: =_%"`) because
-its sweep targets `"Model 1"`…`"Model 9"`.
+**Historical implementation above, superseded for the current export workflow.**
+`ExportDeliverables.bat` now uses `:delete_verified`: select the optional name,
+archive an explicit refusal and skip, otherwise read back the selected model
+and delete only an exact name match. Report/delete failures abort before save.
+The read-back proves the deletion target; it does not prove the model disappeared
+after deletion. See §13.7 and FINDINGS `[EXPORT]` 2026-09-09.
 
 **The double `-waitCompleted` is load-bearing, not decoration.** An earlier
 single short wait could return before the instance picked the select up, so a
@@ -1407,41 +1401,63 @@ call site was defective until 2026-09-01, §13.7) and `…Obj_Metric.xml` in
 
 ### 13.7 The deliverable export workflow (`ExportDeliverables.bat`)
 
-One RealityScan session for everything — the project load is the expensive
-part. Per component, names read one-per-line from a list file:
+The export stage loads the saved assembly once and visits every name in the
+merge report. The Python driver is `modules/export_deliverables.py`, called
+by `rs launch` through the single planner; it uses
+`RealityScanCLI.run_batch_script`, never a second launcher.
 
-```bat
-cmd /c modules\realityscan_interface\RS_CLI\Scripts\ExportDeliverables.bat ^
-    "F:\na156_h2024_v2\final_assembly\assembly\H2024_Final_Assembly.rsproj" ^
-    "F:\na156_h2024_v2\exports" ^
-    "F:\na156_h2024_v2\exports\components.names"
-```
+1. **Resolve current inputs.** `refresh_export_command` gets the current
+   assembly and rewrites `exports/components.names` from the current merge
+   report. Missing, malformed or empty reports now produce an empty list,
+   which the driver refuses before boot. The planner supplies the zone-tagged
+   flight log; the driver derives `RS_PROJECT_CRS` from it.
+2. **Own a session and load.** The execution layer locks the named instance,
+   shuts down a pre-existing instance with that name, and clears its markers.
+   The batch workflow boots and loads the saved project. This is a saved-project
+   export path; a live unsaved scene requires the separate attach workflow.
+3. **Clean and save once.** Pin output CRS when supplied; sweep the optional
+   `Model 1` through `Model 9` residual names with verified selection, then
+   save. A report/delete failure prevents this save. This range is cleanup
+   headroom, not a limit on exported components, nor a complete residual
+   census across components. Set project and output CRS for the exports.
+4. **For each component, select the component first.** Export its
+   `<name>_Simplified_Textured` model as OBJ (`OBJ_NiraParts`) and FBX
+   (`FBX_Parts`), with separate JPG pages at <=4096. For dense PLY, select
+   `<name>_HighPoly_Raw` and verify its name using `SelectedModel.html` before
+   `-calculateVertexColors`, then export its colored vertices (`PLY_DensePoints`).
+   Any non-empty `RS_EXPORT_SKIP_PLY` skips PLY, including the string `0`;
+   leave it unset for the normal three-format export.
+5. **Quit without another save, then check the files.** Vertex coloring stays
+   in memory. The driver requires a nonempty mesh of every requested format,
+   texture pages for OBJ/FBX, JPEG headers within the 4096 cap, and an OBJ MTL
+   whose actual `map_Kd` references resolve to image files in that folder.
+   It reports a failed export if these checks fail, even after a clean process
+   exit. This checks companion files, not full OBJ material bindings or the
+   embedded FBX material graph. Use a fresh export destination: this census
+   checks the files present, not their generation time.
 
-1. `-load`, sweep `"Model 1"`…`"Model 9"` residuals, `-save` **once**.
-2. `-exportModel <name>_Simplified_Textured … \obj\<name>.obj ModelExportParamsOBJ_NiraParts.xml`
-3. `-exportModel <name>_Simplified_Textured … \fbx\<name>.fbx ModelExportParamsFBX_Parts.xml`
-4. `-selectModel <name>_HighPoly_Raw` → `-calculateVertexColors` →
-   `-exportModel <name>_HighPoly_Raw … \ply\<name>_dense.ply ModelExportParamsPLY_DensePoints.xml`
-5. `-quit` **without saving** — the vertex colors are computed in memory only,
-   deliberately, so the project stays lean.
+**Completed example: NA165/H2060.** HANDOFF records 20 modeled components and
+20/20 exported as OBJ + FBX + dense PLY, 91 GB (2026-09-02). This is a recorded
+completion, not a new NAS census. The initial PLY failure was missing
+`-selectComponent`; the raw models survived. That correction supersedes this
+section's former "missing raw model" diagnosis and proposed textured fallback
+(see A2). The later c5 decimation/unwrap failure (A5) demonstrates why an older
+file census cannot establish that every derivative is textured. Current
+texture policy and checks were added after that initial completion.
 
-[VERIFIED-by-inspection: `RS_CLI/Scripts/ExportDeliverables.bat`]
+Named mesh export does not apply `setMinComponentSize`; that setting belongs
+to alignment-component and XMP exports. Component/model/page counts also do
+not establish processing duration. [OFFICIAL:
+[alignment commands](https://rshelp.capturingreality.com/en-US/tutorials/commandline_1.htm),
+[model commands](https://rshelp.capturingreality.com/en-US/tutorials/commandline_3.htm),
+checked 2026-09-09. VERIFIED-by-inspection and offline regressions:
+`testing/test_export_workflow.py`, FINDINGS `[EXPORT]` 2026-09-09.]
 
-**KNOWN DEFECT, unfixed as shipped:** step 4 selects
-`<name>_HighPoly_Raw`, which **the model recipe does not reliably leave in the
-project** (§5.4) — on the H2024 assembly it was probed absent. When it is
-absent, `-selectModel` reports `err:5601` / `2147942487`, and unlike the
-tolerant `:try_delete_model`, `:export_component` calls the strict `:run`
-subroutine three times with `|| exit /b 1` — so the PLY step **aborts the whole
-export**, taking the remaining components with it (the caller's
-`call :export_component "%%N" || goto :fail` unwinds to `:fail` and quits). The
-finding records the intended fallback: **use `_HighPoly_Textured`, the densest
-model guaranteed to exist**, or `-duplicateSelectedModel` right after `[1/8]`
-[VERIFIED: FINDINGS 2026-07-29; the OBJ and FBX steps were verified end to end
-on the 133-camera component, the PLY step was not]. Because the OBJ and FBX
-exports for a component run *before* its PLY step, an abort mid-list leaves a
-partially-populated `exports\` tree — check for `ply\<name>_dense.ply` per
-component before assuming the set is complete.
+H2060's type-3 OBJ coordinates were independently verified as ECEF despite a
+stale 55N label (A1). The CRS pin corrects export metadata; it is not a depth
+conversion. Cesium placement still needs the actual coordinate frame and
+vertical datum handled by `modules/cesium_placement.py` (§17). Keeping the
+`.rsInfo` beside the exported geometry is part of that handoff.
 
 The names file must be **BOM-free**: `Set-Content -Encoding utf8` in Windows
 PowerShell 5.1 writes a BOM, and a BOM on line 1 of a list file silently

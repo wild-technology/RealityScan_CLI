@@ -779,3 +779,70 @@ Then, on the three things the XMP-default question left open:
 Also: the merge's automerge had moved `SCENE_EXTENSIONS` below a function in
 `realityscan_interface.py`; restored beside its sibling constant.
 Suite: 970 passed, 1 skipped.
+
+## [EXPORT] 2026-09-09 - completed H2060 walkthrough and export regressions
+
+**Evidence:** inspected the current planner, Python export driver, batch
+workflow and texture census at `f3ab62e`; compared the H2060 completion record
+in HANDOFF (2026-09-02/03) and rs-reference 10 A1/A2/A5. Baseline: 970 passed,
+1 skipped. New offline regressions initially reproduced 11 failing cases
+across five defects. Tests use fixture files, `runpy` for the actual script
+entry point and real Windows batch subroutines with RealityScan I/O stubbed.
+No project was opened, changed, exported or uploaded in this review.
+
+- **Direct-script export crashed after successful work.** The planner runs
+  `python modules/export_deliverables.py`; `missing_exports` used a relative
+  import that only worked when imported as a package. `runpy(..., __main__)`
+  reproduced `ImportError: attempted relative import with no known parent
+  package`. Use the same absolute-import pattern as the rest of the driver.
+- **Stale component names survived an empty/missing/malformed merge report.**
+  `refresh_export_command` called `export_names_file`, but that writer did
+  nothing when no current names were found. It now writes an empty list;
+  the existing driver gate refuses before boot. A valid report still writes
+  BOM-free CRLF names. The old comment claiming refresh covered this case
+  was false.
+- **PLY coloring bypassed the selection guard.** Component selection was
+  already fixed, but the subsequent raw-model select could silently leave
+  another model selected (F-102). It now calls the existing
+  `:select_verified` before coloring. Stub execution proved the old path
+  colored a previous model and the new path stops before that mutation.
+  Removed unreachable `_HighPoly_Textured` fallback text and its stray `)`.
+- **The residual cleanup loop ignored failures.** A failed report/delete
+  still reached `-save`. The loop now propagates failure. An explicitly
+  refused optional select archives its error and skips without trying to
+  measure an empty selection; a failure to archive or measure still aborts.
+  This verifies the target before deletion, not a post-delete inventory.
+- **The texture census accepted broken OBJ companions.** An OBJ plus an
+  unrelated JPEG passed with no MTL, a commented `# map_Kd`, a bare directive,
+  or `map_Kd missing.jpg`. The census now requires an MTL for OBJ and checks
+  each actual map_Kd target exists among the folder's supported image files.
+  Quoted filenames with spaces pass; unsupported map options/external paths
+  are reported. JPEG/header/4096 checks remain. This is companion validation,
+  not a full OBJ material-binding or FBX parser. Driver errors now say
+  "census problems", not that every texture problem is a missing folder.
+
+**Corrections to the earlier conversational walkthrough (SUPERSEDED):**
+H2060's recorded completion was 20/20 components with OBJ, FBX and dense PLY
+(91 GB), not a predicted mass export failure. Its initial PLY failure was
+missing `-selectComponent`, not absent raw models. `Model 1` through `Model 9`
+is a residual cleanup range, never an export component limit. A non-empty
+error marker is fatal in the export `:run`, not a general success whitelist.
+`setMinComponentSize` controls alignment-component/XMP exports, not named
+`exportModel` calls (official Help: tutorials/commandline_1 and _3, checked
+2026-09-09). Counts alone do not support a duration estimate. The cleanup
+sweep does not enumerate every component's residuals.
+
+**Scope of the example:** H2060 figures are the recorded completed run, not
+a fresh NAS census. Its later c5 decimation/unwrap failure is separate from
+that original file census (rs-reference 10 A5); "20/20 exported" did not prove
+all later derivatives textured. Current policy uses JPG pages at <=4096,
+and the stronger current census must not be projected backward onto the old
+run. H2060 type-3 geometry was verified ECEF despite the stale 55N metadata
+label; neither file existence nor CRS pinning alone proves depth placement.
+
+Validation after fixes: **985 passed, 1 skipped** (38.88 s, full Windows
+`python -m pytest testing -q`); 15 new regression cases. Batch file CRLF
+preserved; `git diff --check` clean. Updated the master manual's model
+selection/cleanup discussion and section 13.7, architecture routing,
+pipeline handoff notes, CLAUDE and HANDOFF. No live RS or Cesium validation
+was performed for these changes.

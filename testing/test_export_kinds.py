@@ -2,9 +2,9 @@
 The export census must expect exactly the formats the workflow was asked to
 produce.
 
-`ExportDeliverables.bat` skips the dense PLY when RS_EXPORT_SKIP_PLY is set,
-because its source model does not survive GenerateModel in this build (see
-FINDINGS 2026-09-01). Without the census agreeing, a run whose OBJ and FBX were
+`ExportDeliverables.bat` skips the dense PLY when RS_EXPORT_SKIP_PLY is non-empty.
+This is an optional escape hatch: the raw model survives GenerateModel;
+H2060's missing component selection was fixed 2026-09-02. Without the census agreeing, a run whose OBJ and FBX were
 both complete failed with "1 of 3 expected deliverable folder(s) hold no file:
 zone_all_c17/ply".
 

@@ -19,6 +19,9 @@ Do not re-read what it printed. Then, saying in one line what you will do:
    `docs/PIPELINE_VARIABLES.md` (which values are baked, detected, owner-supplied
    or inherited, how each crosses a stage boundary, and the ranked gaps - read it
    before adding a parameter, a default or a hand-off).
+   For export logic and the completed H2060 example, use
+   `docs/rs-reference/10-reconstruction-texturing-export.md` section 13.7;
+   its current contract supersedes the old missing-raw-model diagnosis.
 3. Baseline: `python -m pytest testing -q`. Windows: fully green expected.
    macOS/Linux: exactly the 22 platform-bound failures named in
    `testing/conftest.py`. Anything else: stop and report.

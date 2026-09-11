@@ -45,6 +45,7 @@ if REPO not in sys.path:
 from module_base.settings_store import SettingsStore, realityscan_env  # noqa: E402
 from modules.flight_logs import crs_for_flight_log  # noqa: E402
 from modules.realityscan_interface.realityscan_cli import RealityScanCLI  # noqa: E402
+from modules.texture_census import untextured_components  # noqa: E402
 
 
 # Per component, ExportDeliverables.bat writes one subfolder per format.
@@ -54,12 +55,10 @@ EXPORT_KINDS = ('obj', 'fbx', 'ply')
 def expected_kinds() -> tuple[str, ...]:
     """The formats this run is actually supposed to produce.
 
-    RS_EXPORT_SKIP_PLY makes ExportDeliverables.bat skip the dense PLY, whose
-    source model (`<comp>_HighPoly_Raw` / `_HighPoly_Textured`) does not
-    survive GenerateModel in this build. The census must agree with the
-    workflow: without this it reported "1 of 3 expected deliverable folder(s)
-    hold no file: <comp>/ply" and failed a run whose OBJ and FBX were both
-    complete (NA165/H2060, 2026-09-01).
+    Any non-empty RS_EXPORT_SKIP_PLY makes ExportDeliverables.bat skip the
+    dense PLY, and the census must agree. Unset it to include PLY (even "0"
+    means skip). The raw source survives GenerateModel; H2060's original
+    PLY failure was missing component selection, fixed 2026-09-02.
 
     Deliberately env-driven and narrow - the census keeps its teeth for every
     format the run DID ask for.
@@ -105,7 +104,6 @@ def missing_exports(exports_dir: str, names: list[str]) -> list[str]:
     # Files present is not textured (H2060 c5: geometry-only OBJ, clean
     # exit). The texture census reads the tree: pages, JPEG, <= 4096,
     # map_Kd (D10, owner 2026-09-06). Each problem is one more line.
-    from .texture_census import untextured_components  # noqa: PLC0415
     missing += untextured_components(
         exports_dir, names, kinds=tuple(k for k in ('obj', 'fbx') if k in kinds))
     return missing
@@ -237,8 +235,8 @@ def main() -> int:
         missing = missing_exports(args.exports, names)
         if missing:
             logger.error(
-                'export workflow returned success but %d of %d expected '
-                'deliverable folder(s) hold no file: %s. RealityScan reports '
+                'export workflow returned success but the census found %d '
+                'problem(s) across %d expected deliverable folder(s): %s. RealityScan reports '
                 'success for do-nothing exports (a selection-driven export '
                 'under -silent can export NOTHING), so the exit code alone '
                 'proves nothing. Log: %s',

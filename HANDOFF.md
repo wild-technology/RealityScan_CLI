@@ -1,5 +1,39 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-09-09 - H2060 export walkthrough and regression fixes
+
+**Done:** reviewed the current export chain against the recorded completed
+NA165/H2060 run (20/20 components, OBJ + FBX + dense PLY, 91 GB). The current
+walkthrough is rs-reference 10 section 13.7. Corrected the stale missing-raw-model
+diagnosis and distinguished the later c5 unwrap failure from the initial export.
+No new NAS census, live RealityScan operation or Cesium upload was performed.
+
+Fixed five reproduced defects: direct-script census import failure; stale
+component names after an empty/missing/malformed merge report; unverified
+raw-model selection before PLY coloring; ignored cleanup failures before save;
+and OBJ texture false positives from missing MTLs or broken map_Kd references.
+Reused the existing selection guard, preserved the workflow order and CRLF.
+Expected optional-select refusals still skip; actual report/delete failures stop.
+
+**Validation:** baseline 970 passed, 1 skipped; final **985 passed, 1 skipped**
+(`python -m pytest testing -q`, Windows, 38.88 s). New tests exercise the actual
+script entry point and batch control flow with RS I/O stubbed. Diff check clean.
+
+**Working tree:** changes remain local, uncommitted and unpushed. Changed files:
+`CLAUDE.md`, `FINDINGS.md`, `HANDOFF.md`, `docs/ARCHITECTURE.md`,
+`docs/PIPELINE_VARIABLES.md`, `docs/rs-reference/10-reconstruction-texturing-export.md`,
+`modules/export_deliverables.py`, `modules/run_plan.py`, `modules/texture_census.py`,
+`modules/realityscan_interface/RS_CLI/Scripts/ExportDeliverables.bat`,
+`testing/test_export_kinds.py`, plus new `testing/test_export_workflow.py`.
+Pre-existing untracked `.agents/`, `.codex/`, `.claude/settings.local.json` and
+`AGENTS.md` were left untouched.
+
+**Carry forward:** the previous section's campaign state and D1 decisions.
+For a future authorized export, use a fresh destination; the census checks
+present files, not freshness or complete FBX/OBJ material bindings. These fixes
+have offline regression coverage; their next live confirmation is an export
+through the signed run lane, not a rerun against the completed master here.
+
 ## 2026-09-06 (afternoon) — D1 CSV LANE RAN END TO END, scheduler-owned, read this first
 
 Two RealityScan runs happened this afternoon, both through the lane

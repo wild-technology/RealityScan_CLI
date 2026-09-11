@@ -224,6 +224,20 @@ whatever the assembly project holds** - see gap G3.
 | model | export | model NAMES inside the shared project (`<comp>_Simplified_Textured`, `<comp>_HighPoly_Raw`) | `GenerateModel.bat:231` | `ExportDeliverables.bat:166-182` | triangle counts and texture pages (measured, never persisted) |
 | export | publish | `exports/<comp>/obj/` + `.rsInfo` | `ExportDeliverables.bat:166` | `publish_cesium.py`, `cesium_placement.py:125-187` | the CRS, unless the owner passed one |
 
+**Export handoff clarification (2026-09-09):** the planner refreshes both the
+assembly path and `components.names` immediately before export. An absent,
+malformed or empty current merge report now replaces stale names with an empty
+list, which the driver refuses before RealityScan boots. The batch workflow
+selects each component, then verifies the raw model's name before coloring
+for PLY. OBJ/FBX come from `_Simplified_Textured`; PLY comes from `_HighPoly_Raw`.
+The raw model survives generation (the old contrary diagnosis is superseded).
+Any non-empty `RS_EXPORT_SKIP_PLY`, even `0`, skips PLY; unset includes it.
+The Python postcondition checks each requested mesh format and the texture
+companions. `rs verify` uses the shared texture checks but its export summary
+counts components with deliverables; it does not certify all three formats.
+Neither check certifies fresh output or Cesium depth placement. See
+[the completed H2060 walkthrough](rs-reference/10-reconstruction-texturing-export.md#137-the-deliverable-export-workflow-exportdeliverablesbat).
+
 ## 5. XMP: what still writes and reads sidecars
 
 The owner's belief that XMP sidecars are retired is correct for the ALIGN stage and

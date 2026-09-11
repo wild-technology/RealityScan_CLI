@@ -9,8 +9,9 @@ nothing to write into, the export reported success). The policy since D13
 is also mechanical here: every texture page is JPEG and no page side
 exceeds 4096.
 
-Only the file headers are read (JPEG SOF / PNG IHDR), so a 45-page export
-censuses in milliseconds and no imaging library is needed.
+Image checks read only headers (JPEG SOF / PNG IHDR). OBJ folders must also
+have an MTL with real map_Kd directives pointing to existing texture pages.
+This checks companions, not the full OBJ material bindings or FBX contents.
 """
 from __future__ import annotations
 
@@ -99,18 +100,38 @@ def census_folder(folder: str | Path, max_side: int = MAX_PAGE_SIDE,
     if not folder.is_dir():
         out.problems.append("folder missing")
         return out
+    has_obj = False
     for entry in sorted(folder.iterdir()):
         if not entry.is_file():
             continue
         ext = entry.suffix.lower()
+        has_obj |= ext == ".obj"
         if ext == ".mtl":
             out.mtl_files += 1
             try:
                 text = entry.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 text = ""
-            if "map_Kd" in text:
+            maps = [line.strip().split(maxsplit=1) for line in text.splitlines()
+                    if line.strip().split(maxsplit=1)[:1] == ["map_Kd"]]
+            valid_maps = 0
+            for parts in maps:
+                target = parts[1].strip().strip('"') if len(parts) == 2 else ""
+                page = (entry.parent / target.replace("\\", "/")).resolve()
+                # RealityScan's presets emit plain filenames. Unsupported
+                # MTL options and out-of-folder references must not pass on
+                # the strength of an unrelated JPEG beside the mesh.
+                if (not target or target.startswith("-")
+                        or page.parent != folder.resolve()
+                        or page.suffix.lower() not in TEXTURE_EXTS
+                        or not page.is_file()):
+                    out.problems.append(f"{entry.name}: map_Kd texture missing or unsupported: {target!r}")
+                else:
+                    valid_maps += 1
+            if valid_maps:
                 out.mtl_with_map += 1
+            else:
+                out.problems.append(f"{entry.name}: no usable map_Kd texture reference")
             continue
         if ext not in TEXTURE_EXTS:
             continue
@@ -126,6 +147,8 @@ def census_folder(folder: str | Path, max_side: int = MAX_PAGE_SIDE,
         out.max_side = max(out.max_side, side)
         if side > max_side:
             out.problems.append(f"{entry.name}: {size[0]}x{size[1]} exceeds the {max_side} cap (D13)")
+    if has_obj and not out.mtl_files:
+        out.problems.append("OBJ has no .mtl material companion")
     if out.pages == 0:
         out.problems.append("no texture page in the export folder")
     elif out.mtl_files and not out.mtl_with_map:

@@ -40,8 +40,7 @@ set "PlyParams=%MetadataDir%\ModelExportParamsPLY_DensePoints.xml"
 :: Model MEASUREMENT (D12, owner 2026-09-06). -selectModel on a missing name
 :: inside a populated component is a SILENT no-op (FINDINGS 2026-09-03,
 :: rs-reference 12 F-102), so every destructive step below proves its
-:: selection by reading the model report back, and the simplification is
-:: driven by the MEASURED triangle count, not a fixed pass count:
+:: selection by reading the model report back before deleting or coloring:
 ::   -exportReport <html> "<install>\Reports\SelectedModel.html"   (~4 s)
 :: parsed by modules/realityscan_interface/model_report.py into
 :: RS_MODEL_NAME / RS_MODEL_TRIS / RS_MODEL_TEXTURED / ... RealityScanCLI sets
@@ -99,7 +98,9 @@ if defined RS_PROJECT_CRS if not "%RS_PROJECT_CRS%" == "" (
 )
 
 echo Sweeping default-named residual models
-for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do call :delete_verified %%M
+for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do (
+    call :delete_verified %%M || goto :fail
+)
 
 echo Saving project - residuals removed, before any in-memory coloring
 call :run -save "%scene_path%" || goto :fail
@@ -177,15 +178,9 @@ if defined RS_EXPORT_SKIP_PLY (
     exit /b 0
 )
 echo   Dense colored PLY from %comp%_HighPoly_Raw
-call :run -selectModel "%comp%_HighPoly_Raw" || exit /b 1
+call :select_verified "%comp%_HighPoly_Raw" || exit /b 1
 call :run -calculateVertexColors || exit /b 1
 call :run -exportModel "%comp%_HighPoly_Raw" "%out_dir%\%comp%\ply\%comp%_dense.ply" "%PlyParams%" || exit /b 1
-exit /b 0
-)
-echo   Dense colored PLY from %comp%_HighPoly_Textured
-call :run -selectModel "%comp%_HighPoly_Textured" || exit /b 1
-call :run -calculateVertexColors || exit /b 1
-call :run -exportModel "%comp%_HighPoly_Textured" "%out_dir%\%comp%\ply\%comp%_dense.ply" "%PlyParams%" || exit /b 1
 exit /b 0
 
 :emptyList
@@ -246,7 +241,11 @@ ping -n 3 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
 ping -n 2 127.0.0.1 >nul
 %RealityScan% -waitCompleted %RS_INSTANCE%
-if exist "%ErrorsFile%" for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 move /y "%ErrorsFile%" "%ErrorPath%\expected_select_%RS_INSTANCE%_%~1.txt" >nul
+if exist "%ErrorsFile%" for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
+    move /y "%ErrorsFile%" "%ErrorPath%\expected_select_%RS_INSTANCE%_%~1.txt" >nul
+    if errorlevel 1 exit /b 1
+    goto :deleteDelegateFailed
+)
 call :measure || exit /b 1
 if /i not "%RS_MODEL_NAME%" == "%~1" goto :deleteSkip
 call :run -deleteSelectedModel || exit /b 1
