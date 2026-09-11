@@ -96,6 +96,36 @@ echo Starting RealityScan
 call "%~dp0startRealityScan.bat"
 if errorlevel 1 exit /b 1
 
+:: ------------------------------------------------- georegister-only mode
+:: RS_GEOREG_ONLY=<path to an existing .rsproj> loads that project and jumps
+:: straight to the georegistration below, skipping scene construction and
+:: -align entirely.
+::
+:: WHY THIS EXISTS. B19 was fixed by adding -update after -align, but three
+:: zones of NA165/H2060 were already aligned without it and are saved at
+:: whatever gauge the solver picked. -update is a POST-alignment fit; it needs
+:: no re-solve. Re-aligning those zones to gain it would cost ~19 h (zone_2
+:: alone is 13.3 h) and would re-roll the align's run-to-run variation, so the
+:: components the owner has already reviewed would come back subtly different.
+:: Loading and updating costs minutes and leaves the component structure alone.
+::
+:: It reuses everything after this point - update, export, identity harvest,
+:: save - rather than duplicating it. This repo has been bitten twice by the
+:: same logic living in two places (the align identity ceiling B13 and the
+:: merge peel ceiling B16 were the same defect, fixed months apart).
+::
+:: The loaded project already carries its imported flight-log constraints and
+:: its coordinate system, which is why the CRS pin, the prior groups, the
+:: settings loop and -importFlightLog are all skipped: redoing them would
+:: either be a no-op or would overwrite what the project was solved with.
+if defined RS_GEOREG_ONLY (
+    echo GEOREGISTER-ONLY: loading %RS_GEOREG_ONLY%
+    echo   Skipping scene construction and -align. The saved solve is kept;
+    echo   only its fit to the flight-log constraints is redone.
+    call :run -load "%RS_GEOREG_ONLY%" deleteAutosave || goto :fail
+    goto :georegister
+)
+
 echo Creating new scene
 call :run -newScene || goto :fail
 
@@ -227,6 +257,61 @@ if not "%flight_log_dir%" == "" (
 
 echo Aligning images - this may take a long time
 call :run -align || goto :fail
+
+:georegister
+:: ---------------------------------------------------------- B19
+:: GEOREGISTER AFTER ALIGNING. Without this the align path imports priors,
+:: solves, and saves whatever gauge the solver happened to pick - it never
+:: fits the result to the constraints. The merge path has always done this
+:: (MergeZoneComponents.bat, "the step that actually georeferences"); the
+:: align path never did.
+::
+:: WHY IT MATTERS. Rescaling a component about its own centroid is an EXACT
+:: gauge freedom of the reprojection term - cameras and points scale together
+:: and every projected pixel is unchanged - so the position priors are the
+:: only thing in the objective that can see scale. Measured on NA165/H2060
+:: (2026-09-09), sweeping the weighted prior chi-squared against a rescale
+:: factor k, per camera:
+::
+::     component     k* (priors' optimum)   unclaimed residual
+::     zone_3 c0            0.777                 54.6%
+::     zone_3 c1            1.524                 82.0%
+::     zone_2 c0            0.986                  0.8%
+::     zone_1 c0            1.019                  2.7%
+::
+:: Every zone_3 component sat at a scale its OWN priors scored as strictly
+:: worse, and 1/0.777 = 1.287 - the measured 1.27x error. The priors held the
+:: right answer and nothing applied it. zone_3 reconstructed its shape
+:: correctly (it agrees with zone_2's solve of 2,054 shared frames to
+:: 1.2-22.8 mm) and only its SIZE was wrong.
+::
+:: Dive-wide corroboration: across all 46 components of >=100 cameras,
+:: as-placed position sat within a median 6.2% of the best RIGID (scale-1)
+:: fit to its own priors while leaving a median 22.8% residual reduction
+:: unclaimed that only rescaling could capture - rigid placement, no
+:: similarity fit.
+::
+:: THE RISK, and it is real. The reference records -update as the step that
+:: "will rotate geometry to satisfy mis-converted constraints": it TRUSTS the
+:: nav. On a dive whose flight log is in the wrong frame or whose CRS is
+:: mis-declared, this step will faithfully wreck a good solve. That is why
+:: the frame guard (ensure_frame_match) and the CRS pin above are
+:: preconditions for it, not decoration - and why a big correction here is
+:: worth reading as evidence the solve drifted rather than as a tidy-up.
+::
+:: Only runs when there ARE constraints: with no flight log there is nothing
+:: to fit to and -update would be a no-op at best. RS_SKIP_GEOREG_UPDATE=1
+:: disables it for a deliberate no-georeference control arm.
+if not "%flight_log_dir%" == "" (
+    if not defined RS_SKIP_GEOREG_UPDATE (
+        echo Georegistering components against the flight-log constraints
+        call :run -update || goto :fail
+    ) else (
+        echo RS_SKIP_GEOREG_UPDATE set - SKIPPING post-align georegistration.
+        echo   Component scale will be whatever the solver's gauge produced
+        echo   and is NOT fitted to the nav. See BUGS.md B19.
+    )
+)
 
 :: Flight-log import leaves its matched images ACTIVELY SELECTED, and
 :: selection-driven exports under -silent then silently export NOTHING
@@ -360,9 +445,46 @@ echo   writes sidecars beside the images under %harvest_dir% and STRIPS the
 echo   calibration priors of the last-peeled component; the Python caller
 echo   repairs those on every exit path. Decision D1 is open.
 echo Capturing per-component identity (destructive in-memory loop)
+:: Ceiling raised 20 -> 50 and made configurable (owner directive 2026-09-07).
+:: MEASURED on NA165/H2060 zone_1 (8,757 images): the loop exited at the old
+:: ceiling of 20 with identity_r19 still holding 915 pose sidecars and
+:: identity_r20 never written - i.e. it stopped because it ran out of LAPS,
+:: not because it ran out of components. Everything past c19 was dropped from
+:: the merge inputs with no record, and c19's own manifest then claimed all
+:: 915 remaining stems (its bbox spanned the whole zone, 181 x 487 m, against
+:: 3-90 m for every genuine component).
+:: RS_MAX_IDENTITY_COMPONENTS overrides it; realityscan_interface.py reads the
+:: SAME variable with the same DEFAULT. The defaults cannot drift; a malformed
+:: OVERRIDE still can, which is why it is validated below rather than trusted.
+:: Python sanitizes (falls back to 50 on a non-int or a value <= 0); cmd does
+:: not, and an unvalidated value reaches an UNQUOTED numeric comparison:
+::   "0"/"-5" -> the ceiling fires on lap 0 and NO component is ever exported
+::   "abc"    -> cmd compares as STRINGS, so the ceiling effectively never fires
+::   "5 0"    -> syntax error mid-run, hours in
+:: Only an all-digit, non-zero value is accepted; anything else warns loudly
+:: and keeps the default, so the two sides stay in step.
+:: Flat gotos, not nested parenthesised blocks: this script runs under a plain
+:: `setlocal` with NO delayed expansion, and a `set` inside a block whose value
+:: is read in the same block silently expands to the PARSE-time value. The rest
+:: of this file is goto-structured for the same reason.
+set "max_components=50"
+if not defined RS_MAX_IDENTITY_COMPONENTS goto :ceilingReady
+if "%RS_MAX_IDENTITY_COMPONENTS%" == "" goto :ceilingReady
+echo %RS_MAX_IDENTITY_COMPONENTS%| findstr /r /x "[1-9][0-9]*" >nul
+if errorlevel 1 goto :ceilingBadValue
+set "max_components=%RS_MAX_IDENTITY_COMPONENTS%"
+goto :ceilingReady
+:ceilingBadValue
+echo WARNING: RS_MAX_IDENTITY_COMPONENTS=%RS_MAX_IDENTITY_COMPONENTS% is not a positive
+echo   integer - ignoring it and using the default 50, which is what
+echo   realityscan_interface.py will also use. Left unsanitized this would have
+echo   reached an unquoted numeric comparison: 0 or a negative exports NOTHING,
+echo   a non-numeric makes cmd compare as strings so the ceiling never fires.
+:ceilingReady
+echo Identity component ceiling: %max_components%
 set /a comp_index=0
 :identityLoop
-if %comp_index% GEQ 20 goto :identityDone
+if %comp_index% GEQ %max_components% goto :identityCeiling
 if not exist "%output_dir%\identity_r%comp_index%" mkdir "%output_dir%\identity_r%comp_index%"
 call :run -deselectAllImages || goto :fail
 call :run -exportXMP || goto :fail
@@ -384,6 +506,32 @@ if not exist "%output_dir%\%scene_name%_c%comp_index%.rsalign" goto :identityDon
 call :run -deleteSelectedComponent || goto :fail
 set /a comp_index+=1
 goto :identityLoop
+
+:identityCeiling
+:: The loop ran out of LAPS, not components. Membership is
+:: stems(r<K>) - stems(r<K+1>), so without a final harvest the LAST exported
+:: component's manifest absorbs every stem still in the scene: on zone_1 that
+:: made c19 claim 915 cameras across a zone-spanning bbox, which then borders
+:: every other component in the merge's bbox graph and pollutes the plan.
+:: One more harvest costs a single -exportXMP and makes c<N-1> computable;
+:: it also leaves a NON-EMPTY identity_r<N> on disk as the durable evidence
+:: that truncation happened, which is exactly what nothing recorded before.
+:: comp_index == max_components here (that is the branch condition), but the
+:: LAST EXPORTED component is c<max_components - 1> - the increment happens
+:: after the export. Naming c%comp_index% would send an operator looking for a
+:: .rsalign that does not exist and reading a clean ceiling stop as a failed
+:: export.
+set /a last_captured=%comp_index%-1
+echo WARNING: identity ceiling of %max_components% reached - harvesting the
+echo   remainder so the last component's membership stays computable.
+echo   Components c0..c%last_captured% were captured; anything past c%last_captured% is NOT.
+echo   Raise RS_MAX_IDENTITY_COMPONENTS and re-run the zone to capture them.
+if not exist "%output_dir%\identity_r%comp_index%" mkdir "%output_dir%\identity_r%comp_index%"
+call :run -deselectAllImages || goto :fail
+call :run -exportXMP || goto :fail
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Get-ChildItem -LiteralPath '%harvest_dir%' -Recurse -Filter *.xmp | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'xcr:Position' -Quiet } | Move-Item -Destination '%output_dir%\identity_r%comp_index%' -Force } catch { Write-Output $_.Exception.Message; exit 1 }"
+if errorlevel 1 ( echo ERROR: ceiling harvest move failed & goto :fail )
+
 :identityDone
 echo Identity capture finished after %comp_index% component(s)
 

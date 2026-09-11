@@ -214,6 +214,65 @@ if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
     call :run -save "%RS_PROJECTS_DIR%\%RS_PROJECT_LABEL%_merged_%RS_PROJECT_DATE%.rsproj" || goto :fail
 )
 
+:: ---------------------------------------------------------------- B17
+:: -exportXMPForSelectedComponent takes NO params argument. The reference is
+:: explicit (docs/rs-reference/05-metadata-xmp-and-sidecars.md: it "accepts
+:: none and always uses the current settings"), so the ONLY way to control
+:: what it writes is to set those settings on the instance first - exactly
+:: what AlignZone.bat does for AlignmentParams.xml.
+::
+:: This is B17's actual fix. BUGS.md's recorded next step was to "pass
+:: XMPExportParams.xml to -exportXMPForSelectedComponent the way AlignZone.bat
+:: passes its params". That is impossible - the command has no params
+:: argument - but the file holds exactly the keys that govern the instance
+:: state, and NOTHING in the repo referenced it, so every peel export in this
+:: pipeline's history ran on whatever the instance's XMP export dialog
+:: happened to be left holding.
+::
+:: Why that produces B17's exact symptom: xmpExGps and xmpCamera decide
+:: whether POSE is written at all, and the harvest filters sidecars on the
+:: literal string xcr:Position. A peel that writes sidecars WITHOUT position
+:: is indistinguishable on disk from a peel that writes nothing - which is
+:: precisely what was observed on NA165/H2060 ("23,822 sidecars in the images
+:: root, zero pose-bearing") while the command itself returned success.
+::
+:: Two other B17 hypotheses are now dead and should not be re-chased:
+::   - reparse-point write path (the H2024 root cause): MEASURED 2026-09-09,
+::     no junction anywhere on this dive's image or output paths.
+::   - a missing params ARGUMENT: the command does not take one.
+::
+:: Fails closed on zero applied, for the same reason the align settings loop
+:: does: a silently-empty apply leaves the export on instance state and the
+:: run then succeeds with exit 0 while measuring nothing.
+set "XMPExportParams=%Metadata%\XMPExportParams.xml"
+if not exist "%XMPExportParams%" (
+    echo ERROR: %XMPExportParams% not found. The XMP export would inherit
+    echo   whatever settings the instance holds - that is the B17 defect.
+    goto :fail
+)
+echo Applying XMP export settings from %XMPExportParams%
+set /a applied_xmp=0
+for /f usebackq^ tokens^=2^,4^ delims^=^" %%A in ("%XMPExportParams%") do (
+    if not "%%B" == "" (
+        echo %%A| %SystemRoot%\System32\findstr.exe /b /r "[a-zA-Z]" >nul
+        if not errorlevel 1 (
+            echo %%A| %SystemRoot%\System32\findstr.exe /b /c:"app" >nul
+            if not errorlevel 1 (
+                echo ERROR: app-global key "%%A" in %XMPExportParams%
+                goto :fail
+            )
+            %RealityScan% -delegateTo %RS_INSTANCE% -set "%%A=%%B"
+            set /a applied_xmp+=1
+        )
+    )
+)
+if %applied_xmp% EQU 0 (
+    echo ERROR: applied ZERO XMP export settings from %XMPExportParams%.
+    echo   Every key was skipped, so the export would run on instance state.
+    goto :fail
+)
+echo Applied %applied_xmp% XMP export setting(s)
+
 if /i "%merge_mode%" == "assemble" goto :after_export
 if defined RS_MERGE_HARVEST goto :harvest
 
@@ -255,9 +314,37 @@ goto :after_export
 set "harvest_dir=%RS_MERGE_IMAGES_ROOT%"
 if defined RS_ALIGN_POOL_DIR if not "%RS_ALIGN_POOL_DIR%" == "" set "harvest_dir=%RS_ALIGN_POOL_DIR%"
 echo Identity harvest directory: %harvest_dir%
+:: Peel ceiling raised 40 -> 120 and made DISTINGUISHABLE from exhaustion
+:: (2026-09-08). Same defect class as the align identity ceiling fixed in B13,
+:: and no longer hypothetical: NA165/H2060 finished its aligns with 43 input
+:: components (33 + 6 + 4), already past the old 40. The peel runs with
+:: -setMinComponentSize 1, so it exports EVERY fragment however small.
+::
+:: Why this one matters more than the align ceiling: the old cap jumped to
+:: :after_export, the NORMAL exit-0 label, echoing nothing and writing no
+:: marker; and merge_zones.peel_counts_from walks identity_r<K> with an
+:: unbounded `while True` that stops at the first missing directory. A cap at
+:: 40 and a genuine exhaustion at 40 are byte-identical on disk. Those counts
+:: are what the fusion arithmetic attributes cameras with, so a silent
+:: truncation does not merely lose components - it makes every downstream
+:: attribution wrong.
+set "max_peel=120"
+if not defined RS_MAX_PEEL_COMPONENTS goto :peelCapReady
+if "%RS_MAX_PEEL_COMPONENTS%" == "" goto :peelCapReady
+echo %RS_MAX_PEEL_COMPONENTS%| findstr /r /x "[1-9][0-9]*" >nul
+if errorlevel 1 goto :badPeelCap
+set "max_peel=%RS_MAX_PEEL_COMPONENTS%"
+goto :peelCapReady
+:badPeelCap
+echo WARNING: RS_MAX_PEEL_COMPONENTS=%RS_MAX_PEEL_COMPONENTS% is not a positive
+echo   integer - ignoring it and using the default 120. Unsanitized it reaches
+echo   an unquoted numeric comparison, where cmd compares a non-numeric value
+echo   as a STRING and the cap would never fire.
+:peelCapReady
+echo Peel component ceiling: %max_peel%
 set /a peel_index=0
 :peelLoop
-if %peel_index% GEQ 40 goto :after_export
+if %peel_index% GEQ %max_peel% goto :peelCeiling
 if not exist "%output_dir%\identity_r%peel_index%" mkdir "%output_dir%\identity_r%peel_index%"
 call :run -deselectAllImages || goto :fail
 call :run -setMinComponentSize 1 || goto :fail
@@ -277,6 +364,23 @@ if errorlevel 1 ( echo ERROR: harvest move failed & goto :fail )
 call :run -deleteSelectedComponent || goto :fail
 set /a peel_index+=1
 goto :peelLoop
+
+:peelCeiling
+:: Reached the lap limit, NOT the end of the scene. Two things happen here that
+:: did not before. First it says so - the old cap fell into :after_export and
+:: was indistinguishable from a clean finish in every artifact. Second it
+:: writes a marker file, because merge_zones.peel_counts_from reads only the
+:: identity_r<K> directories and cannot tell a cap from exhaustion; the marker
+:: is the one durable signal that the counts feeding the fusion attribution are
+:: incomplete.
+set /a last_peeled=%peel_index%-1
+echo WARNING: peel ceiling of %max_peel% reached. Components c0..c%last_peeled%
+echo   were peeled; anything past c%last_peeled% is NOT recorded, and the
+echo   per-component camera counts this peel produces are therefore INCOMPLETE.
+echo   The merge attributes cameras with those counts, so treat any fusion
+echo   verdict from this scene as unsafe. Raise RS_MAX_PEEL_COMPONENTS and
+echo   re-run this merge.
+echo peel_ceiling_hit=%max_peel% last_peeled=%last_peeled% > "%output_dir%\PEEL_TRUNCATED.txt"
 
 :after_export
 

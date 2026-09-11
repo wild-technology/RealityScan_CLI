@@ -57,11 +57,11 @@ MOUNTS: dict[str, dict | None] = {
     # was added wca_cinema still carried 45 deg down (the tilt sat on the
     # wrong camera until the 2026-08-14 owner correction below); the rows
     # stay separate so each cruise's mount remains independently editable.
-    'sony_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
-    'na168_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
+    'sony_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 10.0},
+    'na168_stillcam': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 10.0},
     'legacy_camupper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 70.0, 'p_acc': 10.0},
     'legacy_cammid': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 20.0, 'p_acc': 10.0},
-    'legacy_camlower': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 10.0, 'p_acc': 5.0},
+    'legacy_camlower': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 10.0, 'p_acc': 10.0},
     # WCA Port/Cinema lever arms are VALIDATED on two independent metrically
     # sound solves (bow c2, zone_2/PD-2b): C above P by +1.12 m and +1.03 m
     # against the +1.00 m implied here. Do NOT flatten them to equal height on
@@ -69,7 +69,7 @@ MOUNTS: dict[str, dict | None] = {
     # the 0.175-scale hull and are scale-corrupted (retracted 2026-07-25, then
     # briefly re-applied 2026-07-26 until a contradiction audit caught it).
     # Pitch accuracy is 15 deg, not 3-5: tighter FRAGMENTS the solve (PD-0).
-    'wca_port': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 15.0},
+    'wca_port': {'fwd': 1.0, 'lat': 0.0, 'down': 1.0, 'pitch': 0.0, 'p_acc': 10.0},
     # OWNER CORRECTION 2026-08-14: "upper is 45 degrees down, cinema and mid
     # are pointed directly forward ... it's how they were loaded on this
     # cruise and NA165". Cinema was carrying 45 deg while wca_starboard (the
@@ -79,13 +79,13 @@ MOUNTS: dict[str, dict | None] = {
     # solved with cinema at 45. The owner vouched for NA168 and NA165 only.
     # If that line is ever reprocessed, give it a cruise-scoped family
     # rather than moving this row back.
-    'wca_cinema': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 0.0, 'p_acc': 15.0},
+    'wca_cinema': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 0.0, 'p_acc': 10.0},
     # WCA upper stills (U###C). 45 deg down is owner-stated; the lever arm
     # is NOT surveyed and reuses the cinema magnitude.
-    'wca_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
+    'wca_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 10.0},
     # Same camera as wca_upper, reached through the stager's UTC-first
     # filename (the U###C prefix does not survive the rename).
-    'na168_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 15.0},
+    'na168_upper': {'fwd': 1.0, 'lat': 0.0, 'down': 0.0, 'pitch': 45.0, 'p_acc': 10.0},
     # Starboard's mount has NEVER been measured. The owner excludes Starboard
     # from photogrammetry, so this should not be reached - and if it is, the run
     # must SAY SO rather than invent a zero lever arm and a 0 deg tilt.
@@ -127,11 +127,30 @@ MOUNTS: dict[str, dict | None] = {
 # again the way the 3-vs-15 orientation accuracy did.
 # superseded-by modules/cameras.json defaults - pending migration step (c+)
 PRIOR_ACCURACY_DEFAULTS: dict[str, float] = {
-    'pos_xy': 10.0,   # X and Y accuracy, metres
-    'alt': 1.0,       # Alt accuracy, metres
-    'yaw': 15.0,      # Yaw accuracy, degrees
-    'roll': 15.0,     # Roll accuracy, degrees
+    'pos_xy': 5.0,    # X and Y accuracy, metres
+    'alt': 1.0,       # Alt accuracy, metres  (depth is a pressure sensor,
+                      # already far better than horizontal USBL - untouched)
+    'yaw': 5.0,       # Yaw accuracy, degrees
+    'roll': 5.0,      # Roll accuracy, degrees
 }
+# 2026-09-08, OWNER DIRECTIVE. Was pos_xy 10.0 / yaw 15.0 / roll 15.0.
+# This TIGHTENS against recorded counter-evidence and the owner made the call
+# knowing it: PD-0/PD-0b measured 3-5 deg claimed orientation FRAGMENTING the
+# solve where 15 deg gained registration, and PRIORS_DISTORTION_TEST_PLAN
+# ('bow 2x2') had the 1/1/0.1 sensor spec fragmenting a known-good 665-image
+# component and moving hull scale from 1.049/0.989 to 0.886/0.826.
+#
+# The argument FOR, which is specific to dense hover patches: the prior is also
+# the PRE-SELECTION gate. On NA165/H2060 zone_2 - 9,136 images in 44.7 x 41.8 m -
+# a 10 m prior spans 30 m at 3 sigma, i.e. essentially the whole zone, so almost
+# every pair survived gating and the align ran 14.2 h without converging. At 5 m
+# the span is 15 m. So the same number can hurt as a constraint and help as a
+# filter, and which dominates is an empirical question per dive.
+#
+# HOW TO TELL THEM APART on the re-run, because the two look nothing alike:
+#   pruning worked   -> wall-clock drops sharply, registration rate holds
+#   over-constrained -> component COUNT rises, registration RATE falls
+# If the second shape appears, revert this block, not the grouping fix.
 
 
 # The house convention for a camera family whose mount has never been

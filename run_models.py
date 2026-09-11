@@ -72,6 +72,79 @@ def project_size_gb(project) -> float:
     return total / 1024 ** 3
 
 
+def summarise_models(models: list, finals: list,
+                     stop_reason: str | None = None) -> dict:
+    """What got built, what did not, and why - as data.
+
+    Split out of main() so it can be tested. Reconstructing this by diffing
+    models_report.json against merge_report.json is a step nobody takes while
+    a run is in flight, and before it existed a modelling run that skipped
+    two thirds of a dive looked exactly like one that modelled all of it.
+
+    `models` is the report's model list, `finals` the (key, component) pairs
+    the merge report offered as candidates. Camera counts come from the model
+    records for anything the loop touched and from the candidate records for
+    anything it did not, so the totals reconcile either way.
+    """
+    def _cams(recs):
+        return sum(r.get('cameras') or 0 for r in recs)
+
+    modelled = [m for m in models if m.get('success')]
+    # A record with success=False AND a skip reason was never attempted; only
+    # an actual modelling attempt that returned failure counts as FAILED.
+    failed = [m for m in models
+              if m.get('success') is False and not m.get('skipped')]
+    by_reason: dict[str, list] = {}
+    for m in models:
+        if m.get('skipped'):
+            by_reason.setdefault(m['skipped'], []).append(m)
+    total_cams = sum((c.get('camera_count') or 0) for _k, c in finals)
+    return {
+        'candidates': len(finals),
+        'candidate_cameras': total_cams,
+        'modelled': len(modelled),
+        'modelled_cameras': _cams(modelled),
+        'failed': len(failed),
+        'failed_cameras': _cams(failed),
+        'skipped': {r: {'components': len(v), 'cameras': _cams(v)}
+                    for r, v in sorted(by_reason.items())},
+        'stop_reason': stop_reason,
+    }
+
+
+def summary_lines(summary: dict) -> list[str]:
+    """Render a summary for the log. A leading '!' marks an error-level line."""
+    total = summary['candidate_cameras'] or 0
+
+    def pct(n):
+        return (100.0 * n / total) if total else 0.0
+
+    out = ['--- MODELLING SUMMARY ---',
+           '  candidates      : %3d components, %6d cameras'
+           % (summary['candidates'], total),
+           '  MODELLED        : %3d components, %6d cameras (%.1f%%)'
+           % (summary['modelled'], summary['modelled_cameras'],
+              pct(summary['modelled_cameras']))]
+    for reason, rec in sorted(summary['skipped'].items()):
+        out.append('  skipped/%-12s: %3d components, %6d cameras (%.1f%%)'
+                   % (reason, rec['components'], rec['cameras'],
+                      pct(rec['cameras'])))
+    if summary['failed']:
+        out.append('!  FAILED          : %3d components, %6d cameras'
+                   % (summary['failed'], summary['failed_cameras']))
+    if summary['stop_reason']:
+        out.append('!  run stopped early: %s' % summary['stop_reason'])
+    gated = summary['skipped'].get('scale_gate')
+    if gated:
+        out.append(
+            '!  %d component(s) (%d cameras) were refused on metric scale and '
+            'are in NO deliverable. Fix the scale (BUGS.md B19) rather than '
+            'reaching for --force - it does not correct the scale, it only '
+            'stops the gate refusing it.'
+            % (gated['components'], gated['cameras']))
+    return out
+
+
 def scale_gate_enabled(report: dict) -> bool:
     """Whether this workspace's merge report asks for the scale gate to REFUSE.
 
@@ -284,12 +357,26 @@ def main() -> int:
     os.environ.pop('RS_PROJECT_LABEL', None)
     logs_dir = str(ws.root / 'logs')
     disk_floor_hit = False
+    # Every component this loop actually reaches. Whatever is left over when
+    # the loop ends was never considered, and has to say so - see the
+    # not-reached pass below.
+    processed: set[str] = set()
+    stop_reason: str | None = None
 
     for key, comp in finals:
         name = key.split('/')[-1]
         if name in already:
-            logger.info('%s: already modelled - skipping', name)
+            # Deliberately NOT appended to out['models']: this component is
+            # already in there, carried over from the prior report as a
+            # SUCCESS. A second, skip-shaped record would list it twice and
+            # make the counts disagree with themselves.
+            logger.info('SKIP %s (%s cams): already modelled in an earlier '
+                        'run; its success record carries forward. --force '
+                        'remodels everything.',
+                        name, comp.get('camera_count'))
+            processed.add(name)
             continue
+        processed.add(name)
         status, why, median = resolve_scale(key, comp, report, ws,
                                             union_log, logger)
         entry = {'component': name, 'cameras': comp.get('camera_count'),
@@ -308,8 +395,20 @@ def main() -> int:
                 name, status, why)
             entry['scale_gate_bypassed'] = True
         elif status != 'pass':
-            logger.error('SCALE GATE: %s not modelled (%s - %s)',
-                         name, status, why)
+            # Says WHAT was lost, not just that something was. A component
+            # skipped here is imagery that will not appear in any deliverable,
+            # so the camera count and the measured scale belong in the line
+            # that records it - reading them back out of the JSON is a step
+            # nobody takes while a run is in flight.
+            logger.error(
+                'SKIP %s (%s cams): SCALE GATE - measured scale %s is %s '
+                '(%s). Not modelled: a model built at the wrong scale is '
+                'confidently wrong rather than absent. Band is %.2f-%.2f; '
+                '--force overrides.',
+                name, entry['cameras'],
+                ('%.4f' % median) if isinstance(median, (int, float)) else median,
+                status, why,
+                scale_oracle.DEFAULT_SCALE_MIN, scale_oracle.DEFAULT_SCALE_MAX)
             entry['skipped'] = 'scale_gate'
             out['models'].append(entry)
             flush()
@@ -324,6 +423,7 @@ def main() -> int:
             out['models'].append(entry)
             flush()
             disk_floor_hit = True
+            stop_reason = ('disk floor: under %.0f GB free' % MIN_FREE_GB)
             break
         logger.info('=== model %s (%s cams, scale %s) ===',
                     name, entry['cameras'], median)
@@ -339,7 +439,39 @@ def main() -> int:
         if not res.success:
             logger.error('model %s FAILED - stopping so evidence survives',
                          name)
+            stop_reason = 'stopped after %s failed to model' % name
             break
+
+    # ---------------------------------------------------------------- skips
+    # Anything the loop never reached. Both `break` paths above leave the rest
+    # of `finals` unconsidered, and until now those components vanished: no
+    # log line, no report entry, nothing to distinguish "modelled nothing
+    # because it was skipped" from "was never a candidate". On a 70-component
+    # dive a failure at component 3 silently dropped 67.
+    not_reached = [(k, c) for k, c in finals
+                   if k.split('/')[-1] not in processed]
+    if not_reached:
+        logger.error('%d component(s) were NEVER REACHED (%s):',
+                     len(not_reached), stop_reason or 'loop ended early')
+        for key, comp in not_reached:
+            name = key.split('/')[-1]
+            logger.error('  NOT REACHED %s (%s cams)', name,
+                         comp.get('camera_count'))
+            out['models'].append({'component': name,
+                                  'cameras': comp.get('camera_count'),
+                                  'skipped': 'not_reached',
+                                  'why': stop_reason or 'loop ended early'})
+        flush()
+
+    # -------------------------------------------------------------- summary
+    # One place that says what was built and what was not. Reconstructing this
+    # by diffing models_report.json against merge_report.json is a step nobody
+    # takes, so the run says it out loud before it exits.
+    summary = summarise_models(out['models'], finals, stop_reason)
+    for line in summary_lines(summary):
+        (logger.error if line.startswith('!') else logger.info)(line.lstrip('!'))
+    out['summary'] = summary
+    flush()
 
     done = [m for m in out['models'] if m.get('success')]
     # A dated copy duplicates the WHOLE project. Writing one immediately after

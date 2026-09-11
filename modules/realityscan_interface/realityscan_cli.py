@@ -96,6 +96,132 @@ EXECUTABLE_CANDIDATES = [
 # How long progress may stay silent before we log a stall warning. This is
 # a warning only — large datasets can legitimately be quiet for a long time.
 STALL_WARNING_SECONDS = 2 * 60 * 60
+
+# ---------------------------------------------------------------------------
+# FROZEN-PROGRESS detection (NA165/H2060 zone_2, 2026-09-07)
+# ---------------------------------------------------------------------------
+# The silence-based guard above cannot detect the failure that actually cost
+# 14.2 h. It keys on the progress line CHANGING; during zone_2's freeze the
+# line kept changing while the work did not:
+#
+#   ... 0.61 39859.34 25128.00 #progress      <- fraction unchanged
+#   ... 0.61 40459.34 25506.00 #timeout       <- 600 s later, ignored as activity
+#   ... 0.61 40468.86 25512.00 #progress      <- re-arms last_activity
+#
+# The elapsed counter advances every line, so the text is never equal to the
+# previous text, and the non-#timeout records arrived at most 800 s apart
+# against a 7,200 s threshold. The timer re-armed forever. Raising or lowering
+# STALL_WARNING_SECONDS cannot fix it: any threshold that would have fired must
+# sit below 800 s, and a healthy align is legitimately quiet for one 600 s
+# -writeProgress heartbeat (measured: zone_1's longest genuine plateau was
+# 600.0 s and 603.2 s across two runs).
+#
+# What DOES separate them is the fraction itself, at full precision.
+# RealityScan computes remaining = elapsed * (1 - p) / p exactly, so
+#     p = elapsed / (elapsed + remaining)
+# recovers it ~100x finer than the 2-decimal figure in the line. Measured over
+# the freeze: p spanned 0.615009278..0.615015234 - a spread of 6.0e-6 that is
+# NON-MONOTONE (it drifts backwards as well as forwards), i.e. estimator jitter
+# around a constant, not slow progress. In both healthy zone_1 runs EVERY
+# progress record carried a strictly new fraction: 182 records, 182 distinct
+# values, zero repeats.
+#
+# Window: 3,600 s of the OPERATION'S OWN elapsed clock, never wall clock, so
+# this remains a non-progress test and not a timeout (hard rule 3). Measured
+# sweep over the real logs:
+#     900 s  -> FALSE POSITIVE on a healthy zone_1 run
+#   1,800 s  -> flags zone_2 while it was still genuinely advancing
+#   3,600 s  -> clears zone_1 by 255-568x, flags zone_2 2.2 h before the
+#               operator killed it, and clears zone_2's own longest RECOVERED
+#               freeze (1,825 s) by 2.0x
+# Epsilon 1e-4 sits 17x above the observed jitter and below the smallest real
+# increment seen just before the freeze (~9e-5). An equality test would never
+# fire - all 35 frozen values differ at 1e-9.
+PROGRESS_STALL_WINDOW_SECONDS = 3600.0
+PROGRESS_STALL_EPSILON = 1e-4
+
+
+def parse_progress_line(line: str):
+    """(alg_id, fraction, elapsed_s, remaining_s) from a progress record.
+
+    Shape: ``<algId> <fraction> <elapsed> <remaining> #progress|#timeout``.
+    Returns None when the line is not a progress record or is malformed - the
+    monitor must never die on an unexpected line.
+    """
+    if not line:
+        return None
+    parts = line.split()
+    for i, tok in enumerate(parts):
+        try:
+            frac = float(tok)
+        except ValueError:
+            continue
+        if not (0.0 <= frac <= 1.0) or '.' not in tok:
+            continue
+        if i == 0 or i + 2 >= len(parts):
+            continue
+        try:
+            alg = int(parts[i - 1])
+            elapsed = float(parts[i + 1])
+            remaining = float(parts[i + 2])
+        except ValueError:
+            continue
+        return alg, frac, elapsed, remaining
+    return None
+
+
+class _ProgressTracker:
+    """Tracks the recovered fraction per operation and reports a freeze.
+
+    Deliberately keyed on alg_id: a new operation restarts elapsed at ~0 and
+    would otherwise fabricate a huge negative delta against the previous one.
+    """
+
+    def __init__(self, window=PROGRESS_STALL_WINDOW_SECONDS,
+                 epsilon=PROGRESS_STALL_EPSILON):
+        self.window = window
+        self.epsilon = epsilon
+        self.alg = None
+        self.samples = []          # (op_elapsed, recovered_p)
+
+    @staticmethod
+    def recovered_fraction(elapsed, remaining):
+        """p = elapsed / (elapsed + remaining), the unrounded fraction.
+
+        RealityScan's own remaining estimate is elapsed*(1-p)/p, so this
+        inverts it exactly. Returns None when the pair carries no information
+        (both zero at operation start, or a negative remaining).
+        """
+        total = elapsed + remaining
+        if total <= 0 or elapsed < 0 or remaining < 0:
+            return None
+        return elapsed / total
+
+    def update(self, line):
+        """Feed one progress line. Returns frozen-seconds when the operation
+        has not advanced across the whole window, else None."""
+        parsed = parse_progress_line(line)
+        if parsed is None:
+            return None
+        alg, _frac, elapsed, remaining = parsed
+        if alg != self.alg:
+            self.alg = alg
+            self.samples = []
+        p = self.recovered_fraction(elapsed, remaining)
+        if p is None:
+            return None
+        self.samples.append((elapsed, p))
+        # Keep one sample older than the window so the comparison spans it.
+        cutoff = elapsed - self.window
+        while len(self.samples) > 2 and self.samples[1][0] <= cutoff:
+            self.samples.pop(0)
+        oldest_e, oldest_p = self.samples[0]
+        span = elapsed - oldest_e
+        if span < self.window:
+            return None
+        if abs(p - oldest_p) < self.epsilon:
+            return span
+        return None
 # Near-OOM, RealityScan slows to a crawl WITHOUT crashing and without
 # spilling to disk (owner-observed, 2026-07-24) — in the progress feed
 # that is indistinguishable from a hang or a quiet compute phase, so the
@@ -943,6 +1069,11 @@ class RealityScanCLI:
         last_errors = ''
         last_activity = time.monotonic()
         stall_warned = False
+        # Frozen-progress detection, orthogonal to the silence guard: this one
+        # keys on the recovered completion fraction rather than on the progress
+        # line changing. Owned here and handed to _monitor_loop so a single
+        # workflow keeps one history across the whole run.
+        progress_tracker = _ProgressTracker()
         low_memory_warned = False
 
         cpu = _CpuSampler()
@@ -967,7 +1098,8 @@ class RealityScanCLI:
             self._monitor_loop(process, progress_path, last_progress_line,
                                last_errors, last_activity, stall_warned,
                                low_memory_warned, cpu, trace, next_sample,
-                               started, peak, marker_instance)
+                               started, peak, marker_instance,
+                               progress_tracker)
         finally:
             if trace is not None:
                 trace.close()
@@ -986,7 +1118,13 @@ class RealityScanCLI:
     def _monitor_loop(self, process, progress_path, last_progress_line,
                       last_errors, last_activity, stall_warned,
                       low_memory_warned, cpu, trace, next_sample, started,
-                      peak, marker_instance=None) -> None:
+                      peak, marker_instance=None, progress_tracker=None) -> None:
+        # Defaulted rather than required: attach mode and the tests call this
+        # directly, and a monitor that raises NameError is strictly worse than
+        # one that quietly builds its own tracker.
+        if progress_tracker is None:
+            progress_tracker = _ProgressTracker()
+        progress_stall_warned = False
         while process.poll() is None:
             time.sleep(PROGRESS_POLL_SECONDS)
 
@@ -1022,6 +1160,32 @@ class RealityScanCLI:
                 if not line.rstrip().endswith('#timeout'):
                     last_activity = time.monotonic()
                     stall_warned = False
+
+                # FROZEN PROGRESS, independent of the silence guard above.
+                # #timeout lines are fed in deliberately: during zone_2's
+                # freeze they carried the same fraction as the #progress lines
+                # around them, and excluding them would discard half the
+                # evidence that nothing was moving.
+                frozen_for = progress_tracker.update(line)
+                if frozen_for is not None and not progress_stall_warned:
+                    progress_stall_warned = True
+                    parsed = parse_progress_line(line)
+                    p = progress_tracker.recovered_fraction(parsed[2], parsed[3])
+                    avail = _available_ram_gb()
+                    self.logger.warning(
+                        'RealityScan [%s] operation %s has made NO measurable '
+                        'progress for %.0f s of its own elapsed clock: the '
+                        'recovered completion fraction is still %.6f (window '
+                        '%.0f s, epsilon %g). The displayed 2-decimal figure '
+                        'and the changing elapsed/remaining numbers both keep '
+                        'moving while the work does not, which is why the '
+                        'silence-based stall warning cannot see this. Not '
+                        'aborting - the project is saved only AFTER alignment '
+                        'completes, so there is nothing to salvage - but this '
+                        'is very unlikely to finish. Available RAM: %s.',
+                        self.instance_name, parsed[0], frozen_for, p,
+                        progress_tracker.window, progress_tracker.epsilon,
+                        'unknown' if avail is None else '%.1f GB' % avail)
 
             errors = self._read_marker('errors', marker_instance)
             if errors and errors != last_errors:

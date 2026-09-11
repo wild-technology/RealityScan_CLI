@@ -135,10 +135,23 @@ _MATCHERS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
 # registry. ADDING cameras/families is explicitly allowed - see
 # _assert_parity's docstring.
 
+# 2026-09-08, OWNER DIRECTIVE: "NOTHING SHOULD EVER BE BROWN3, only DIVISION."
+# zeuss and cinema carried 'brown3' here and the brace pinned it, so the rows
+# below were amended DELIBERATELY rather than the brace being loosened.
+#
+# This is not cosmetic. RS_CLI/Metadata/AlignmentParams.xml sets a GLOBAL
+# sfmDistortionModel=Division, so every sidecar written for a brown3 camera
+# declared a model the session was not configured for. Measured on NA165/H2060
+# zone_1 (3,000 harvested cameras, 2026-09-08): every exported camera carried
+# BOTH Camera:DistortionModel="brown3" (our prior) and
+# xcr:DistortionModel="division" (what actually solved) - i.e. the prior lost.
+# A calibration prior that contradicts the session distortion model is a strong
+# candidate for why RealityScan discarded the sidecar wholesale; see the
+# CalibrationGroup="-1" census in FINDINGS (B17).
 _LEGACY_CAMERAS: dict[str, Camera] = {
-    'zeuss': Camera('zeuss', '1', 'Approximate', 23.0, '1', 'Approximate', 'brown3'),
+    'zeuss': Camera('zeuss', '1', 'Approximate', 23.0, '1', 'Approximate', 'division'),
     'port': Camera('port', '2', 'Approximate', 16.0, '2', 'Approximate', 'division'),
-    'cinema': Camera('cinema', '3', 'Approximate', 16.0, '3', 'Approximate', 'brown3'),
+    'cinema': Camera('cinema', '3', 'Approximate', 16.0, '3', 'Approximate', 'division'),
     'starboard': Camera('starboard', '4', 'Approximate', 16.0, '4', 'Approximate', 'division'),
 }
 

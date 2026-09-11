@@ -5,6 +5,7 @@ rules are `CLAUDE.md`, the current design is `docs/ARCHITECTURE.md`.
 
 | File | What it was | Moved from |
 |---|---|---|
+| `FINDINGS_2026-09-05_to_2026-09-06.md` | The September 5 consolidation/Windows/texture findings and September 6 initial review, preserved verbatim when the live log reached its size limit after the September 11 merge. Later September 6 entries remain live. | `FINDINGS.md` |
 | `AGENT_NATIVE_ROADMAP.md` | The 2026-09-03 plan for the Claude-guided lane. Phases 0-1 landed 2026-09-03; Phases 2-4 landed 2026-09-05 (this consolidation). Owner decisions D1-D6 now live in `docs/DECISIONS.md`. | `docs/` |
 | `AUDIT_2026-09-05.md` | The code audit that preceded the consolidation. | written here |
 | `code-review-2026-07.md` | First-machine validation of the CLI layer (July 2026). | `docs/` |

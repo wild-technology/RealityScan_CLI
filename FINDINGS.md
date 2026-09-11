@@ -103,231 +103,13 @@ Every entry dated before 2026-09-05 lives verbatim in
 Cite them as `FINDINGS <date>` exactly as before; the rs-reference Addenda
 of 2026-09-05 carry their RealityScan facts.
 
-## [HARNESS] 2026-09-05 - agent-native consolidation: what the audit measured
+## [HARNESS] 2026-09-05 - agent-native consolidation: archived
 
-Fresh clone of `main` (`eb3ac8a`) on a macOS box with a Python 3.14 venv
-built from `requirements.txt`. Suite there: 713 passed, 22 failed, 4 skipped
-in 24 s; every failure is platform-bound (11 alignment tests need the
-RealityScan install tree; 11 basename-matching tests push `M:\` paths through
-POSIX `os.path`). The Windows expectation is unchanged (fully green).
-
-- **The unit suite wrote `rs_settings.json` into the repo root** (section
-  `main`: `b_overlap_percent`, `g_*` accuracies), via `main.parse_arguments`
-  under a `SettingsStore()` with the default path. Found by `ls` after one
-  run. CLOSED: `testing/conftest.py` points every store at `tmp_path` (module
-  attribute + the new `RS_SETTINGS_PATH` env for child processes), scrubs
-  `RS_*` from the test environment, and fails the session if the root file
-  reappears. ESTABLISHED.
-- **Three paths bypassed `RS_NO_SETTINGS_INHERITANCE`**, so a chartered run
-  could still inherit another campaign's answers: `main.parse_arguments`
-  (`settings.get('main', ...)` then a silent EOF fallback to the stored
-  value), `BatchDirectory._stored_default` (`settings.get('batch', ...)`),
-  and `geoall.py`'s code defaults, which were one machine's `Z:\` trees and
-  count as legitimate fallbacks under refusal. Found by reading every
-  `SettingsStore` call site. CLOSED: `default_for()` is the one resolution
-  path, `unattended()` (RS_NO_INTERACTIVE or RS_RUN_CHARTER) never calls
-  `input()` and announces every value it takes, `geoall` defaults are None
-  and the missing flags are named. `testing/test_unattended_prompts.py`.
-- **`main.py` did not honour its own epilog** ("RS_NO_INTERACTIVE = never
-  prompt; missing required values fail fast"): it still called `input()`
-  and took the stored answer on EOF. CLOSED (exit 2 naming the flag).
-- **`decimator.py` had no argument parser and an `input()` loop that spins
-  forever on an EOF stdin**; `timestamp_rename.py` had no EOF guard. CLOSED
-  (`--yes` is the only unattended path that proceeds).
-- **`modules.preflight` caught a real gap on its first run**: for the stage
-  set georeference+batch+align the batcher's `--b_input` is required (the
-  in-process hand-off exists only from Extract or Preprocess) and
-  `run_plan --validate` cannot see it (argparse treats every flag as
-  optional; the module refuses at run time). Preflight derives required
-  answers from the modules' own Parameter declarations, so this class of gap
-  is now a question before launch. ESTABLISHED.
-- **`test_rig_mounts.py` leaves `logging.disable(CRITICAL)` armed** for the
-  rest of the session; any later test relying on `caplog` alone sees
-  nothing. Worked around in the new tests (`logging.disable(NOTSET)` in a
-  fixture); the leak itself is unchanged. OPEN (trivial fix, not this pass).
-- `archive/colmap/vocabtrainer_shipwrecks.py` does not compile (`try` without
-  `except`, line ~710) and never did on `main`. Archived code; left as is.
-- `wildscan/session.py` still carried its own `IMAGE_EXTS` without `.heif`
-  after `modules/image_exts.py` was created to end exactly that duplication.
-  CLOSED in `modules/run_plan.py` (ONE inventory).
-- The planner moved: `wildscan/session.py` + `wildscan/plan.py` ->
-  `modules/run_plan.py`; the TUI is archived FUNCTIONAL under
-  `archive/wildscan_tui/` (owner: keep the UI, break it off). New
-  `rs.py` (charter | preflight | plan | run | launch | status | verify);
-  `rs run` refuses RealityScan stages from a `CLAUDECODE` shell (mandate 6
-  made mechanical) and `rs launch` writes the CRLF launcher pair and PRINTS
-  the `schtasks` commands rather than running them (the ask-gate must fire).
-- Instruction-layer sizes after the pass: `CLAUDE.md` 11.9 KB -> 6.7 KB
-  (200 -> 128 lines), `HANDOFF.md` 91.6 KB -> the two current sections
-  (older sections verbatim in `docs/history/HANDOFF_2026-07_to_2026-09.md`).
-
-## [HARNESS] 2026-09-05 - first Windows run of the consolidated suite: 810/812, both failures Windows-only test defects
-
-The consolidation branch (`claude/agent-native-consolidation`, macOS box) shipped
-with "Windows expectation: fully green (NOT run here)". First run on the
-Honeybadger box (`jonat`, Python 3.13.5 at
-`C:\Users\jonat\AppData\Local\Programs\Python\Python313`, `py` launcher present,
-RealityScan 2.2 installed): **810 passed, 1 failed, 1 skipped in 28 s**, then
-a HYGIENE FAILURE at session end. Neither is a pipeline defect:
-
-- `testing/test_rs_cli.py::test_launch_never_calls_schtasks` replaced
-  `subprocess.run` with a lambda returning `None`. `modules/preflight.py`'s
-  hook-interpreter check (`check_hook_interpreter`) runs `python -c "import
-  modules.run_charter"` wherever `python` is on PATH - it is on Windows and
-  was not on the macOS box, which is why the test passed there. The fake then
-  broke `.returncode`. A second latent defect in the same test: replacing
-  `subprocess.Popen` with a lambda makes the first import of
-  `asyncio.windows_utils` (which subclasses `subprocess.Popen` at import time)
-  fail with `TypeError: function() argument 'code' must be code`. FIX: the
-  run fake returns a `CompletedProcess`, the Popen spy is a class that
-  raises, and the assertion is what the test means - no argv naming
-  `schtasks`/`wscript`, no spawn.
-- `testing/conftest.py` failed the session on the mere EXISTENCE of a
-  repo-root `rs_settings.json`. The owner's interactive store sits there on
-  every box that has run the interactive lane (gitignored). FIX: the check
-  records (size, mtime) at session start and fails only when the suite
-  created or modified the file.
-
-After both fixes and the D13 change below: **840 passed, 1 skipped in 30 s**.
-[VERIFIED: two runs, 2026-09-05] The `M:\` basename and alignment tests the
-macOS box could not run pass here.
-
-## [TEXTURE] 2026-09-05 - decision D13 applied: AdaptiveTexelSize 4096 in every workflow, MaxTexturesCount presets retired, JPG exports, preflight-enforced
-
-Owner instruction (chat, 2026-09-05): *"This needs to be changed globally to
-'adaptive texture size' never 16 or enforced 4x8k during unwrap. Crucial
-textures generates jpgs not pngs."* Applied on branch `agent-native-execution`
-(worktree `recon-tmp`); nothing was run against RealityScan - every claim
-below is by inspection and unit test, and the first modelled component on the
-NA173 test dataset is the live verification.
-
-What changed, and where the old value went:
-
-| Site | Before | After |
-|---|---|---|
-| `GenerateModel.bat` [6/8] `-calculateTexture` | `Texturing_MaxTextureCount4_8k.xml` (4 x 8192) | `Texturing_AdaptiveTexel_4k.xml` (AdaptiveTexelSize, <= 4096) |
-| `GenerateModel.bat` [8/8] `-unwrap` | `Unwrapping_Simplified_4x8k.xml` | `:try_unwrap`: `Unwrapping_AdaptiveTexel_4k.xml`, on a reported error the errors file becomes `expected_unwrap_adaptive_<inst>_<tag>.txt` and `Unwrapping_MaxCount4_4k.xml` runs through `:run` |
-| `ModelToFinal.bat` %4 default / table | `4x8k`; `highpoly|8k|4x8k|16k|fixed100|fixed50` | `adaptive`; `adaptive|fixed100|fixed50` |
-| `ModelToFinal.bat` final unwrap | `Unwrapping_Simplified.xml` (1 x 16384) for every preset but `4x8k` | always `Unwrapping_AdaptiveTexel_4k.xml`; `:try_unwrap` judges the attach-lane result by `-getStatus` `rev` (moved = took), falls back to 4 x 4096, aborts if both leave `rev` unchanged |
-| `AlignImagesFromFolder.bat` (deprecated) | `Texturing_HighPolyTexture.xml` (2 x 16K), `Unwrapping_Simplified.xml` | the adaptive pair |
-| `SetVariables.bat` | `Texturing1x8k`, `Texturing4x8k`, `Texturing1x16k` | `TexturingAdaptive4k`, `UnwrappingAdaptive4k`, `UnwrappingMaxCount4x4k` |
-| `Texturing_FixedTexelSize{100,50}perQuality.xml` | `unwrapMaxTexResolution=8192` | `4096` |
-| 9 `MaxTexturesCount` presets (`Texturing_MaxTextureCount{1,4}_{8k,16k}`, `HighPolyTexture`, `SimplifiedTexture`, `Unwrapping_Simplified{,_4x8k,_4x16k}`) | `RS_CLI/Metadata/` | `archive/metadata_retired/` with a README; nothing live names them |
-| `ModelExportParams{OBJ_NiraParts,FBX_Parts,FBX_U1V1,FBX_U1V1_material,FBX_UV,FBX_UDIM,FBX_UDIM_material}.xml` | `MvsMeshExportTexImgFormat_*=png`, FBX pixel format `32bppBGRA` | `jpg`, `24bppBGR` (JPG has no alpha channel; `MvsMeshExportTexAlpha` was already false). `Obj`, `Obj_Metric`, `GLB` were jpg/jpeg already; PLY has no textures |
-| `finish_model.py` | `TEXTURE_PRESETS` six names, default `4x8k` | `('adaptive', 'fixed100', 'fixed50')`, default `adaptive` |
-| `modules/preflight.py` | model presets = the 4x8k pair | the adaptive pair + fallback; NEW BLOCKS: any live `Texturing_*`/`Unwrapping_*` preset with `unwrapMaxTexResolution` > 4096, any `ModelExportParams*` texture format that is not jpg/jpeg |
-
-Pinned by `testing/test_texture_policy.py` (25 tests: cap, style, retired set,
-no live reference, script contents, CRLF, JPG, preflight blocks). Docs of
-record updated: rs-reference 02, 03, 09 (registry rows, unwrap example, the
-A4 audit box), 10 (sec.9.2 live table, the [8/8] recipe line, export trees,
-sec.13.6 table, A4), ARCHITECTURE, DECISIONS D13, archive README.
-
-Two things this does NOT settle, stated so nobody credits them:
-
-1. **Bake quality of the high-poly at adaptive 4K vs the old 4 x 8K is
-   unmeasured.** FINDINGS 2026-09-03 noted the 4 x 8K high-poly source was
-   "better for bake quality than the 4K it was asked to become". The owner
-   chose adaptive globally; the first NA173 component is the A/B against
-   H2060's look, and `run_decimate.py`'s texture census (`Textured`, texture
-   count, page size) is the oracle.
-2. **The `:try_unwrap` fallback in `GenerateModel.bat` sees only the errors
-   channel.** An adaptive unwrap that neither errors nor mutates the scene
-   (the c5 case DID set `0x83000003`, so the errors file should carry it) is
-   invisible to the .bat; the model report (`-exportReport` /
-   `run_decimate.info`) is the only proof of "Textured". The export census
-   still counts files, not textures - D10 territory.
-
-`unwrapMinTexelSize=0` / `unwrapMaxTexelSize=4` in the adaptive presets remain
-the OPEN enum-vs-float question (rs-reference 03 OPEN 17, 10 OPEN 27); the
-presets have produced the verified 4096-page H2060 exports as written.
-
-## [HARNESS] 2026-09-06 - review workflow over the reconciled tree: 78 findings, 33 fixed, what stands
-
-A seven-lens review workflow (rs-reference hygiene, in-line docs, agent-lane
-correctness, hooks/Windows boundary, adversarial review of the D13 commit,
-test triage, an NA173 integration probe) ran over `recon-tmp` at `eca8aba`,
-then two adversarial verifiers per must/should finding. The owner's usage
-limit cut the verification short: 18 findings confirmed, 4 contested, 31
-must/should left unverified, 25 nits. Every unverified must/should was then
-verified by hand (reading the code, running the hooks with synthetic stdin,
-`rs.py` against scratch charters) before being fixed or dismissed. Suite
-after the fixes: 879 passed, 1 skipped.
-
-Defects that would have bitten the first NA173 run (all fixed, each pinned
-in `testing/test_review_fixes.py`):
-
-- **`science.align_settings_xml` never reached the run.** Preflight validated
-  the file and reported ok; `RunCharter.env()` exported no `RS_ALIGN_PARAMS`,
-  so `AlignZone.bat` applied the canonical XML while the signed charter said
-  otherwise. Now exported; the D3 hardness A/B (cell C4) depends on it.
-- **`rs run/launch --stages` preflighted the charter's FULL stage list**, so
-  the READY verdict described a different run than the one executed; the
-  drive-run split (`run` batch, `launch` align) could not pass. Preflight now
-  judges the subset.
-- **A charter answer colliding with a pinned flag was emitted twice**;
-  argparse kept the last, so `r_model_generate: true` was silently forced
-  false and an `output_dir` answer redirected the run. Now refused by name.
-- **`check_frame` compared utm-vs-local only**: `utm:54N` against
-  `flight_log_57L_UTM.txt` was READY. Zone and band are compared now.
-- **`b_zone_layout=pool` never set `RS_ALIGN_POOL_DIR`** on the charter lane
-  (only the archived campaign drivers did), so every pool zone would have been
-  skipped as "no images found" - the 2026-08-09 union-wave failure again.
-- **`ModelToFinal.bat`'s new `:try_unwrap` (D13) left the adaptive failure's
-  own `errors_<inst>.txt` in place** on a pipeline-booted instance, so the
-  `-reprojectTexture` after the fallback would have aborted on the stale
-  marker. The fallback now moves the marker to
-  `expected_unwrap_adaptive_<inst>_<name>.txt` and runs through `:run`.
-- **The printed `schtasks` line could not be run from either agent tool**:
-  Git Bash turns `/Create` into `C:/Program Files/Git/Create`, PowerShell
-  does not honour `\"`. `rs launch` prints one form per shell (cmd.exe,
-  PowerShell, Git Bash with doubled slashes).
-- **`python rs.py run --foreground` was allow-listed and ungated** from an
-  agent shell - RealityScan under the harness job object with no ask. Refused
-  while `CLAUDECODE` is set; the owner runs it from their own terminal.
-- JSON `null` answers reached `main.py` as the token `None`;
-  `science.min_component_size` was decorative (now `--r_min_component_size`
-  and merge `--min_size`); a stage that never started left RUN_STATE
-  `running` forever (now `failed` with the error); a direct `rs run` reported
-  an earlier launch's `.rc`/task beside its own state; the launcher pair was
-  written UTF-8 (cmd reads OEM: an accented path silently does not exist -
-  non-ASCII is refused) and could record a relative path; the free-disk
-  check ignored the CACHE volume (the one that filled the box); the template
-  charter did not parse as scaffolded and its placeholder `protected` entry
-  counted as an answer; an unknown camera prefix could never be answered
-  (charter `cam_<prefix>_*` records now count); `rs status` claimed to
-  compare the budget and did not (it prints expected vs elapsed hours and
-  free disk on both volumes now, and flags a `running` state whose pid is
-  gone).
-- Hooks: `guard_rs_launch` refused any heredoc line naming a workflow script
-  and missed `&`-chained, `$(...)`, PATHEXT-resolved (`cmd /c AlignZone`) and
-  extension-less (`Start-Process '...\RealityScan'`) launches;
-  `guard_charter_writes` stopped a quoted target at its first space, so a
-  results root with a space was "outside every writable root";
-  `guard_schtasks` ignored `/Change ... /TR`. All three fixed with liveness
-  tests.
-
-Corrected in the documentation of record (rs-reference 01/02/03/04/05/06/09/
-10/11/12/13/README, CLAUDE.md, README, skills, rules, PRODUCT_READINESS):
-retired presets still listed as production or as `AlignImagesFromFolder`'s;
-`DecimateComponent.bat` (never existed - it is `run_decimate.py`); six
-`-importFlightLog` call sites where two are archived; the `:run` "twelve
-scripts" inventory; `-getStatus` "never parsed" (ModelToFinal parses `rev` /
-`lastError`); the missing `:try_unwrap` row in 11 sec.2.3 and the missing
-F-102/F-103 rows in the README's silent-failure table; `Obj_Metric` absent
-from 10 sec.13.6 and the 09 registry; the 13 sec.10.3 sentence that still
-put 45 deg on Cinema; `sensorsdb.xml` "at the repo root"; hard rule 0 stated
-as an absolute the default path breaks; `/charter` and `/drive-run` are
-owner-invoked, which the routing hook now says; `WORKFLOW_WALKTHROUGH.md`
-moved to `docs/history/` (its D7 collided with DECISIONS D7).
-
-Left standing, on purpose: the routing hook's phrasing (tune on real
-prompts); `RS_RUN_CHARTER` set-but-unusable blocking read-only commands
-(fail-closed is the safer default; the message names the fix);
-`decimator.py`'s EOF-only gates; `testing/test_preprocess_module.py` holds no
-tests (a manual staging script under a test name); `test_rig_mounts.py`'s
-`logging.disable` leak. Not measured by anything here: every claim about a
-live RealityScan run - the cells in `testing/NA173_TEST_PLAN.md`.
+The consolidation audit, first Windows validation, D13 texture policy and
+2026-09-06 review findings are preserved verbatim in
+[the next frozen log](docs/history/FINDINGS_2026-09-05_to_2026-09-06.md).
+Moved 2026-09-11 to keep the live log below its existing 900-line limit.
+The later runtime corrections and current findings remain below.
 
 ## [TEXTURE] 2026-09-06 - correction to 2026-09-05: lastError clears when the next operation starts; the ModelToFinal fallback runs through :run
 
@@ -846,3 +628,252 @@ preserved; `git diff --check` clean. Updated the master manual's model
 selection/cleanup discussion and section 13.7, architecture routing,
 pipeline handoff notes, CLAUDE and HANDOFF. No live RS or Cesium validation
 was performed for these changes.
+
+## [NA165] 2026-09-08 - alignment cost is set by camera-graph BANDWIDTH, not image count
+
+Two zones of the same dive, 4% apart in image count, differed by orders of
+magnitude in cost. zone_1 (8,757 images, 217 x 496 m corridor) aligned in ~4 h.
+zone_2 (9,136 images, 44.7 x 41.8 m hover patch) ran 14.2 h without finishing.
+
+HOW DISCOVERED: built the r=3 m proximity graph from each zone flight log -
+positions only, no image decoding, ~13 s for all four zones - and measured
+edge count and median bandwidth (max |i-j| over spatial neighbours in
+acquisition order).
+
+    zone      images   area m2   density   edges@3m   med bw   n*bw^2 vs z1
+    zone_1     8,757   107,849      0.08    808,441       75          1.0x
+    zone_2     9,136     1,870      4.89  3,915,034    3,955      2,900x
+    zone_3     3,366       384      8.76    748,856    1,537        162x
+    zone_4     1,826     1,111      1.64    192,225      202          1.5x
+
+Cholesky on the bundle-adjustment normal equations goes as n * bandwidth^2, so
+a corridor (banded, bw 75) is near-O(N) while an isotropic blob is not.
+CAVEAT, stated because it matters: the proxy ORDERS the zones correctly but is
+NOT calibrated to wall clock - n*bw^2 gives 2,900x while n*median_degree^2
+gives 53x on the same data, a 55x disagreement, and only one zone has ever
+completed. Use it to rank, never to predict hours.
+
+Pairs-within-3m alone is NOT sufficient: zone_3 has FEWER pairs than zone_1
+(749k vs 808k) yet is far more expensive, because its bandwidth is 20x higher.
+
+## [NA165] 2026-09-08 - zone_1's 33 components are a MATCHING failure, not geometry, so it is a compromised reference
+
+zone_1's r=3 m proximity graph is a SINGLE connected component (8,757/8,757,
+zero singletons) yet RealityScan produced 33 separate components with a largest
+of 604 cameras and 1,102 images (12.6%) unregistered.
+
+Consequence, and it reframes the whole zone_2 question: zone_1's 4 h runtime is
+not evidence that a ~9,000-camera connected solve is tractable on this box. It
+is evidence RealityScan DECLINED to attempt one and solved 33 small blocks
+instead. zone_2 was attempting a single block 15x larger than anything zone_1
+ever solved.
+
+## [NA165] 2026-09-08 - blue-water frames yield almost NO features, not noise features
+
+The standing theory was that low-texture underwater frames get forced to the
+sfmMaxFeaturesPerImage cap (25,000) and fill the descriptor budget with noise.
+MEASURED, and it is the opposite.
+
+HOW DISCOVERED: full-resolution SIFT (nfeatures=25000) on frames selected by
+measured flatness, with keypoints localised against a tile-flatness mask.
+
+    frame                       full-res SIFT kp    water area
+    zone_2 flattest                        1,690        90.8%
+    zone_2 next flattest                     191        88.8%
+    zone_2 rich (carbonate structure)     25,000 (cap)   0.0%
+    zone_1 typical                        25,001 (cap)   0.0%
+
+A frame with 191 keypoints cannot register against anything. It is not a source
+of false matches; it is dead weight that geometric pre-selection still pairs
+with every spatial neighbour, paying full matching cost per pair before failing.
+
+NOTE the earlier sampled analysis reached the opposite conclusion ("essentially
+zero features land in flat water") because it measured at 1/8 scale, where
+water looks smooth. Scale matters for this question.
+
+Full census of both zones (17,893 frames, every frame, no sampling): ZERO
+undecodable, zero truncated, zero within-zone duplicates, uniform 3840x2160,
+all 17,893 XMP sidecars byte-identical. Content differs sharply though -
+median water fraction 0.075 (zone_1) vs 0.317 (zone_2); frames >50% water
+8.6% vs 33.7%; median Laplacian 1,330 vs 640.
+
+Culling the dead frames does NOT rescue such a zone: removing 12% at safe
+thresholds gives 1.7x, and removing HALF the zone by water content still leaves
+it 72x zone_1. The cost is the dense core, not the empty frames.
+
+## [NA165] 2026-09-08 - relative nav precision is ~0.09 m, but that figure cannot underwrite a spacing rule
+
+MEASURED from NA165_H2060_final_datatable.csv (33,881 rows): residual against
+an 11 s rolling median has p95 = 0.09 m; median 1 s step = 0.069 m; USBL-vs-
+Kalman offset median 0.35 m, p95 1.35 m. The flight log declares 10 m.
+
+Two consequences pull in opposite directions and BOTH matter:
+
+1. The declared 10 m prior is 10-30x looser than achieved relative precision,
+   and a 10 m prior at 3 sigma spans 30 m against a 44.7 m zone - so
+   pre-selection admits ~96% of all possible pairs instead of pruning to ~12%.
+2. That 0.09 m is a SMOOTHNESS statistic (residual against a rolling median),
+   not an absolute accuracy, and the median 1 s displacement (0.069 m) is BELOW
+   it. So frame-to-frame motion at typical speed is not reliably resolvable,
+   and a displacement-threshold decimation is partly sampling jitter. A greedy
+   accumulator additionally random-walks during station-keeping and spuriously
+   keeps frames in exactly the dense regions that matter.
+
+Owner directive 2026-09-08: do not decimate. Nothing in the repo establishes
+the absolute nav precision such a rule would need.
+
+## [NA165] 2026-09-08 - ifKGrp=1 is the ONLY working calibration-grouping
+## channel; -setPriorCalibrationGroup has never worked and the prior groups
+## were never applied on any zone of this dive
+
+- **MEASURED, the failure: every camera on NA165/H2060 self-calibrated.** 3,000
+  pose XMPs sampled from `proc/aligned_components/zone_1/identity_r0`:
+  `xcr:CalibrationGroup="-1"` on 3000/3000, `xcr:DistortionGroup="-1"` on
+  3000/3000, and **1,700 distinct `FocalLength35mm` values** spanning
+  **8.947 - 4,640.580 mm** against a 23.0 mm prior. Focal length and scale are
+  the same degree of freedom in a monocular solve, so this is a free scale:
+  the gate returned 35 FAIL / 5 PASS / 3 UNMEASURED, with `zone_1_c0` at
+  6.05e-07, `zone_4_c1` at 5.61, and `zone_1_c30`/`c32` at **2.00757 / 2.00030**
+  - exactly 2x, the focal doubling surfacing as a scale doubling. The scale
+  gate was never broken; it was reporting this correctly all along.
+  [NA165] (2026-09-08) ESTABLISHED
+
+- **CONSEQUENCE, previously unnoticed: the delivered "merge" merged nothing.**
+  `proc/merged/merge_report.json` carries 43 clusters, every one with
+  `"attempts": []` and `"origin": "assemble_only - carried as-is"`. With
+  components at mutually inconsistent scale, `--pair_gate overlap` compares
+  bounding boxes that share no metric, so nothing overlapped and every cluster
+  came out a singleton. The assembly is 43 unmerged zone components in one
+  project. This also DEMOTES B17: the peel harvest it describes was never
+  reached in the final run, so `XMPExportParams.xml` was never the thing to
+  chase first. [NA165] (2026-09-08) ESTABLISHED
+
+- **CAUSE: `ifKGrp`, undocumented, shipped at the value that does not group.**
+  120 contiguous zone_2 frames, one variable per cell, calibration sidecars
+  deliberately absent so the only prior channel under test is the import
+  (`_agent/probe_ifkgrp`):
+
+      cell        cameras  ungrouped  distinct focals  focal range
+      ifKGrp=0         91         91               58  23.12 - 24.14 mm
+      ifKGrp=1         95          0                1  25.09 mm flat
+      ifKGrp=2         93         93               55  29.50 - 30.42 mm
+
+  Only 1 groups; 0 and 2 both leave every camera at -1. `ifKGrp=2` was the
+  shipped template value for the life of this repo. Note the grouped solve
+  landed at 25.09 mm, NOT the 23.0 prior - consistent with the ladder finding
+  that RealityScan steers away from a claimed value; what matters for scale is
+  that it is ONE value. [NA165] (2026-09-08) ESTABLISHED
+
+- **CORRECTION to the 2026-08-28 reading that the import "appears to stomp
+  prior groups". It does not.** A fourth cell ran with NO flight log at all, so
+  the import could not touch anything: the prior groups still did not take -
+  16 cameras, 16 ungrouped, 12 distinct focals. `-setPriorCalibrationGroup` /
+  `-setPriorLensGroup` were never working, exactly as the 2026-08-08
+  calibration-CLI probe established and as `CalibCellAlign.bat:93` states in an
+  error message. The main align path called them anyway for every dive since.
+  The [RECON] 2026-09-03 entry that kept both sides of this disagreement and
+  "settled nothing" is now SETTLED in favour of `main`'s 2026-08-08 finding.
+  [NA165] (2026-09-08) ESTABLISHED
+
+- **Why it was invisible for so long, which is the transferable part.** Every
+  channel reported success: the delegated command returned 0,
+  `prior_groups.write_command_file` logged "1 camera family", `AlignZone.bat`'s
+  `:run` saw no error, the run exited clean and produced components. The
+  failure was observable in exactly ONE artefact - the exported pose - and
+  nothing read it. A prior that cannot be observed in the output is not a
+  prior. `modules/prior_census.py` now reads the solve after every zone align
+  and refuses a run whose priors did not land, treating an EMPTY harvest as a
+  failure rather than a pass. [NA165] (2026-09-08) ESTABLISHED
+
+- **OPEN: what `ifKGrp=1` actually means.** "Group all" and "group by focal
+  length" are indistinguishable on this dive - one camera family, one focal
+  column. On a multi-camera rig they are not: "group all" would calibrate the
+  four EXIF-identical WCA cameras as one, the exact fault prior groups were
+  introduced to prevent. Probe with a two-camera fixture before the next
+  multi-camera dive. This also reopens, in a useful direction, doc Q19 (the
+  `ifKGrp`/`ifKmode` value mappings): `ifKGrp`'s effect is now partially
+  mapped by measurement rather than by the GUI diff the question proposed.
+  [NA165] (2026-09-08) OPEN
+
+## [NA165] 2026-09-08 - the B18 fix CONFIRMED on zone_2: the freeze was the
+## free focal, not the density; scale in-band goes 10.6% -> 57.8% camera-weighted
+
+- **zone_2 completed where it previously could not.** Run 1 (ifKGrp=2, 10 m
+  priors) froze at recovered p=0.615012 after 11.07 h and was killed at 14.37 h
+  having delivered NOTHING. Run 2 (ifKGrp=1, 5 m priors) finished in 13.29 h,
+  exit 0: 20 components, 5,649 of 9,136 cameras registered (61.8%), and the
+  prior census PASSED - `groups {0: 5649}`, 9 distinct focal lengths across
+  20 components, against run 1's `-1` on every camera and 1,700 distinct
+  focals. [NA165] (2026-09-08) ESTABLISHED
+
+- **THE DIAGNOSTIC POINT, and it reframes the whole run-1 investigation: the
+  stall was UNDER-DETERMINATION, not size.** The two runs track each other
+  closely to p=0.60 (run 2 is 1.1-1.4x ahead, and at p=0.55 it was actually
+  0.90x SLOWER), so the tighter position prior is not what changed the
+  outcome. What changed is that run 2 walked through the barrier run 1 died
+  on - past p=0.615 at 8.79 h - and then converged explosively:
+
+      p=0.650 at 46,515 s      p=0.800 at 46,699 s
+      p=0.700 at 46,591 s      p=0.860 at 46,930 s
+
+  i.e. 0.65 -> 0.86 in 415 SECONDS after hours of crawling. A bundle with
+  9,136 free focal parameters could not close; grouped, it closed in minutes.
+  This SUPERSEDES the run-1 conclusion that zone_2 was intractable at 4.89
+  img/m^2. The density/bandwidth/edge-count cost model built during run 1
+  correlates with real work but was describing the SYMPTOM: all four
+  interventions weighed then (decimation, further splitting, content culling,
+  prior tightening) were attacking the wrong variable, and the owner's two
+  vetoes - "no decimation, dangerous" and "splitting is not the answer" -
+  were right for better reasons than were available at the time.
+  [NA165] (2026-09-08) ESTABLISHED
+
+- **MEASURED scale after the fix, and it is a large but PARTIAL win.** Median
+  solved/nav pairwise-distance ratio per component, zone_2 run 2:
+
+      c0  1831 cams  0.9973 PASS     c1   568  1.1550 fail
+      c3   415 cams  1.0257 PASS     c2   432  0.8118 fail
+      c5   329 cams  1.0059 PASS     c6   294  1.3163 fail
+      c4   333 cams  1.0968 PASS     c8   170  1.4387 fail
+      ...                            c17   85  1.8391 fail
+
+  8 of 20 components and 3,265 of 5,649 cameras (57.8%) inside 0.90-1.10.
+  Camera-weighted against the first pass across all zones - 5 of 43
+  components, 1,231 of 11,587 cameras - that is **10.6% -> 57.8%**, and the
+  largest single component (1,831 cameras, a third of the zone) came in at
+  0.9973. But 42% of registered cameras remain out of band and the failures
+  concentrate in the SMALL components (85-570 cameras), where there is least
+  geometry to pin scale. Grouping removed the systematic free-focal error; it
+  did not make every fragment metric. Do not report this as "scale fixed".
+  [NA165] (2026-09-08) ESTABLISHED
+
+- **Registration 61.8% is the honest weak spot.** zone_1's first pass managed
+  87.4% and zone_3 97.4%, both on far easier terrain, and both with the
+  broken priors - so those numbers are not a clean baseline either. Whether
+  61.8% reflects the terrain, the 5 m / 5 deg tightening (which runs against
+  PD-0), or a genuine ceiling for a 44.7 x 41.8 m hover patch is NOT
+  determined by this run. The zone_1/3/4 re-aligns now running use identical
+  settings on zones with known first-pass rates, which is the comparison that
+  will separate them. [NA165] (2026-09-08) OPEN
+
+## [HARNESS] 2026-09-11 - merge latest NA165 development without losing local fixes
+
+Fetched `origin`; newest development head `na165-h2060-directives` = `2bbd307`,
+18 commits beyond this checkout. `main` was already contained and the old
+tracking branch was deleted remotely. Saved export fixes in `330a15a`, then
+merged the development head. Resolved four conflicts by retaining the strict
+inheritance guard, both scale-test families, and both documentation histories.
+Only the upstream documentation additions were imported; previously archived
+July/August material was not duplicated back into the live log. The merged
+suite first returned 1064 passed, 1 failed, 1 skipped: the sole failure was the
+900-line live-findings limit. Froze the oldest live block verbatim in
+`docs/history/FINDINGS_2026-09-05_to_2026-09-06.md`, preserving its lookup pointer.
+
+Compatibility finding by code inspection: the incoming `prior_census` reads
+only pose XMPs, and alignment always calls it on `identity_r0`. CSV-only
+identity capture therefore fails that gate as unmeasured, even with valid CSV
+poses. No bypass was introduced; adding verified group evidence for the CSV
+lane is outstanding. No live RealityScan operation or GitHub push occurred.
+
+Final validation: **1065 passed, 1 skipped** in 44.99 s on Windows; full
+`python -m pytest testing -q`. Export fixes unchanged from `330a15a`, archived
+findings compared verbatim with their originals, and `git diff --check` clean.

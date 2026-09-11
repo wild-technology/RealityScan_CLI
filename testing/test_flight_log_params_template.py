@@ -9,6 +9,8 @@ selection and enforcement can never disagree.
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.realityscan_interface.realityscan_interface import (
@@ -45,3 +47,53 @@ def test_no_log_defaults_to_utm_template_for_compatibility():
         == os.path.join(MD, "FlightLogParams.xml")
     assert flight_log_params_template(MD, "") \
         == os.path.join(MD, "FlightLogParams.xml")
+
+
+# ---------------------------------------------------------------------------
+# ifKGrp - the flight-log import's calibration grouping mode
+# ---------------------------------------------------------------------------
+# MEASURED 2026-09-08 (_agent/probe_ifkgrp, 120 contiguous NA165/H2060 zone_2
+# frames, one variable per cell):
+#
+#     ifKGrp=0   91 cameras   91 ungrouped   58 distinct focals  23.12-24.14 mm
+#     ifKGrp=1   95 cameras    0 ungrouped    1 distinct focal   25.09 mm flat
+#     ifKGrp=2   93 cameras   93 ungrouped   55 distinct focals  29.50-30.42 mm
+#
+# Only 1 groups. The template shipped 2 for the life of this repo, and the
+# import runs AFTER AlignZone.bat sets the prior groups, so it overrode them
+# on every dive: free per-image focal length, therefore free scale, therefore
+# unmergeable components. NA165/H2060's first pass is the receipt - 35 of 43
+# components outside the 0.90-1.10 scale band.
+#
+# This is pinned rather than merely set because the value is UNDOCUMENTED,
+# recovers nothing from the file itself, and reverting it is silent: no error,
+# no warning, just a dive's worth of self-calibrated cameras.
+
+_REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+METADATA = os.path.join(_REPO, 'modules', 'realityscan_interface',
+                        'RS_CLI', 'Metadata')
+
+
+@pytest.mark.parametrize('name', ['FlightLogParams.xml',
+                                  'FlightLogParamsLocal.xml'])
+def test_ifkgrp_is_the_value_that_actually_groups(name):
+    with open(os.path.join(METADATA, name), encoding='utf-8') as fh:
+        text = fh.read()
+    assert '<entry key="ifKGrp" value="1"/>' in text, (
+        f'{name}: ifKGrp must be 1. Measured 2026-09-08: 0 and 2 both leave '
+        'every camera CalibrationGroup="-1" (per-image self-calibration), '
+        'which frees focal length and therefore scale.')
+    assert '<entry key="ifKGrp" value="2"/>' not in text
+
+
+@pytest.mark.parametrize('name', ['FlightLogParams.xml',
+                                  'FlightLogParamsLocal.xml'])
+def test_the_measurement_travels_with_the_value(name):
+    """The value is undocumented and looks arbitrary; without the numbers
+    beside it the next reader has no way to know 2 was measured to be wrong,
+    and this is exactly the kind of line that gets 'tidied' back."""
+    with open(os.path.join(METADATA, name), encoding='utf-8') as fh:
+        text = fh.read()
+    assert 'ifKGrp=1' in text and 'ifKGrp=2' in text, \
+        f'{name}: the comparison table must stay beside the entry'
+    assert 'CalibrationGroup' in text

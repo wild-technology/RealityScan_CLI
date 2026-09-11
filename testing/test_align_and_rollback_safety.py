@@ -71,7 +71,7 @@ def _batched(root, zones=('zone_1', 'zone_2'), with_log=True, images=True):
         z = batched / zone / 'port'
         z.mkdir(parents=True)
         if images:
-            (z / f'{zone}_a.jpg').write_bytes(b'j')
+            (z / f'{zone}_zeuss_a.jpg').write_bytes(b'j')
         if with_log:
             (batched / zone / 'flight_log_53N_UTM.txt').write_text(
                 LOG_HEADER, encoding='utf-8')
@@ -113,7 +113,21 @@ def _module_with_stub(tmp_path, monkeypatch, params, results=None,
             with open(os.path.join(identity, f'{scene}_c0.csv'), 'w',
                       encoding='utf-8') as fh:
                 fh.write('# stub registration export\n')
-                fh.write(f'{scene}_a.jpg,0,0,0\n')
+                fh.write(f'{scene}_zeuss_a.jpg,0,0,0\n')
+            # ...and a POSE sidecar in identity_r0, which is where the prior
+            # census (2026-09-08) reads what the solve actually used. A real
+            # AlignZone.bat always leaves these behind; without one the stub
+            # simulates "aligned, but whether the priors applied cannot be
+            # determined", which the census correctly refuses. One camera in
+            # group 1 passes: a single camera sits under
+            # MIN_CAMERAS_FOR_FOCAL_TEST so only the group echo is judged.
+            # That is deliberate - this fixture exercises the WIRING, while
+            # the thresholds belong to testing/test_prior_census.py.
+            harvest = os.path.join(out_dir, 'identity_r0')
+            os.makedirs(harvest, exist_ok=True)
+            with open(os.path.join(harvest, f'{scene}_zeuss_a.xmp'), 'w',
+                      encoding='utf-8') as fh:
+                fh.write('<rdf:Description xcr:CalibrationGroup="1" xcr:DistortionGroup="1" xcr:FocalLength35mm="23.0"><xcr:Position>1 2 3</xcr:Position></rdf:Description>')
         return result
 
     monkeypatch.setattr(module.cli, 'run_batch_script', fake_run)
@@ -157,7 +171,7 @@ def test_a_plain_image_folder_is_still_one_scene(tmp_path, monkeypatch):
     monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     images = tmp_path / 'my_images'
     (images / 'port').mkdir(parents=True)
-    (images / 'port' / 'a.jpg').write_bytes(b'j')
+    (images / 'port' / 'p231c0001.jpg').write_bytes(b'j')
     params = {
         'output_dir': _param('output_dir', str(tmp_path)),
         'rs_input_image_dir': _param('rs_input_image_dir', str(images)),
@@ -294,9 +308,22 @@ def test_a_pre_existing_pose_sidecar_is_announced(tmp_path, monkeypatch):
     monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     images = tmp_path / 'my_images'
     images.mkdir()
-    (images / 'a.jpg').write_bytes(b'j')
-    (images / 'a.xmp').write_text(
-        '<x><xcr:Position>1 2 3</xcr:Position></x>', encoding='utf-8')
+    (images / 'zeuss_a.jpg').write_bytes(b'j')
+    # The sidecar must satisfy BOTH readers: assert_sidecars_current wants a
+    # calibration group matching the registry for this camera, and the
+    # announcement under test keys off xcr:Position. Before the 2026-09-08
+    # rig guard the fixture image had no camera family at all, so the
+    # calibration check never applied to it; now that every aligned image
+    # must resolve to a family, the sidecar has to be well-formed for that
+    # family too. Built from the registry rather than hand-written so it
+    # cannot drift when a camera's groups change.
+    from modules import camera_registry as _reg
+    _cal = _reg.calibration_xmp(_reg.CAMERAS[_reg.FAMILY_CAMERA['zeuss']])
+    (images / 'zeuss_a.xmp').write_text(
+        _cal.replace('</rdf:Description>',
+                     '  <xcr:Position>1 2 3</xcr:Position>' + chr(10) +
+                     '    </rdf:Description>'),
+        encoding='utf-8')
 
     messages = []
 
@@ -330,7 +357,7 @@ def test_a_previous_runs_project_is_renamed_not_deleted(tmp_path, monkeypatch):
     monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     images = tmp_path / 'images'
     images.mkdir()
-    (images / 'a.jpg').write_bytes(b'j')
+    (images / 'zeuss_a.jpg').write_bytes(b'j')
     out = tmp_path / 'out' / 'zone_1'
     out.mkdir(parents=True)
     (out / 'zone_1.rsproj').write_bytes(b'project')
@@ -381,7 +408,7 @@ def test_the_superseded_folder_is_not_rescanned_as_a_zone(tmp_path,
 
     images = tmp_path / 'images'
     images.mkdir()
-    (images / 'a.jpg').write_bytes(b'j')
+    (images / 'zeuss_a.jpg').write_bytes(b'j')
     (tmp_path / 'batched_images_by_zone' / 'zone_1').mkdir(parents=True)
     aligned = tmp_path / 'aligned_components'
     out = aligned / 'zone_1'
@@ -429,7 +456,7 @@ def test_a_stale_folder_without_deliverables_is_still_cleared(tmp_path,
     monkeypatch.setenv('RS_ALLOW_NO_FLIGHT_LOG', '1')
     images = tmp_path / 'images'
     images.mkdir()
-    (images / 'a.jpg').write_bytes(b'j')
+    (images / 'zeuss_a.jpg').write_bytes(b'j')
     out = tmp_path / 'out' / 'zone_1'
     out.mkdir(parents=True)
     (out / 'leftover.png').write_bytes(b'plot')
@@ -573,7 +600,7 @@ def test_a_supplied_folder_with_disagreeing_logs_is_refused(tmp_path,
     (pre-existing behaviour, untouched by this pass)."""
     folder = tmp_path / 'my_images'
     folder.mkdir()
-    (folder / 'a.jpg').write_bytes(b'j')
+    (folder / 'zeuss_a.jpg').write_bytes(b'j')
     for tag in ('53N', '57L'):
         (tmp_path / f'flight_log_{tag}_UTM.txt').write_text(LOG_HEADER,
                                                             encoding='utf-8')

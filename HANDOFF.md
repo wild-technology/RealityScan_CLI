@@ -1,5 +1,31 @@
 # HANDOFF — state of the July 2026 overhaul
 
+## 2026-09-11 - latest GitHub development merged locally
+
+Fetched origin. `main` has no new commits for this checkout, and the old
+`origin/agent-native-execution` tracking branch is gone. Merged the newest
+development line, `origin/na165-h2060-directives` at `2bbd307` (18 new commits),
+into `agent-native-execution`. The export work below was first preserved in
+`330a15a`; its five fixes and all 15 regression cases remain intact.
+
+Resolved four conflicts: retained the strict settings-inheritance guard in
+`main.py`, kept both CSV/XMP and hash-seed scale tests, and combined the new
+findings/handoff entries with the local history. Older findings were moved
+verbatim into `docs/history/FINDINGS_2026-09-05_to_2026-09-06.md` to respect the
+existing 900-line live-log limit. No historical entries were discarded.
+
+**Compatibility limit found during merge review:** the incoming prior census
+reads `identity_r0/*.xmp` only. A CSV-only align supplies no such harvest and
+is refused as unmeasured. The prior check has not been weakened or bypassed;
+group-aware CSV/report support remains required before that lane can pass it.
+The new grouping mode's multi-camera behavior also remains unverified upstream.
+
+Baseline: 985 passed, 1 skipped. Final: **1065 passed, 1 skipped** (44.99 s).
+No live pipeline was run. No push was requested or performed. Pre-existing
+untracked `.agents/`, `.codex/`, `.claude/settings.local.json` and `AGENTS.md`
+remain untouched. The older working-tree statement below describes September 9;
+those changes are now committed. Other remote branches were fetched, not merged.
+
 ## 2026-09-09 - H2060 export walkthrough and regression fixes
 
 **Done:** reviewed the current export chain against the recorded completed
@@ -33,6 +59,230 @@ For a future authorized export, use a fresh destination; the census checks
 present files, not freshness or complete FBX/OBJ material bindings. These fixes
 have offline regression coverage; their next live confirmation is an export
 through the signed run lane, not a rerun against the completed master here.
+
+## 2026-09-08 (06:15) — ASSEMBLY READY FOR REVIEW. Three decisions waiting.
+
+**Open this:**
+`D:\CoyoteThings\NA165_H2060\proc\merged\assembly\NA165_H2060_Assembly.rsproj`
+5.52 GB, **43 components, 11,587 cameras**, exit 0. Gate file:
+`proc\merged\EVALUATION_READY.txt`.
+
+**CRS is correct** — the project records exactly one coordinate system,
+`epsg:32702` / WGS 84 UTM zone 2S. That closes the 2026-09-02 loose end #2:
+the previous delivery labelled its exports 55N on a 2S dive. The align-time pin
+(project + output CRS from the flight log's zone tag, before import) held
+through to the assembly.
+
+**Against the previous delivery: 11,587 cameras vs 2,813, 43 components vs 20 —
+4.1× more registered imagery**, at 60.2 % of unique images.
+
+| zone | images | registered | % | components |
+|---|---:|---:|---:|---:|
+| zone_1 | 8,757 | 7,655 | 87.4 % | 33 |
+| zone_3 | 3,366 | 3,279 | **97.4 %** | 6 |
+| zone_4 | 1,826 | 653 | 35.8 % | 4 |
+| zone_2 | 9,136 | — | killed | — |
+
+### DECISION 1 — the scale gate blocks modelling of 38 of 43
+
+Only 5 components fall inside 0.90–1.10. The failures are two distinct
+populations and should not be treated alike:
+
+* **Near-miss, tight IQR** — zone_3's six are 0.70–1.26, clustered near 1.19,
+  IQR spreads ~0.1. Coherent geometry with what looks like a *systematic* ~20 %
+  bias. This includes the 2,128-camera block, the best thing on the dive.
+* **Degenerate** — zone_1's small fragments at 0.000–0.008. Collapsed solves,
+  the residue of the 33-way matching fragmentation.
+
+Only 4 of 43 were flagged "drift or a fold", so the wide-IQR pathology is rare.
+FINDINGS [NA165] 2026-08-31 already attributes this dive's scale failures to its
+**3.8 cm baseline geometry** (median 1 s step 0.069 m against a 9.85 m standoff
+— a baseline/depth ratio of 0.007), having tested and rejected the zoom
+hypothesis. The previous delivery shipped 20/20 models by **disabling the
+gate**. The systematic ~20 % offset in zone_3 is a separate, possibly
+correctable question and is worth its own look.
+
+### DECISION 2 — no cross-zone fusion, because the measurement channel is broken
+
+The merge ladder ran, produced real components (`cluster_0_a1_c0.rsalign`,
+982 MB) and then **correctly refused to score them**: the peel harvest returned
+empty while the .rsalign existed. `merge_zones` aborts rather than mis-assign
+cameras — the invariant working as designed.
+
+Diagnosis so far:
+* **Ruled out:** calibration sidecars blocking the export. zone_1's align
+  harvested 7,655 pose sidecars from the same tree with the same sidecars
+  present.
+* **Prime suspect:** `-exportXMPForSelectedComponent` runs with **no params
+  file**. `Metadata/XMPExportParams.xml` exists (`xmpMerge`, `xmpExGps`,
+  `xmpCamera=3`) and **nothing in the repo references it**, so the export
+  inherits the instance's current settings. Identical failure class to the one
+  already documented for `-exportRegistration`: an absent params reference does
+  not error, it falls back and produces the wrong thing with exit 0.
+
+The delivered assembly was produced with `--assemble_only`, which carries each
+component as-is and never touches that channel. Components sit side by side;
+they are not fused.
+
+**SUPERSEDED 2026-09-08 — B17 is real but it was not the blocker.** The root
+cause is B18: the calibration priors never reached any solve. Measured on 3,000
+harvested cameras from zone_1, `xcr:CalibrationGroup="-1"` on every one and
+1,700 distinct solved focals spanning 8.9–4,640 mm against a 23 mm prior — free
+per-image self-calibration, therefore free scale (35 of 43 components outside
+0.90–1.10, two at exactly 2.00). With scales that inconsistent `--pair_gate
+overlap` found no overlaps, so the ladder attempted **no** fusions at all:
+`merge_report.json` shows all 43 clusters with `"attempts": []`. The peel B17
+describes was never reached in the final run.
+
+Cause: `ifKGrp` in the flight-log import params, shipped at `2`, mapping
+undocumented and never probed. Measured on 120 contiguous zone_2 frames —
+`ifKGrp=0` 91/91 ungrouped, **`ifKGrp=1` 0 ungrouped and ONE focal**,
+`ifKGrp=2` 93/93 ungrouped. A fourth cell with no flight log at all still came
+back 16/16 ungrouped, which proves `-setPriorCalibrationGroup` was never
+working either (FINDINGS 2026-08-08) and corrects the 2026-08-28 note that the
+import "stomps" prior groups — nothing was stomped; the import's auto-grouping
+is simply the only grouping channel that works here.
+
+Fixed: `ifKGrp` → 1 in both templates with the cell table recorded inline and
+pinned by test; `modules/prior_census.py` refuses any zone whose priors
+provably did not land, treating an empty harvest as a failure rather than a
+pass. **Order of work from here: B18 is fixed, so re-test B17** — with a shared
+scale the ladder will actually attempt fusions and the peel gets exercised
+again.
+
+### DECISION 3 — zone_2 still has no remedy
+
+All four interventions measured and rejected (see the section below).
+
+### Not run
+
+Modelling. `--auto_model false` by directive: the goal was a project to review
+before modelling.
+
+### Housekeeping
+
+* 7 commits on `na165-h2060-directives`, pushed, tree clean. **778 tests pass**;
+  the 11 failures are the no-console-stdin subprocess artifact.
+* `BUGS.md` holds 16 faults with reasoning. B14 (frozen-progress detection) was
+  live during zone_3 and correctly did **not** fire on a healthy-but-slow run —
+  `p` moved 1.32e-2 over the window against a 1e-4 threshold.
+* `_agent\logs\merge.log` was overwritten by the assemble run (a bad `sed` in my
+  launcher); its diagnostic content survives in BUGS.md.
+* `proc\batched_images_by_zone\zone_3d` is a decimated copy that must NOT be
+  used. `proc\superseded\` holds the pre-fix truncated zone_1.
+
+---
+
+## 2026-09-08 — NA165/H2060 reprocess: zone_2 is intractable, 14 faults fixed
+
+Branch `na165-h2060-directives` (4 commits, pushed, tree clean). Faults and
+reasoning in **`BUGS.md`**. Suite **773 passed / 1 skipped**; the 6 failures are
+a harness artifact — no console stdin, so `subprocess` handle duplication raises
+`WinError 6` in `test_attach_mode.py`. They fail identically on a clean checkout
+and pass in a real terminal.
+
+### The dive
+
+`D:\CoyoteThings\NA165_H2060` — raw frames in `raw\` (21,023, READ-ONLY),
+results in `proc\`, RealityScan cache in `rs_cache\`. Nothing on C: but the
+RealityScan install. Nav copied to `_agent\NA165_H2060_final_datatable.csv`.
+
+Georeference matched **19,239 / 21,023 (91.5 %)**; the 1,784 rejects are all
+"nearest nav row > 2 s" (nav gaps), zero parse failures. Flight log is 14-column
+with `FocalLength`, zone-tagged `2L` → **EPSG:32702**.
+
+### Zone status
+
+| zone | images | bandwidth | cost vs zone_1 | state |
+|---|---:|---:|---:|---|
+| zone_1 | 8,757 | 75 | 1.0× | **DONE** — 33 components, 7,655 cameras (87 %) |
+| zone_2 | 9,136 | 3,955 | 53–2,900× | **KILLED after 14.2 h.** See below |
+| zone_3 | 3,366 | 1,538 | 162× (or 7×) | not run — expected expensive |
+| zone_4 | 1,826 | 202 | 1.5× | running, healthy |
+
+### zone_2: what is actually wrong
+
+It is a **44.7 × 41.8 m hover patch holding 9,136 images** (4.89 img/m² against
+zone_1's 0.08). The camera footprint is 15–18 m, so every frame sees a third of
+the zone and the proximity graph is near-complete. It was attempting a single
+connected solve **15× larger than the largest block RealityScan ever solved
+here** — zone_1's 33 components have a largest of 604 cameras.
+
+**zone_1 is therefore a compromised reference.** Its r=3 m graph is a single
+connected component, yet it produced 33 blocks. Its 4 h runtime is not evidence
+that a 9,000-camera solve is tractable; it is evidence RealityScan declined to
+attempt one.
+
+**Would zone_2 have finished? Unknowable from outside.** `p` is self-reported
+with an undisclosed denominator, nothing emits a residual, and it saved no
+project. Against: the progress rate decayed monotonically and the terminal
+freeze was 6.5× the longest it had recovered from. For: three earlier freezes
+of that class did resolve. Killing it was right on cost; it was not provably
+dead.
+
+**Four interventions were modelled and three were rejected on measurement:**
+
+* **Decimation — REJECTED by the owner, and they are right.** The 0.09 m figure
+  is a *relative* residual against an 11 s rolling median, a smoothness
+  statistic, not absolute accuracy. Nothing in the repo establishes the absolute
+  nav precision a spacing rule would need, and median 1 s displacement (0.069 m)
+  is *below* that noise floor. Do not discard real frames on an unestablished
+  threshold.
+* **Splitting — 15×, not the k² predicted.** 9-way leaves zone_2 at 188×
+  zone_1. Sub-zones of a 45 m box are still smaller than the camera footprint,
+  so bandwidth stays high. It also makes zone_4 *worse* (1.51 → 1.57).
+  Note the batcher's k-means XY splitter is the ineffective direction.
+* **Content cull — 1.7× at safe thresholds.** zone_2 genuinely is full of blue
+  water (33.7 % of frames >50 % featureless vs 8.6 % in zone_1; 4.2× the median
+  water fraction; half the detail). Full-res SIFT on those frames yields
+  **191–1,690 keypoints against a 25,000 cap** — they cannot register, yet
+  geometric pre-selection still pairs them with every neighbour. But culling
+  them leaves the dense core untouched: even discarding **half the zone** by
+  water content leaves it 72× zone_1.
+* **Tightening the position prior — helps ~10× on candidate pairs, cannot save
+  the zone.** The r=3 m graph is the floor no prior can prune, and zone_2 is
+  already far over at that floor. `testing/PRIORS_DISTORTION_TEST_PLAN.md`
+  records 1/1/0.1 fragmenting a known-good component and moving hull scale from
+  1.049/0.989 to 0.886/0.826.
+
+**No corruption anywhere.** Full census of 17,893 frames: zero undecodable,
+zero truncated, zero duplicates, uniform 3840×2160, all sidecars byte-identical.
+
+### Running
+
+`zone_4` align, launcher `_agent\align_zone4.bat`, log `_agent\logs\zone4.log`.
+zone_1 output preserved; the pre-fix truncated zone_1 is in
+`proc\superseded\aligned_components_zone_1_20260907-045436`.
+`proc\batched_images_by_zone\zone_3d` is a decimated copy that must NOT be used.
+
+### Ranked loose ends
+
+1. **zone_2 has no accepted remedy.** All four levers measured above. The
+   honest options are: accept it will not align as one zone; re-batch that
+   region with a density-aware rule; or treat a dense inspection patch as a
+   different workflow from a survey transit.
+2. **The batcher caps by image COUNT only** — no notion of area, density or
+   graph structure. That is why a 45 m box with 9,136 images shipped as one
+   zone. A pre-flight cost guard from the flight log alone runs in ~13 s.
+3. **Merge peel cap 40** (`MergeZoneComponents.bat`) and **NightGrow census cap
+   24** have the same shape as the identity ceiling fixed in B13 — a cap
+   indistinguishable from exhaustion. zone_1 alone has 33 components, so the
+   NightGrow cap is already below the real count.
+4. **`RealityScan.log` is session-scoped and has been overwritten three times.**
+   Copy it per zone on every exit path; it is the one artifact that could settle
+   "would it have finished".
+5. **Decision D1 (prior groups) still open**, and the XMP harvest rewrote
+   exactly zone_1's 7,655 registered sidecars. COPY layout saved zone_2; a
+   symlink/hardlink layout would corrupt shared priors.
+
+### Exact next commands
+
+```bash
+python -m pytest testing -q
+python -m modules.verify --workspace D:/CoyoteThings/NA165_H2060/proc --json
+```
+
+---
 
 ## 2026-09-06 (afternoon) — D1 CSV LANE RAN END TO END, scheduler-owned, read this first
 

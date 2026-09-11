@@ -8,7 +8,7 @@ import argparse
 
 from module_base.parameter import Parameter
 from module_base.rs_module import RSModule
-from module_base.settings_store import SettingsStore
+from module_base.settings_store import SettingsStore, inheritance_refused
 from modules.extract_images.extract_images import ExtractImages
 from modules.georeference.georeference_images import GeoreferenceImages
 from modules.preprocess_images.preprocess_images import PreprocessImages
@@ -244,8 +244,20 @@ def parse_arguments(argv, params, logger) -> None:
                                             p.get_default_value()))
             # Was there a STORED answer at all, or is last_value just the
             # declared default wearing its clothes? The distinction decides
-            # whether this counts as "the operator answered" below (B12).
-            _had_stored = settings.get('main', p.cli_long, None) is not None
+            # whether this counts as "the operator answered" below.
+            #
+            # `settings.get` is UNGATED on purpose here - it answers "does a
+            # stored value exist", not "may we use it". Under
+            # RS_NO_SETTINGS_INHERITANCE the stored value is REFUSED by
+            # _default_for above, so last_value is the declared default and
+            # this must NOT be counted as an answer. Without the strict-mode
+            # term, a leftover rs_settings.json entry plus a closed stdin
+            # marked the declared default explicit, overwrote the stored value
+            # with it, and told the declination resolver the operator had
+            # chosen 0.0 - re-opening B12 through the one door B12 did not
+            # close (review 2026-09-08).
+            _stored = settings.get('main', p.cli_long, None)
+            _had_stored = _stored is not None and not inheritance_refused()
             prompt = f'{p.get_description()}'
             if last_value is not None:
                 prompt += f' [{last_value}]'
@@ -338,6 +350,17 @@ def preflight_flight_log(modules, params, logger) -> None:
         p = params.get(name)
         return p.get_value() if p is not None else None
 
+    # Only two stages CONSUME a flight log: Batch Directory zones by it, and
+    # RealityScan Alignment imports it as priors. Extract Images and Preprocess
+    # Images never read one, so an Extract-only or Extract+Preprocess run - both
+    # documented, both useful for staging a dataset before nav exists - must not
+    # be refused for lacking something it will not touch (review 2026-09-08).
+    if not ({'Batch Directory', 'RealityScan Alignment'} & set(modules)):
+        logger.info('Preflight: no stage in this run consumes a flight log '
+                    '(%s) - requirement does not apply.',
+                    ', '.join(modules) or 'no modules')
+        return
+
     if 'Georeference Images' in modules:
         nav = value('geo_input_flight_log')
         if not nav or not os.path.isfile(nav):
@@ -353,20 +376,39 @@ def preflight_flight_log(modules, params, logger) -> None:
 
     # No georeference stage: a flight log must already exist somewhere the
     # downstream stages will actually look.
+    #
+    # An EXPLICIT path is honoured VERBATIM, not turned back into a directory.
+    # It used to be validated for existence and then have only its dirname
+    # handed to require_flight_log, which re-globs for flight_log*_UTM.txt - so
+    # an explicitly named log whose filename does not match that glob failed
+    # preflight even though every downstream consumer takes the path as given
+    # (review 2026-09-08).
     output_dir = value('output_dir')
-    candidates = [value('b_input') if 'b_input' in params else None,
-                  value('batch_input_image_dir'),
-                  value('rs_input_image_dir'),
-                  value('geo_input_image_dir')]
-    if output_dir:
-        candidates += [os.path.join(output_dir, 'raw_images'), output_dir]
     explicit = value('batch_flight_log_path') or value('rs_flight_log_path')
     if explicit:
         if not os.path.isfile(explicit):
             logger.error('PREFLIGHT FAILED: the flight log named explicitly '
                          'does not exist: %s', explicit)
             sys.exit(1)
-        candidates.insert(0, os.path.dirname(explicit))
+        from modules.flight_logs import describe_flight_log
+        info = describe_flight_log(explicit)
+        if info['rows'] < 1:
+            logger.error('PREFLIGHT FAILED: %s holds no data rows. A '
+                         'header-only log imports cleanly and georeferences '
+                         'nothing.', explicit)
+            sys.exit(1)
+        logger.info('Preflight: flight log %s (%d rows, %d columns)',
+                    explicit, info['rows'], info['columns'])
+        return
+
+    # 'b_input' was never a key here: params is keyed by PARAMETER name
+    # (batch_input_image_dir), never by CLI long option, so the membership
+    # test was dead code (review 2026-09-08).
+    candidates = [value('batch_input_image_dir'),
+                  value('rs_input_image_dir'),
+                  value('geo_input_image_dir')]
+    if output_dir:
+        candidates += [os.path.join(output_dir, 'raw_images'), output_dir]
     try:
         found = require_flight_log(*candidates, context='this run')
     except FlightLogMissing as exc:
