@@ -16,6 +16,25 @@ so ion's Reality Tiler processes it - ion hosts a pre-tiled 3D Tiles export
 as-is without reprocessing. Multi-texture meshes (e.g. 4 x 16K) are supported
 by the current tiler. Use the OBJ-by-parts export from ExportDeliverables.bat.
 
+--input-crs IS NOT OPTIONAL FOR A GEOREFERENCED MESH, and a shipped .prj is
+not a substitute. Told the source frame, ion authors the tileset properly:
+geometry in a local frame placed by a root transform. Left to infer, it
+writes the source's absolute coordinates straight into the glTF, which
+stores positions as FLOAT32 - at ECEF magnitude (~6.07e6) one ulp is 0.72 m,
+so the mesh renders quantised to nearly a metre. Measured three ways on
+NA165/H2063 c00, 2026-09-10: without the flag, with a .prj and without the
+flag - both quantised; with --input-crs EPSG:4978 - a root transform and
+1 micrometre resolution. The .prj is inert to ion and exists for every other
+consumer, since OBJ carries no CRS record of its own.
+
+READING PLACEMENT BACK. A tileset's boundingVolume is expressed in its LOCAL
+frame, and ion emits a loose axis-equal bounding cube whose centre is not the
+geometry; it also puts the local-frame ORIGIN somewhere inside the model, so
+the origin-to-centroid distance grows with the model. Judging placement from
+the bounding box, or against a fixed metre threshold, produces false alarms
+on large components - it flagged two correctly-placed fusions before the test
+was changed to "does ion's origin fall inside the model it was given".
+
 Auth: an ion access token with assets:write + assets:read scopes, passed via
 --token or the CESIUM_ION_TOKEN environment variable.
 
@@ -41,7 +60,12 @@ API = 'https://api.cesium.com'
 # Mesh + sidecars ion's tiler consumes; everything else in the export dir
 # (rcInfo, info files) is RealityScan bookkeeping.
 UPLOAD_EXTENSIONS = {'.obj', '.mtl', '.fbx', '.dae', '.gltf', '.glb',
-                     '.jpg', '.jpeg', '.png', '.bmp', '.tga', '.dds', '.bin'}
+                     '.jpg', '.jpeg', '.png', '.bmp', '.tga', '.dds', '.bin',
+                     # .prj carries the coordinate system. OBJ has no CRS
+                     # record of its own, so without one a georeferenced mesh
+                     # arrives with its placement implicit in the vertex
+                     # values and every consumer has to infer the frame.
+                     '.prj'}
 
 TERMINAL = {'COMPLETE', 'ERROR', 'DATA_ERROR'}
 
