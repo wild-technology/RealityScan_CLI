@@ -1,5 +1,21 @@
 <Configuration id="{EC40D990-B2AF-42A4-9637-1208A0FD1322}">
-  <entry key="xmpMerge" value="true"/>
+  <!-- FALSE, and this is the whole point of the file being referenced.
+       xmpMerge=true means "merge into existing sidecars rather than
+       overwrite". The peel harvest wants FRESH pose sidecars; merging
+       pose into a stale calibration sidecar is what produced the hybrid
+       files carrying Camera:DistortionModel="brown3" next to
+       xcr:DistortionModel="division" (B18 investigation).
+
+       It also fails outright when there is nothing to merge INTO.
+       MEASURED 2026-09-10: with the calibration sidecars moved out of
+       the image trees, -exportXMPForSelectedComponent returned
+       0x80070003 ERROR_PATH_NOT_FOUND on all 32 merge attempts across
+       15 h. The first merge, run with 23,822 sidecars present, got past
+       the same call (and wrote nothing pose-bearing, which is B17).
+       Forcing this key true - which the B17 fix did, where the export
+       previously inherited instance state - converted a silent no-op
+       into a hard failure that blocked every fusion. -->
+  <entry key="xmpMerge" value="false"/>
   <entry key="xmpExGps" value="true"/>
   <entry key="xmpFlags" value="true"/>
   <entry key="xmpCalibGroups" value="true"/>

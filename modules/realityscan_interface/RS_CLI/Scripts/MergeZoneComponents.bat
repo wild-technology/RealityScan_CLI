@@ -244,6 +244,17 @@ if defined RS_PROJECTS_DIR if defined RS_PROJECT_LABEL (
 :: Fails closed on zero applied, for the same reason the align settings loop
 :: does: a silently-empty apply leaves the export on instance state and the
 :: run then succeeds with exit 0 while measuring nothing.
+:: RS_SKIP_XMP_EXPORT_SETTINGS=1 leaves the export on whatever the instance
+:: holds - i.e. the pre-B17 behaviour. Kept as an A/B lever: applying these
+:: settings is what turned a silently-empty peel into a hard
+:: 0x80070003 failure, so being able to switch it off in one variable is
+:: how that gets isolated without editing a shipped params file.
+if defined RS_SKIP_XMP_EXPORT_SETTINGS (
+    echo SKIPPING XMP export settings - the export will inherit instance
+    echo   state, which is the pre-B17 behaviour and can silently write
+    echo   sidecars with no xcr:Position. Diagnostic use only.
+    goto :afterXmpSettings
+)
 set "XMPExportParams=%Metadata%\XMPExportParams.xml"
 if not exist "%XMPExportParams%" (
     echo ERROR: %XMPExportParams% not found. The XMP export would inherit
@@ -272,6 +283,7 @@ if %applied_xmp% EQU 0 (
     goto :fail
 )
 echo Applied %applied_xmp% XMP export setting(s)
+:afterXmpSettings
 
 if /i "%merge_mode%" == "assemble" goto :after_export
 if defined RS_MERGE_HARVEST goto :harvest
