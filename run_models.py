@@ -52,6 +52,44 @@ from modules.workspace_census import Workspace, _records  # noqa: E402
 MIN_FREE_GB = 50.0
 
 
+def model_persisted(project, name: str) -> bool:
+    """Is this component's final model actually IN the saved project?
+
+    GenerateModel.bat's exit code says the workflow ran, NOT that its result
+    survived. Those came apart twice on NA165/H2060, the same way both times:
+
+        2026-09-13 01:12  === model zone_2_c0 (1831 cams, scale 0.995) ===
+        2026-09-13 03:30  model zone_2_c0: success=True in 137.8 min
+        2026-09-13 03:30  ... disk floor: under 50 GB free (0.0 GB free now)
+
+    Zero bytes free. The save at the end of a 138-minute model ran against a
+    completely full volume, wrote nothing, and the workflow still returned 0.
+    `success=True` went into models_report.json for a model that does not
+    exist, the next run SKIPPED it as "already modelled in an earlier run",
+    and the export failed on it with a bare E_FAIL after 0 seconds - the
+    first hint that anything was wrong, three days downstream. Re-modelling
+    it on 2026-09-14 reproduced the failure exactly: 164.9 min, success=True,
+    disk at 0.0 GB, and the project's mtime still PREDATING the run.
+
+    So the check has to be against the artefact, not the exit code. The model
+    name is written into the .rsproj by -renameSelectedModel, so its presence
+    there is the one durable piece of evidence that the save landed. 38 of 39
+    components had theirs; the 39th is the one that silently did not.
+
+    Deliberately cheap and deliberately fail-safe. A false negative costs a
+    re-model; a false positive is the incident above. Read as bytes because
+    the .rsproj encoding is not guaranteed, and searched for the exact model
+    name - `<name>_Simplified_Textured` is GenerateModel's final deliverable
+    and the model ExportDeliverables later asks for by name.
+    """
+    try:
+        blob = Path(project).read_bytes()
+    except OSError:
+        # An unreadable project is not evidence of success.
+        return False
+    return ('%s_Simplified_Textured' % name).encode() in blob
+
+
 def project_size_gb(project) -> float:
     """Size of a .rsproj plus its sibling data directory, in GB.
 
@@ -430,13 +468,31 @@ def main() -> int:
         started = time.time()
         res = cli.run_batch_script('GenerateModel.bat',
                                    [str(project), name], logs_dir)
-        entry.update(success=res.success, errors=res.errors,
+        # Exit code AND artefact. A workflow that returns 0 but whose save
+        # did not land must never be recorded as a success: that record is
+        # what makes the NEXT run skip the component, so the lie is durable
+        # and only surfaces at export time. See model_persisted().
+        persisted = model_persisted(project, name) if res.success else False
+        entry.update(success=res.success and persisted, errors=res.errors,
                      duration_min=round((time.time() - started) / 60, 1))
+        if res.success and not persisted:
+            entry['errors'] = ((entry.get('errors') or '') +
+                               ' model not found in the saved project after '
+                               'a workflow that reported success - the save '
+                               'did not land (disk full?)').strip()
         out['models'].append(entry)
         flush()
-        logger.info('model %s: success=%s in %.1f min', name, res.success,
+        logger.info('model %s: success=%s in %.1f min', name, entry['success'],
                     entry['duration_min'])
-        if not res.success:
+        if res.success and not persisted:
+            free_gb = shutil.disk_usage(ws.root).free / 1024**3
+            logger.error(
+                'model %s: GenerateModel returned SUCCESS but %s_Simplified_'
+                'Textured is not in %s. The model was not saved and does not '
+                'exist. %.1f GB free. Recorded as a FAILURE so a later run '
+                'remodels it instead of skipping it.',
+                name, name, project, free_gb)
+        if not entry['success']:
             logger.error('model %s FAILED - stopping so evidence survives',
                          name)
             stop_reason = 'stopped after %s failed to model' % name
