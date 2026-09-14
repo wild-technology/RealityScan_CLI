@@ -89,13 +89,45 @@ class RSInfo:
         match = re.search(r'epsg:(\d+)', self.crs_name, re.IGNORECASE)
         return f'EPSG:{match.group(1)}' if match else None
 
+    # exportCoordinateSystemType="3" - the exporter wrote GEOCENTRIC (ECEF)
+    # vertices. The other <Model> attributes still describe the PROJECT's
+    # coordinate system, which is a different thing from the frame the
+    # vertices are in, and reading them as the vertex frame is silently
+    # catastrophic.
+    GEOCENTRIC_EXPORT_CS_TYPE = '3'
+    GEOCENTRIC_CRS = 'EPSG:4978'
+
     @property
     def crs(self) -> str:
-        """The best CRS string available, preferring an EPSG code.
+        """The CRS the VERTICES are in - not necessarily the project's.
 
-        WKT is the last resort: it round-trips through pyproj but is far
-        harder to eyeball in a log than ``EPSG:32653``.
+        A RealityScan export sidecar carries both, and they disagree. On
+        NA165/H2060 every OBJ was written with:
+
+            globalCoordinateSystemName="epsg:32702 - WGS 84 / UTM zone 2S"
+            exportCoordinateSystemType="3"
+
+        and vertices like (-6070883.4, -1174959.9, -1555436.0). Those are
+        not UTM 2S metres, they are ECEF. Reading the name as the vertex
+        frame put the anchor at lon 90.45, lat -38.49, depth -1,555,435 m -
+        the Indian Ocean, 1,555 km down - for a dive off American Samoa at
+        690 m. Caught in a --dry-run before 39 components were published;
+        nothing about the numbers looks wrong until you transform them.
+
+        Proof it is ECEF, not a guess at an undocumented enum: read as
+        EPSG:4978 the same centroid gives lon -169.046395, lat -14.210830,
+        h -690.0 m. That is American Samoa at the dive's own seabed depth,
+        and it agrees with the flight log's independent nav envelope centre
+        (-169.046912, -14.212404) to ~180 m, which is this component's
+        offset within the dive. Two independent sources, one answer.
+
+        So exportCoordinateSystemType wins over the CRS name whenever it
+        says geocentric. The name is still right about the PROJECT, which is
+        why it is not simply wrong and why this was invisible: the sidecar
+        is telling the truth, just not about the thing being asked.
         """
+        if (self.export_cs_type or '').strip() == self.GEOCENTRIC_EXPORT_CS_TYPE:
+            return self.GEOCENTRIC_CRS
         for candidate in (self.epsg, self.crs_proj, self.crs_wkt):
             if candidate:
                 return candidate
@@ -551,6 +583,42 @@ def nav_envelope_from_flight_log(path: Path) -> dict:
             'alt': (min(alt), max(alt))}
 
 
+def _geocentric_to_projected(points, projected_crs: str):
+    """ECEF (X, Y, Z) -> the project's projected (E, N, ellipsoidal height).
+
+    Everything downstream of plan_placement - the anchor, to_local_enu, the
+    nav cross-check - is written for a PROJECTED frame: two horizontal axes
+    in metres plus a vertical. ECEF is none of those things. Subtracting an
+    ECEF anchor does not give East-North-Up, it gives a geocentric offset,
+    so a mesh localised that way arrives at roughly the right place with the
+    wrong orientation - which no amount of checking the POSITION would catch.
+
+    Converting up front keeps one code path instead of two and lets the nav
+    envelope cross-check compare like with like, since the flight log is in
+    the same projected CRS.
+
+    THE Z THAT COMES OUT IS AN ELLIPSOIDAL HEIGHT. A projected export's Z is
+    a depth below the sea surface and needs the geoid separation added; this
+    one does not, and applying the correction anyway would move the mesh by
+    the local undulation (-7 m here, +72.7 m at the NA168 site). The caller
+    tracks that with z_is_ellipsoidal.
+    """
+    import numpy as np
+    from pyproj import Transformer
+
+    transformer = Transformer.from_crs(RSInfo.GEOCENTRIC_CRS, projected_crs,
+                                       always_xy=True)
+    arr = np.asarray(points, dtype='float64')
+    east, north, up = transformer.transform(arr[:, 0], arr[:, 1], arr[:, 2])
+    out = np.column_stack([east, north, up])
+    if not np.isfinite(out).all():
+        raise PlacementError(
+            f'converting geocentric vertices to {projected_crs} produced '
+            'non-finite coordinates; the mesh is not where the sidecar says '
+            'it is.')
+    return out
+
+
 def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
                    geoid_model: str = 'EGM2008',
                    apply_geoid: bool = True):
@@ -564,6 +632,10 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
     resolved: list[tuple[Path, object]] = []
     crs_seen: set[str] = set()
     interpretations: set[str] = set()
+    # A geocentric export's Z is an ELLIPSOIDAL height, not a depth below the
+    # sea surface, so the geoid correction below must not fire. See the
+    # conversion note in _geocentric_to_projected.
+    z_is_ellipsoidal = False
 
     for obj in objs:
         sidecar = find_rsinfo(obj)
@@ -573,10 +645,22 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
                 'record of the export coordinate system; without it the mesh '
                 'cannot be placed. Re-export with MvsMeshExportInfoFile=true.')
         info = parse_rsinfo(sidecar)
-        crs_seen.add(info.crs)
         vertices = read_obj_vertices(obj)
         global_points, interpretation = resolve_to_global(
             vertices, info, nav_envelope=nav_envelope)
+        working_crs = info.crs
+        if working_crs == RSInfo.GEOCENTRIC_CRS:
+            projected = info.epsg
+            if not projected or projected == RSInfo.GEOCENTRIC_CRS:
+                raise PlacementError(
+                    f'{sidecar.name} exports geocentric vertices but names no '
+                    'projected coordinate system to place them in. '
+                    'globalCoordinateSystemName is the only record of the '
+                    "project's own frame.")
+            global_points = _geocentric_to_projected(global_points, projected)
+            working_crs = projected
+            z_is_ellipsoidal = True
+        crs_seen.add(working_crs)
         interpretations.add(str(interpretation))
         resolved.append((obj, global_points))
 
@@ -605,7 +689,14 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
             f'lon/lat under {crs}')
 
     depth_msl = float(anchor[2])
-    if apply_geoid:
+    if z_is_ellipsoidal:
+        # Already a height above the WGS84 ellipsoid - exactly what ion wants
+        # for options.position. Adding the geoid separation here would apply
+        # the correction twice.
+        height, separation, model_used = depth_msl, 0.0, 'NONE (geocentric export)'
+        logger.info('geocentric export: Z is already an ellipsoidal height, '
+                    'geoid correction not applied')
+    elif apply_geoid:
         height, separation = msl_to_ellipsoidal(
             depth_msl, float(lon), float(lat), geoid_model)
         model_used = geoid_model
