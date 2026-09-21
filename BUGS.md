@@ -1105,3 +1105,65 @@ chi-squared. Orientation priors, control points, or a robust/trimmed variant
 are all candidates. Until that is known, treat a large `-update` correction as
 a flag for inspection rather than a fix — which is what the B19 block in
 AlignZone.bat already says, and now has evidence behind it.
+
+## B21 — ExportDeliverables is sometimes not entered at all, and the caller sees exit 0
+
+**OPEN. Cause unknown. Three hypotheses refuted, one of them previously
+asserted here as the answer.**
+
+`export_h2060.bat` calls `ExportDeliverables.bat` from one `:runPass`
+subroutine, once per pass. Observed twice, 2026-09-14 and 2026-09-21:
+
+    --- attempt 1 (dense ply) Mon 09/21/2026 13:06:28.88 ---
+      ExportDeliverables exit code: 0
+    --- attempt 2 (dense ply) Mon 09/21/2026 13:06:29.49 ---
+      ExportDeliverables exit code: 0
+    ABORT: two attempts in a row exported NOTHING (1 left)
+
+Each attempt took ~0.6 s — less than the `powershell` disk check inside it —
+and wrote NOTHING to the export log, not even `ExportDeliverables`' own first
+line, `Reading default variables`. Confirmed by counting invocations rather
+than eyeballing a tail: the log holds three lifetime `Components to export`
+lines (39, 37, 1) and none of them is from a pass-2 attempt. The same script's
+pass-1 call, 12 minutes earlier, ran normally for 12 minutes.
+
+So the batch was not entered, and `call` reported success for not entering it.
+
+### Refuted
+
+- **A stale `errors_RS1.txt`.** Asserted in this file on 2026-09-14 on the
+  strength of ONE working re-run after deleting it. On 2026-09-21 the file was
+  absent and the no-op happened anyway. The clear is still correct — `:run`
+  does treat any non-empty errors file as fatal — it just is not this.
+- **Environment or call shape.** `_agent/export/repro_pass2.bat` records, at
+  the call site, that `%Scripts%` still holds its value, the target file is
+  visible, the names file holds `zone_2_c0`, and `RS_EXPORT_SKIP_PLY` is
+  correctly UNDEFINED in the second pass. A print-only stub is entered in both
+  passes.
+- **Repeated invocation.** `_agent/export/repro_twice.bat` calls the REAL
+  `ExportDeliverables.bat` three times in succession (empty name list, so it
+  takes `:emptyList` and exits before booting RealityScan). All three are
+  entered and all three print.
+
+### What is still different in the failing case
+
+The failing pass-2 call follows a pass-1 call that ran for 12 minutes and
+ended by issuing `-quit` to the RealityScan instance ~0.5 s earlier. The
+repros do not reproduce that. Whether a just-quitting instance can make the
+NEXT `call` of an unrelated .bat no-op is not established, and I am not
+asserting it — that is the shape of the guess that was wrong last time.
+
+### Consequence and containment
+
+Low. The stall guard in `export_h2060.bat` catches it: two attempts with no
+progress abort the pass rather than reporting a finished export. The work
+itself succeeds when the same component is exported by a standalone call
+(`_agent/export/ply_probe.bat`), which is how `zone_2_c0`'s dense PLY was
+delivered on 2026-09-21.
+
+### Next instrument
+
+Make the supervisor record the export log's size before and after each
+attempt. If it did not grow, say "ExportDeliverables did not run" rather than
+counting a silent no-op as a failed export attempt. That turns the next
+occurrence into a labelled event instead of a rediscovery.
