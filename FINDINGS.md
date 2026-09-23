@@ -5735,3 +5735,65 @@ the absolute nav precision such a rule would need.
   determined by this run. The zone_1/3/4 re-aligns now running use identical
   settings on zones with known first-pass rates, which is the comparison that
   will separate them. [NA165] (2026-09-08) OPEN
+
+## The 12 "unmeasured" components are station-keeping hovers, and the scale gate is right to refuse them (2026-09-23) ESTABLISHED
+
+NA165/H2060 finished with 32 components / 4,979 cameras refused on metric
+scale. Twelve of those (1,073 cameras) were refused as `unmeasured` rather
+than `fail`, and I proposed them as the best recovery lead on the theory that
+a measurement problem is cheaper to fix than a scale problem. The measurement
+is fine. The data cannot support one.
+
+**Chain, measured rather than assumed.** `resolve_scale` falls through to the
+quantile oracle for these twelve, and `quantile_ratio_scale` refuses them at
+its count-parity guard, because `solved_position_cloud(identity_r0)` returns
+EVERY pose in the harvest and that harvest sits beside the ZONE's rsalign:
+6,191 poses offered against a 166-camera component. The per-zone counts read
+straight off the registration census (zone_1 6,191, zone_2 5,649, zone_4 628),
+which is what identifies the cloud as the zone's and not the component's.
+That guard is correct; the inputs are simply the wrong pair.
+
+Scoping to the component by stem makes the data look perfect: **all twelve
+have 100% coverage** - every member carries both a solved pose and a nav row
+(zone_4_c1 183/183). The stem oracle still returns None. It refuses at
+`min_nav_distance=3.0`: a camera pair only contributes if the two are more
+than 3 m apart in nav space.
+
+**Measured nav footprint of each of the twelve: 0.34 - 2.15 m.** Zero percent
+of pairs clear 3 m. The controls span 10.3 m and 25.0 m, with 54% and 79%
+clearing.
+
+**Frozen nav ruled out.** A tiny nav span could mean a stalled USBL fix
+repeating rather than a stationary vehicle - a data fault, and recoverable.
+It is not that: nav positions are all DISTINCT (183/183, 166/166, ...), and
+the solved spans are small too (0.04 - 1.43 m). The vehicle really was
+hovering.
+
+**Why widening the threshold would be actively harmful.** At these baselines
+the solved/nav ratio is noise:
+
+    zone_1_c29  nav 0.13 m  solved 0.89 m  ratio 7.10
+    zone_1_c32  nav 0.38 m  solved 1.43 m  ratio 3.74
+    zone_1_c22  nav 0.45 m  solved 0.98 m  ratio 2.16
+    zone_1_c13  nav 0.10 m  solved 0.04 m  ratio 0.42
+    controls    nav 3.4/7.6 m               ratio 0.97, 0.88
+
+A factor of 17 across twelve components of the same dive, against controls
+that agree to within 12%. USBL precision is metres-class - the owner's
+standing point that "we do not know the precision of the spacing due to USBL
+error" - so a sub-metre baseline is dividing one noise term by another.
+Relaxing `min_nav_distance` would not recover these components; it would
+manufacture confident numbers for them, and a 7.10 would sail through no
+plausible band while a 0.93 would pass and mean nothing.
+
+CONCLUSION: these twelve have no metric reference and cannot acquire one from
+nav. They are correctly outside the deliverable. The only honest routes are to
+ship them unscaled and labelled as such, or to give them scale from something
+other than USBL - co-registration against an overlapping measured component
+being the obvious candidate, which is the fusion problem (B17) wearing a
+different hat.
+
+The general lesson is about the shape of the answer: `unmeasured` invited the
+reading "the instrument failed", and the instrument was working. A gate that
+declines to measure is not the same as a gate that is broken, and the
+difference is only visible by measuring the thing the gate looked at.
