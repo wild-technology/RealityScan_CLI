@@ -66,7 +66,9 @@ Grep this file; do not read it through.
     merge|align mode; min size; `key:value` settings — driven iteratively
     by `merge_zones.py`), `GenerateModel` (mesh/cull/texture/simplify
     ONCE, on the merged component), `ExportDeliverables` (OBJ-by-parts +
-    FBX-by-parts + ultra-dense colored PLY), `SaveProjectCopy`.
+    FBX-by-parts + ultra-dense colored PLY; opt-in `RS_EXPORT_*` switches
+    listed in its header, each judged by `:charsOk` before boot),
+    `SaveProjectCopy`.
   - Boot/env: `startRealityScan`, `SetVariables`. Boot honors
     `RS_HEADLESS=0` for a GUI-visible instance.
   - Supporting/testing: `GrowZone`, `NightGrow` (attach-only seed growth;
@@ -173,6 +175,17 @@ Grep this file; do not read it through.
 - `modules/align_fingerprint.py` — align-input fingerprinting, so retries,
   resumes and merges are nav-aware.
 - `modules/export_deliverables.py` — the Python side of the export stage.
+  Carries the opt-in `RS_EXPORT_*` switches to `ExportDeliverables.bat`
+  (output-stem suffix, JPG presets, no-save, PLY-only/meshes-only,
+  exact-target georegistration via `-importFlightLog` + `-update`, per-component
+  camera-poses CSVs), checks them before an instance boots, and censuses
+  the result from disk.
+- `modules/export_remaining.py` — which components still need exporting,
+  judged from disk per PART (the retry driver's oracle; exit 3 = pass
+  complete).
+- `modules/placement_gate.py` — refuses a component whose computed placement
+  is outside the flight log's nav envelope or depth band (opt-in collapse
+  check); offline, never writes. Position only, not orientation or scale.
 - `modules/cesium_placement.py` — where a mesh belongs on the WGS84 globe.
   Reads the export's `.rsInfo` for the CRS and `transformToModel`, DERIVES
   which reading of that matrix is correct (validated against the CRS area of

@@ -1167,3 +1167,25 @@ Make the supervisor record the export log's size before and after each
 attempt. If it did not grow, say "ExportDeliverables did not run" rather than
 counting a silent no-op as a failed export attempt. That turns the next
 occurrence into a labelled event instead of a rediscovery.
+
+### Candidate mechanism, 2026-09-27 - strong, not yet confirmed on a real instance
+
+FINDINGS `[NA165] 2026-09-26 - a RealityScan started inside a redirected
+call holds the log open` records the shape. `startRealityScan.bat` launches
+the instance with `start ""`, which inherits the caller's handle to the
+redirected log. While that instance is still shutting down after pass 1's
+`-quit`, the next `call X.bat >> sameLog` cannot open the log: cmd prints
+"The process cannot access the file because it is being used by another
+process" on the SUPERVISOR's stderr, where nobody reads it, does not run the
+call, and leaves `%ERRORLEVEL%` at 0. A cmd-only repro (bat-review,
+2026-09-27: a child that `start "" /b`s a long-lived process while
+redirected, then `call child2.bat >> log`) printed exactly that and never
+entered child2; once the holder had exited, the same call was entered.
+
+It fits every observation above: ~0.6 s, no output at all, exit 0, pass 1
+fine, and the standalone call with its own log worked. Containment is the
+FINDINGS rule - one log per RealityScan workflow; never
+`call <boot-capable .bat> >> shared.log` from a cmd supervisor - and the
+NA165 re-export drivers go through Python instead (`RealityScanCLI`, verified
+shutdown, a fresh log per attempt). The status above stays OPEN until the
+mechanism is seen on a real instance.

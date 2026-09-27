@@ -5797,3 +5797,139 @@ The general lesson is about the shape of the answer: `unmeasured` invited the
 reading "the instrument failed", and the instrument was working. A gate that
 declines to measure is not the same as a gate that is broken, and the
 difference is only visible by measuring the thing the gate looked at.
+
+## [NA165] 2026-09-26 - `-exportRegistration` `$(x),$(y),$(z)` are a LOCAL frame; `$(lat),$(lon),$(alt)` and `$(euclidX..Z)` are georeferenced ESTABLISHED
+
+Wanted: the camera poses of a LOADED, georegistered project, without writing
+a sidecar beside any image (hard rule 0), to measure what `-update` did.
+
+Measured on a one-component fixture (zone_1_c40, assembled exactly as the
+NA165/H2060 assembly was: `-importComponent`, union flight log, `-update`):
+
+- The repo's RUMI membership format `{E7C3B1A9-...0A48}` (requiresGeoref="0")
+  writes `$(x),$(y),$(z)` = -0.221, -0.142, 1.648 m: the component's own
+  frame. `-setProjectCoordinateSystem` / `-setOutputCoordinateSystem
+  epsg:32702` issued first change nothing.
+- The STOCK "Comma-separated, Name, X/Lon, Y/Lat, Z/Alt, Yaw, Pitch, Roll"
+  format `{121D2018-...}` (requiresGeoref="1") writes the SAME numbers. The
+  Help defines `$(x)` as "the output coordinate system", but for a
+  registration export that is the export dialog's transformation setting
+  (`calexTrans`, value encoding unknown), not the project's output CRS.
+- `$(lat),$(lon),$(alt)` (EPSG:4326, full double precision) and
+  `$(euclidX),$(euclidY),$(euclidZ)` (ECEF - the frame the OBJ/FBX exports
+  are written in) are georeferenced, and agree with each other to the
+  0.1 mm printed. `$(aX..aZ)` equal `$(x..z)`. Variables:
+  `Help\en-US\appbasics\reports_fav_cameras.htm`.
+
+Fix: a new format `{E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A4A}` "RUMI: camera
+poses, every frame" in `calibration.xml` (lat, lon, alt, x..z, euclid,
+component frame, both rotation matrices, yaw/pitch/roll, f), selected by
+`Metadata/RegistrationExportParams_Poses.xml`, installed with
+`python -m modules.flightlog_format --install`. Anything that reads a
+registration CSV as georeferenced must check the header, because the old
+format's numbers are plausible-looking and wrong.
+
+Also measured, not yet explained: relative to the zone_1 `identity_r0` pose
+harvest, the fixture's georegistered cameras are an exact similarity (0.000 m
+residual) with scale 1.0045, rotation 87.9 deg and no shift - while the same
+cameras sit within 5 deg and scale 0.974 of the USBL nav. So zone_1's
+identity harvest does not describe the state of the `.rsalign` that was
+imported (zone_1 was georeg-retrofitted after its harvest), and every
+zone-level scale/tilt figure computed from `identity_r0` describes the
+harvest, not what went into the assembly.
+
+## [NA165] 2026-09-26 - `-update` moves a component AND its models EXACTLY onto an exact-target flight log ESTABLISHED
+
+What `-update` minimises against real nav is unknown (B19 addendum), and on
+real nav it rotated components by 5-137 deg. But fed a flight log whose
+positions ARE the wanted camera positions, it is an exact instrument.
+
+Probe 1 (fixture: zone_1_c40 + its model, `_agent/plan/probe_update`): target
+= current poses moved by a known similarity (scale 0.95, 8.94 deg, shift
+0.6 m), position accuracy 0.01 m, orientation accuracy 180 deg, same
+FlightLogParams as the assembly. After `-importFlightLog` + `-update`:
+cameras on target to 0.0000 m (52/52); the `_Simplified_Textured` OBJ moved
+by the SAME similarity to 0.00000 m over 39,007 vertices; textures and MTL
+byte-identical.
+
+Probe 2 (fixture2: zone_1_c41 + zone_2_c16, which share 52 frames that exist
+once in EACH zone's image folder under the same file name): a DIFFERENT
+similarity per component, target log keyed by the FULL image path. Both
+components landed on their own targets to 0.00000 m (52/52 and 85/85). So
+the CSV flight-log import matches full paths, and a basename-keyed log would
+have given both copies of an overlap frame the same prior.
+
+Consequence: a georegistration correction can be applied to a saved project
+AT EXPORT TIME, in memory - load, import the target log, `-update`, export,
+quit without saving - and every format (OBJ, FBX, PLY) is written in the
+corrected frame by RealityScan itself. Tools:
+`_agent/plan/tools/make_target_log.py` (NA165_H2060 workspace).
+
+## [NA165] 2026-09-26 - the delivered NA165/H2060 models were changed AFTER the scale gate, by the assembly's `-update` ESTABLISHED
+
+The scale gate measured the zone-level solves. The models were built in the
+assembly, where `MergeZoneComponents.bat` (assemble mode) imported the union
+flight log and ran `-update` (op 65542, 1.51 s). Exporting the assembly's
+camera poses (all 71 components, poses format above) and fitting them to the
+zone-level solves shows what that did: e.g. zone_2_c0 x1.118, zone_3_c0
+x1.100, zone_1_c3 x1.321, zone_1_c18 x0.792, rotations up to 99 deg
+(zone_4_c0), 88 deg (zone_1_c40), 85 deg (zone_1_c5), 81 deg (zone_1_c2).
+Against nav, several delivered models are tilted 30-98 deg and several are
+8-30% off in scale (`_agent/plan/measure/assembly_census.txt`). The placement
+gate checks position and depth only, so none of this was visible to it.
+
+## [NA165] 2026-09-26 - a RealityScan started inside a redirected `call` holds the log open; later appends to it fail and the redirected command is NOT RUN ESTABLISHED
+
+`startRealityScan.bat` launches the instance with `start`, which inherits
+the caller's handles. A launcher of the shape
+
+    call Workflow1.bat ... >> run.log 2>&1
+    call Workflow2.bat ... >> run.log 2>&1
+
+fails on the second line while instance 1 is still shutting down after its
+delegated `-quit`: cmd prints "The process cannot access the file because it
+is being used by another process" and does NOT execute the redirected
+command at all. Observed 2026-09-26: a fixture build logged a clean
+MergeZoneComponents run and then GenerateModel simply never started; the
+launcher exited 0. Use one log per RealityScan workflow, and wait for the
+instance to stop answering `-getStatus` (plus ~15 s) before the next
+workflow or the next append.
+
+## [NA165] 2026-09-26 - D: on the NA165/H2060 box is exFAT ESTABLISHED
+
+`Get-Volume D` reports FileSystemType exFAT. Consequences: no NTFS hardlinks
+(an export tree cannot share texture files between `obj\` and `fbx\`, and a
+renamed deliverable cannot be a link to the old one), and git refuses the
+repository as "dubious ownership" unless `safe.directory` is passed
+(`git -c safe.directory=<path> ...`).
+
+## [NA165] 2026-09-27 - a `set NAME|findstr` check does not validate a cmd variable; delayed-expansion substitution does ESTABLISHED
+
+`ExportDeliverables.bat` (repo_changes patch, 2026-09-26) judged
+`RS_EXPORT_SUFFIX` by piping `set RS_EXPORT_SUFFIX` into
+`findstr /b /c:"RS_EXPORT_SUFFIX="` and a whitelist `findstr /r /v /x`. A
+review found two bypasses; reproduced here against a stub RealityScan
+(`_agent/plan/repo_apply/implementer/compare_versions.py`):
+
+- cmd looks variable NAMES up case-insensitively, findstr (without /i) does
+  not: `rs_export_suffix=_L&type nul>X` passed the check and created `X`.
+- findstr's `/x` end anchor matches in front of an embedded CR, and cmd
+  strips the CR when it expands the value: `_L<CR>&type nul>X` also ran.
+
+Both ran at the first `echo ... %RS_EXPORT_SUFFIX%` and again in every
+`-exportModel` path. What holds (every hostile value tried is refused - CR,
+LF, tab, `& ! % ^ " ) = * ~`, non-ASCII - and a lower-case name is still
+honoured): read the value with delayed expansion (`set "rest=!NAME!"`, never
+re-parsed) and substitute each whitelisted character away (`!rest:%%C=!`,
+case-insensitive); anything left refuses it. `:charsOk` in
+`ExportDeliverables.bat`, pinned by `testing/test_export_deliverables_stub.py`.
+`:` `\` `.` and space substitute fine; `~` (substring syntax) and `=` cannot
+be substituted, so they are refused.
+
+Same day, from the delivered tree (read-only): RealityScan writes an export's
+`.rsInfo` PER PART as each part finishes, not once at the end -
+`zone_1_c42_0000000.fbx.rsInfo` created 01:11:20.03,
+`zone_1_c42_0000001.fbx.rsInfo` 01:11:20.27, `zone_1_c42_0000002.fbx`
+01:11:33.27. One `.rsInfo` on disk is therefore not "the export finished";
+`modules/export_remaining.py` compares the part-index sets of
+obj/mtl/obj.rsInfo/fbx/fbx.rsInfo instead.
