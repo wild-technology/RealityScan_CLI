@@ -195,11 +195,52 @@ def referenced_companions(objs: list[Path]) -> list[Path]:
     return wanted
 
 
+# stage() EMPTIES its staging directory before filling it. It writes this
+# marker into every directory it creates, and empties an existing one only
+# when the marker is there - or when it is the default <dir>/_cesium_local,
+# which this tool has owned since before the marker existed.
+STAGING_MARKER = '.cesium_staging'
+DEFAULT_STAGING = '_cesium_local'
+
+
+def staging_refusal(staging: Path, root: Path) -> str | None:
+    """Why stage() must not empty ``staging`` for the export in ``root``.
+
+    Refusing only staging == --dir was not enough (review 2026-09-27): a
+    --staging that CONTAINS the export - the component folder, the exports
+    root, a drive root - deleted it, even under --dry-run, because stage()
+    runs before the dry-run return. publish_batch --staging-root <exports>
+    produced exactly that shape for every component.
+    """
+    s, r = staging.resolve(), root.resolve()
+    if r.is_relative_to(s):
+        return (f'--staging {staging} is the export directory {root} or '
+                'contains it: stage() empties its staging directory first, '
+                'which would delete the export')
+    if not s.exists():
+        return None
+    if not s.is_dir():
+        return f'--staging {staging} exists and is not a directory'
+    if (s / STAGING_MARKER).is_file() or s == r / DEFAULT_STAGING:
+        return None
+    if any(s.iterdir()):
+        return (f'--staging {staging} already holds files this tool did not '
+                f'stage (no {STAGING_MARKER} marker) - refusing to empty it')
+    return None
+
+
 def stage(localised, staging: Path, sources: list[Path]) -> list[Path]:
     """Write local-frame OBJs plus the materials and textures they name."""
+    for root in {s.parent for s in sources}:
+        refusal = staging_refusal(staging, root)
+        if refusal:
+            raise SystemExit(refusal)
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
+    (staging / STAGING_MARKER).write_text(
+        'Created by publish_cesium.py stage(); emptied on the next stage() '
+        'and removed by --clean-staging.\n', encoding='utf-8')
 
     staged: list[Path] = []
     for obj, local_points in localised:
@@ -452,7 +493,27 @@ def main() -> int:
                              'exact request body, upload nothing')
     parser.add_argument('--plan-json', default=None,
                         help='write the placement plan to this path')
+    parser.add_argument('--result-json', default=None,
+                        help='write the outcome here as JSON - asset id, url, '
+                             'final status, verification verdict. The only '
+                             'machine-readable record of WHICH ion asset a '
+                             'run created (publish_batch collects it)')
+    parser.add_argument('--clean-staging', action='store_true',
+                        help='remove the staging directory after a VERIFIED '
+                             'upload (it holds a full local-frame copy of '
+                             'the mesh and its textures). Kept on any failure')
     args = parser.parse_args()
+    result: dict = {'name': args.name, 'dir': str(Path(args.dir)),
+                    'asset_id': None, 'url': None, 'status': None,
+                    'verified': None, 'problems': []}
+
+    def finish(code: int) -> int:
+        result['exit_code'] = code
+        if args.result_json:
+            Path(args.result_json).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.result_json).write_text(json.dumps(result, indent=2),
+                                              encoding='utf-8')
+        return code
 
     root = Path(args.dir)
     if not root.is_dir():
@@ -485,7 +546,10 @@ def main() -> int:
         Path(args.plan_json).write_text(json.dumps(plan, indent=2),
                                         encoding='utf-8')
 
-    staging = Path(args.staging) if args.staging else root / '_cesium_local'
+    staging = Path(args.staging) if args.staging else root / DEFAULT_STAGING
+    refusal = staging_refusal(staging, root)
+    if refusal:
+        raise SystemExit(refusal)
     staged = stage(localised, staging, objs)
     total_mb = sum(p.stat().st_size for p in staged) / 1024 ** 2
     logger.info('staged %d file(s), %.1f MB in %s',
@@ -503,7 +567,8 @@ def main() -> int:
                                 'description': args.description,
                                 'type': '3DTILES',
                                 'options': options_preview}, indent=2))
-        return 0
+        result['status'] = 'DRY_RUN'
+        return finish(0)
 
     require_deps()
     import requests
@@ -519,6 +584,10 @@ def main() -> int:
                            args.texture_format, args.geometry_compression)
     asset_id = created['assetMetadata']['id']
     logger.info('created ion asset %s', asset_id)
+    result['asset_id'] = asset_id
+    result['url'] = f'https://ion.cesium.com/assets/{asset_id}'
+    result['status'] = 'CREATED'
+    finish(1)   # recorded now: a crash below must not lose WHICH asset exists
 
     upload_files(created['uploadLocation'], staged, staging)
 
@@ -529,33 +598,47 @@ def main() -> int:
     logger.info('upload complete - ion tiling started')
 
     url = f'https://ion.cesium.com/assets/{asset_id}'
+    result['status'] = 'UPLOADED'
     if not (args.poll or args.verify):
         logger.info('asset %s: %s', asset_id, url)
-        return 0
+        return finish(0)
 
     status = poll_until_done(session, asset_id)
+    result['status'] = status
     if status != 'COMPLETE':
         logger.error(
             'tiling ended in %s. ion exposes no machine-readable reason for '
             'this state; inspect the asset at %s', status, url)
-        return 1
+        return finish(1)
 
     if not args.verify:
         logger.info('asset %s: %s', asset_id, url)
-        return 0
+        return finish(0)
 
     actual = read_tileset_placement(session, asset_id)
     ok, problems = verify_placement(actual, plan, args.tolerance_m,
                                     args.vertical_tolerance_m)
+    result['verified'] = ok
+    result['problems'] = problems
     if not ok:
         for problem in problems:
             logger.error('PLACEMENT CHECK FAILED: %s', problem)
         logger.error('asset %s tiled but is NOT where it was asked to be: %s',
                      asset_id, url)
-        return 1
+        return finish(1)
     logger.info('placement VERIFIED against the asset\'s own tileset')
     logger.info('asset %s: %s', asset_id, url)
-    return 0
+    if args.clean_staging:
+        # Only ever the directory stage() itself created and filled - the
+        # marker proves it - and never one that holds the export.
+        if (staging / STAGING_MARKER).is_file() \
+                and not root.resolve().is_relative_to(staging.resolve()):
+            shutil.rmtree(staging, ignore_errors=True)
+            logger.info('removed staging copy %s', staging)
+        else:
+            logger.warning('staging %s kept: no %s marker', staging,
+                           STAGING_MARKER)
+    return finish(0)
 
 
 if __name__ == '__main__':

@@ -395,15 +395,29 @@ class Workspace:
 
     def _detect_publish(self) -> StageStatus:
         report = _load_json(self.root / "publish_report.json")
-        assets = _records(report, "assets")
-        if assets:
-            ok = sum(1 for a in assets
-                     if (a.get("cesium") or {}).get("success")
-                     or (a.get("nira") or {}).get("success"))
+        # publish_batch APPENDS one record per component per run (2026-09-27),
+        # so counting records turned every retry, re-run or preview into a
+        # permanent "partial". Each component is judged by the NEWEST real
+        # record of each destination - dry-run previews and skip markers
+        # carry no verdict - and counts as published when either succeeded.
+        latest: dict[str, dict] = {}
+        for a in _records(report, "assets"):
+            key = a.get("component") or a.get("asset_name") or "?"
+            for dest in ("cesium", "nira"):
+                rec = a.get(dest)
+                if isinstance(rec, dict) and not rec.get("dry_run") \
+                        and not rec.get("skipped"):
+                    slot = latest.setdefault(key, {})
+                    slot["name"] = a.get("asset_name", "?")
+                    slot[dest] = rec
+        if latest:
+            ok = sum(1 for s in latest.values()
+                     if (s.get("cesium") or {}).get("success")
+                     or (s.get("nira") or {}).get("success"))
             return StageStatus("publish",
-                               "done" if ok == len(assets) else "partial",
-                               f"{ok} of {len(assets)} asset(s) published",
-                               [a.get("asset_name", "?") for a in assets])
+                               "done" if ok == len(latest) else "partial",
+                               f"{ok} of {len(latest)} asset(s) published",
+                               [s["name"] for s in latest.values()])
         if self.exports.is_dir() and any(self.exports.iterdir()):
             return StageStatus("publish", "pending",
                                "exports ready - needs CESIUM_ION_TOKEN "
