@@ -377,6 +377,8 @@ def test_a_directory_with_no_obj_is_an_error(tmp_path):
 
 EXPORT_PRESETS = ["ModelExportParamsOBJ_NiraParts",
                   "ModelExportParamsFBX_Parts",
+                  "ModelExportParamsOBJ_NiraParts_JPG",
+                  "ModelExportParamsFBX_Parts_JPG",
                   "ModelExportParamsPLY_DensePoints"]
 
 

@@ -25,7 +25,10 @@ from modules.export_deliverables import (EXPORT_KINDS, expected_kinds,
 
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch):
-    monkeypatch.delenv('RS_EXPORT_SKIP_PLY', raising=False)
+    # Every switch the census reads - an inherited one would change what
+    # "expected" means for the tests below.
+    for key in ('RS_EXPORT_SKIP_PLY', 'RS_EXPORT_ONLY_PLY', 'RS_EXPORT_SUFFIX'):
+        monkeypatch.delenv(key, raising=False)
 
 
 def test_default_expects_all_three():
@@ -72,3 +75,22 @@ def test_empty_files_do_not_count_as_produced(tmp_path, monkeypatch):
         d.mkdir(parents=True)
         (d / f'c1.{k}').write_text('', encoding='utf-8')
     assert sorted(missing_exports(str(tmp_path), ['c1'])) == ['c1/fbx', 'c1/obj']
+
+
+def test_ply_only_expects_only_ply_and_still_catches_a_missing_one(tmp_path,
+                                                                   monkeypatch):
+    # The PLY-only pass of a two-pass export: OBJ/FBX absent is not a fault,
+    # an absent PLY still is.
+    monkeypatch.setenv('RS_EXPORT_ONLY_PLY', '1')
+    assert expected_kinds() == ('ply',)
+    root = _make(tmp_path, 'c1', ())
+    assert missing_exports(root, ['c1']) == ['c1/ply']
+
+
+def test_both_skip_and_only_ply_is_an_error_not_an_empty_census(monkeypatch):
+    # Both set exports nothing; a census that then expects nothing would
+    # pass a run that produced nothing.
+    monkeypatch.setenv('RS_EXPORT_SKIP_PLY', '1')
+    monkeypatch.setenv('RS_EXPORT_ONLY_PLY', '1')
+    with pytest.raises(ValueError):
+        expected_kinds()
