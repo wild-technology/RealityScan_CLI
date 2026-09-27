@@ -43,7 +43,7 @@ if defined RS_GPU_DEVICES set CUDA_VISIBLE_DEVICES=%RS_GPU_DEVICES%
 :: model was killed three times this way - twice reported only as
 :: "result code 2147942512" (0x80070070) until the instance log was
 :: snapshotted and read "Processing failed: Out of disk space.". The cache
-:: was pinned to D:ccache (1,089 GB) and filled the drive even after the
+:: was pinned to D:\rccache (1,089 GB) and filled the drive even after the
 :: PROJECT was moved to another disk, because the cache never moves with it.
 :: Epic warns NOT to delete cache files by hand, so relocating is the safe
 :: lever. appAutoClearCache is deliberately left alone here - retention is

@@ -446,3 +446,18 @@ def test_georegister_only_does_not_reimport_the_flight_log():
     skipped = text[jump:label]
     assert 'call :run -importFlightLog' in skipped
     assert 'call :run -setProjectCoordinateSystem' in skipped
+
+
+def test_no_bat_carries_a_bare_carriage_return():
+    """CRLF == LF does not see a lone 0x0D. startRealityScan.bat carried one
+    inside a comment ("pinned to D:\\rccache" - a Python "\\r" escape that
+    became a real CR), and normalize_crlf.py maps a bare CR to a LINE BREAK:
+    the next Write/Edit of that file would have turned the comment's tail,
+    "ccache (1,089 GB) and filled the drive...", into an EXECUTED line
+    (measured on a copy: "'ccache' is not recognized")."""
+    for name in sorted(os.listdir(SCRIPTS)):
+        if not name.lower().endswith('.bat'):
+            continue
+        with open(os.path.join(SCRIPTS, name), 'rb') as f:
+            data = f.read()
+        assert data.count(b'\r') == data.count(b'\r\n'), f'{name} has a bare CR'

@@ -29,9 +29,11 @@ one line what you are about to do:
 
 Baseline before touching anything: `python -m pytest testing -q` with the
 interpreter that has every requirement (`CLAUDE.local.md` names it per box) —
-737 passed, 1 skipped (offline: geoid grid), ~22 s. An interpreter without
+1011 passed, 1 skipped (offline: geoid grid), ~60 s (a third of it is
+`testing/test_export_deliverables_stub.py` running the export workflow under
+cmd.exe against a stub RealityScan). An interpreter without
 `textual` skips `testing/test_wildscan.py` whole at import (21 tests) and
-reports 716 passed, 2 skipped — that is the same green tree, not a broken one
+reports 990 passed, 2 skipped — that is the same green tree, not a broken one
 (observed 2026-09-04 with the Microsoft Store `python`). Any other result on a
 clean checkout: stop and report — anything built on a broken tree is suspect.
 
