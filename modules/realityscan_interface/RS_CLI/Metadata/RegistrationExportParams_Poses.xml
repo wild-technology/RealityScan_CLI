@@ -1,0 +1,12 @@
+<Configuration>
+  <!-- Selects the RUMI "camera poses, every frame" registration format
+       {E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A4A} defined in the repo's
+       calibration.xml (install it with: python -m modules.flightlog_format
+       - -install). It writes each camera's lat/lon/alt (EPSG:4326), the
+       export-frame x/y/z, the Euclidean and component-frame positions and
+       both rotation matrices, so georegistration can be measured without a
+       sidecar ever being written beside an image. Same gating as
+       RegistrationExportParams.xml: an unresolved id falls back silently, so
+       the reader checks the "#cameras N" header and the column header. -->
+  <entry key="calexFileFormatId" value="{E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A4A}"/>
+</Configuration>

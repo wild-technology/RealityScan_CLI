@@ -48,4 +48,26 @@ $ExportCameras($(imageName)$(imageExt)
 )</body>
     </format>
 
+    <!-- Camera POSES in every frame RealityScan will name, for measuring
+         what georegistration (-update) did to a component without writing a
+         single sidecar. Added 2026-09-26 (NA165/H2060).
+
+         WHY. The first format above writes $(x),$(y),$(z), which the Help
+         defines as "the output coordinate system" - but for a registration
+         export that is governed by the export's transformation settings
+         (calexTrans, value encoding unknown), and on a georeferenced fixture
+         it came back as a LOCAL frame (x,y,z ~ -0.2, -0.1, 1.6 m) even with
+         -setOutputCoordinateSystem epsg:32702 and with the stock
+         requiresGeoref="1" CSV format. $(lat),$(lon),$(alt) are defined in
+         EPSG:4326 regardless of that setting; the Euclidean and
+         component-frame columns plus both rotation matrices let a reader pin
+         down how the frames relate instead of guessing.
+         Columns: Help\en-US\appbasics\reports_fav_cameras.htm. -->
+    <format id="{E7C3B1A9-4D2F-4A6E-8B15-3C7D9E2F0A4A}" mask="*.csv" descID="2352" desc="RUMI: camera poses, every frame" writer="cvs" requiresGeoref="0" requires="component">
+        <body EulerFormat="zyx">#cameras $(cameraCount)
+#name,lat,lon,alt,x,y,z,euclidX,euclidY,euclidZ,aX,aY,aZ,R00,R01,R02,R10,R11,R12,R20,R21,R22,euclidR00,euclidR01,euclidR02,euclidR10,euclidR11,euclidR12,euclidR20,euclidR21,euclidR22,yaw,pitch,roll,f
+$ExportCameras($(imageName)$(imageExt),$(lat),$(lon),$(alt),$(x),$(y),$(z),$(euclidX),$(euclidY),$(euclidZ),$(aX),$(aY),$(aZ),$(R00),$(R01),$(R02),$(R10),$(R11),$(R12),$(R20),$(R21),$(R22),$(euclidR00),$(euclidR01),$(euclidR02),$(euclidR10),$(euclidR11),$(euclidR12),$(euclidR20),$(euclidR21),$(euclidR22),$(yaw),$(pitch),$(roll),$(f)
+)</body>
+    </format>
+
 </CalibrationExport>
