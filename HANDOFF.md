@@ -61,8 +61,16 @@ session executed its Phase 0.
 
 Deleted on origin after this push: `remove-xmp-sidecars` (merged),
 `agent-native-execution` (cherry-picked; its head tagged). Left alone:
-`claude/cesium-ion-georeferenced-ue5-vvpoau` (4 unmerged `cesium2unreal`
-commits — not stale, unreviewed) and `archive/on2026-model-to-final-pre-rebase`.
+`archive/on2026-model-to-final-pre-rebase`.
+
+`cesium2unreal` no longer lives here. On 2026-09-30 its four commits moved,
+with their history, to
+[`wild-technology/UnrealToolset`](https://github.com/wild-technology/UnrealToolset),
+which is now the live copy. The head of
+`claude/cesium-ion-georeferenced-ue5-vvpoau` is tagged `cesium2unreal-final`,
+and the branch is superseded — delete it on origin. Upstream of it,
+`publish_cesium.py` and `modules/cesium_placement.py` stay here: they put the
+meshes on ion, and UnrealToolset picks them up from there.
 
 ### Next
 
