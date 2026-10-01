@@ -148,8 +148,21 @@ _MATCHERS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
 # A calibration prior that contradicts the session distortion model is a strong
 # candidate for why RealityScan discarded the sidecar wholesale; see the
 # CalibrationGroup="-1" census in FINDINGS (B17).
+#
+# zeuss focal 23.0 -> 28.0, owner directive 2026-09-14, amended here and in
+# cameras.json together because parity requires the pair to move as one.
+# Corroborating evidence: NA165/H2063's flight log carries FocalLength 28.000
+# on all 4,060 rows, and that column is generated from THIS field
+# (georeference_images._get_camera_focal_length), so 28.0 is what the dive
+# that aligned at 87% mean registration actually shipped.
+#
+# NOTE the value is deliberately NOT asserted against solved focal anywhere:
+# prior_census checks GROUPING only, because the calibration ladder measured
+# full numeric priors collapsing registration (97.3% control / 45.4% with
+# values). 28.0 is the pre-selection nudge and the flight-log column; it is
+# not a claim about what the solve must converge to.
 _LEGACY_CAMERAS: dict[str, Camera] = {
-    'zeuss': Camera('zeuss', '1', 'Approximate', 23.0, '1', 'Approximate', 'division'),
+    'zeuss': Camera('zeuss', '1', 'Approximate', 28.0, '1', 'Approximate', 'division'),
     'port': Camera('port', '2', 'Approximate', 16.0, '2', 'Approximate', 'division'),
     'cinema': Camera('cinema', '3', 'Approximate', 16.0, '3', 'Approximate', 'division'),
     'starboard': Camera('starboard', '4', 'Approximate', 16.0, '4', 'Approximate', 'division'),

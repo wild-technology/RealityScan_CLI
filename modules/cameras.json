@@ -96,7 +96,7 @@
     "zeuss": {
       "calibration_group": "1",
       "calibration_prior": "Approximate",
-      "focal_length_35mm": 23.0,
+      "focal_length_35mm": 28.0,
       "lens_distortion_group": "1",
       "lens_distortion_prior": "Approximate",
       "distortion_model": "division"
