@@ -49,7 +49,7 @@ hash. Every fix ships with a test or an empirical verification transcript.
 ## MUST-FIX
 
 ### Blocks run2 (ON2026 per-feature delivery)
-1. **run_on2026_wreck.py is the retired plan** — monolith terminal stage,
+1. **run_on2026_wreck.py (deleted 2026-09-30) is the retired plan** — monolith terminal stage,
    old campaign paths, nav-blind `zone_done()` (any .rsalign+.json =
    skip). Replace per the run2 architecture spec (re-audit `run2-arch`):
    folder-copy Z-aware zones from `M:\ON2026_run2\nav\flight_log_run2.txt`

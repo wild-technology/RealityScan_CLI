@@ -40,7 +40,6 @@ generate textured models.
 | `module_base/` | Framework: `RSModule` base class, `Parameter`, `SettingsStore` |
 | `modules/realityscan_interface/` | Everything that talks to RealityScan — see below |
 | `modules/extract_images/`, `modules/georeference/`, `modules/preprocess_images/`, `modules/image_batcher/` | Pipeline modules used by `main.py` |
-| `archive/colmap/` | Retired COLMAP scripts (reference only) |
 | `flightlogs.xml`, `calibration.xml` | Custom RealityScan import/export FORMATS. These are **merged into the RealityScan install directory** by `modules/flightlog_format.py` — RealityScan resolves format GUIDs against its own copies and reverts them on update. A missing format does not error, it silently drops columns. |
 | `sensorsdb.xml` | RealityScan reference data |
 | `docs/code-review-2026-07.md` | What the first-machine validation changed and why (read before trusting older assumptions about the CLI layer) |

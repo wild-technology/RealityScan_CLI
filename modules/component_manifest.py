@@ -4,7 +4,7 @@ RealityScan's CLI cannot enumerate a component's images, so membership is
 captured at zone-align time - the only moment per-camera XMP identity
 still exists (exports from imported-component scenes write ORDINAL
 sidecars, finding B10). The identity-capture loop
-(AlignZone.bat's in-session successive-difference identity loop (the retired reload-based ExportComponentIdentity.bat lives in archive/legacy_scripts; loaded-scene exports are ordinal - B10)) exports
+(AlignZone.bat's in-session successive-difference identity loop (the retired reload-based ExportComponentIdentity.bat is in git history (archive/ deleted 2026-09-30); loaded-scene exports are ordinal - B10)) exports
 one component's pose sidecars per RealityScan boot; the pose-bearing
 sidecars between two sanitize passes ARE that component's images.
 

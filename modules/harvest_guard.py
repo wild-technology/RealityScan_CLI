@@ -7,8 +7,8 @@ directory junctions therefore yields an empty peel on every attempt -
 indistinguishable from a legitimately empty scene. See FINDINGS.md "The
 peel harvest cannot cross a directory junction (2026-07-27)".
 
-`assert_harvestable` was born in archive/campaign_drivers/run_h2024_v2.py (which retains its
-own historical copy) and is promoted here so every live driver shares ONE
+`assert_harvestable` was born in archive/campaign_drivers/run_h2024_v2.py (deleted 2026-09-30;
+its historical copy is in git history) and is promoted here so every live driver shares ONE
 implementation. Tests: testing/test_harvest_guard.py.
 """
 from __future__ import annotations

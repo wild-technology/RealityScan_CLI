@@ -21,7 +21,7 @@ Every channel reported success. `-setPriorCalibrationGroup` returned 0,
 `prior_groups.write_command_file` logged "1 camera family", AlignZone.bat's
 `:run` saw no error, and the run exited clean. FINDINGS 2026-08-08 had
 already established the mechanism is "silently NON-FUNCTIONAL from the
-delegated CLI" and CalibCellAlign.bat:93 calls it RETIRED - but the main
+delegated CLI" and CalibCellAlign.bat:93 (deleted 2026-09-30) called it RETIRED - but the main
 align path still used it, and nothing anywhere checked the result.
 
 THE PRINCIPLE. A prior that cannot be observed in the output is not a prior,

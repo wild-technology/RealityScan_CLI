@@ -69,15 +69,13 @@ Grep this file; do not read it through.
     FBX-by-parts + ultra-dense colored PLY), `SaveProjectCopy`.
   - Boot/env: `startRealityScan`, `SetVariables`. Boot honors
     `RS_HEADLESS=0` for a GUI-visible instance.
-  - Supporting/testing: `GrowZone`, `NightGrow` (attach-only seed growth;
-    `%1` = target instance), `GuiWorkbench`, `ComputeModel`,
-    `CalibCellAlign`, `FlushCache` (sets retention 0 during the clear —
-    the 7-day default kept 918 GB), the `ProbeCalibGroups*` /
-    `ProbeFlightlog*` / `ProbeExportSettings` probes, and
-    `AlignImagesFromFolder` (DEPRECATED; kept for
-    `testing/run_zone9_tests.py`). `AlignImageList`, `SequentialAlignGrow`
-    and the `ProbeSubsetAlign*` / `ProbeLockAlign` probes now live in
-    `archive/legacy_scripts/`.
+  - Supporting/testing: `GrowZone`, `FlushCache` (sets retention 0 during
+    the clear — the 7-day default kept 918 GB) and `AlignImagesFromFolder`
+    (DEPRECATED; kept for `testing/run_zone9_tests.py`). The one-off and
+    probe scripts (`NightGrow`, `GuiWorkbench`, `ComputeModel`,
+    `CalibCellAlign`, `ProbeCalibGroups*`, `ProbeFlightlog*`,
+    `ProbeExportSettings`) and `archive/` were deleted on 2026-09-30; their
+    results are in `FINDINGS.md`, the files in git history.
   - **`ModelToFinal` is the one exception to the `:run` boot pattern.** It
     finishes a mesh that ALREADY exists (texture → simplify → unwrap →
     reproject → export → save) and **attaches** to a running instance
@@ -148,9 +146,9 @@ Grep this file; do not read it through.
   delegated CLI (2026-08-08, solved-focal-equality oracle); the sidecars
   branch ran NA168 H2080 and NA165 H2063 with this delivery in the
   workflow but never measured the effect. Treat neither claim as settled.
-- `modules/calibration_sidecars.py` — per-eye approximate calibration XMPs
-  from manufacturer values, plus the sensor registry. The A/B/C ladder
-  verdict (prior content collapses registration) is in `FINDINGS.md`.
+- (`modules/calibration_sidecars.py`, the per-eye calibration-XMP writer
+  used only by the ON2026 run3 driver, was deleted on 2026-09-30. The A/B/C
+  ladder verdict - prior content collapses registration - is in `FINDINGS.md`.)
 - `modules/preprocess_images/` — canonical CLAHE / white-balance transforms
   + the pre-alignment preprocessing module (default CLAHE 2.0/8×8,
   validated on zone_9 — baseline aligns to nothing on this imagery).
@@ -161,7 +159,7 @@ Grep this file; do not read it through.
   gives one trajectory row two physical files.
 - `modules/scale_oracle.py` — metric-scale measurement and the 0.90–1.10
   acceptance band. Fused components need the correspondence-free method
-  (`archive/campaign_drivers/run_h2024_fused_models.py`), since merge-scene
+  (`run_h2024_fused_models.py`, in git history since 2026-09-30), since merge-scene
   XMP exports are ordinal.
 - `modules/component_analysis.py`, `modules/component_manifest.py` —
   component census, membership, and border logic.
@@ -194,8 +192,7 @@ Grep this file; do not read it through.
 
 - `geoall.py`, `poses2flightlog.py`, `decimator.py`, `timestamp_rename.py`,
   `organize_by_date.py` — data prep; they do not invoke RealityScan.
-- `archive/colmap/` — retired COLMAP scripts; do not resurrect into the
-  active pipeline.
-- `archive/campaign_drivers/`, `archive/legacy_scripts/` — finished
-  campaign drivers and superseded workflows, kept as citation targets for
-  `FINDINGS.md`. Read for provenance; do not wire back in.
+- `archive/` (retired COLMAP scripts, finished campaign drivers,
+  superseded workflows) was deleted on 2026-09-30. FINDINGS citations to it
+  resolve in git history (`git show 2bbd307:archive/...`). Do not resurrect
+  COLMAP into the active pipeline.

@@ -34,6 +34,6 @@ paths:
   one offline skip, the geoid grid). ASCII-only output - the cp1252 console
   crashes otherwise. [CLAUDE.md "Environment"; HANDOFF 2026-09-03]
 - **Campaign drivers and frozen notes are citation targets, not tests.**
-  `run_on2026_*.py` carry hardcoded data paths (bound for `archive/`);
+  the `run_on2026_*.py` drivers were deleted 2026-09-30 (git history);
   `NA167_SESSION_NOTES.md` is frozen. Do not "fix" them into the unit
   suite. [CLAUDE.md hard rule 9; roadmap sec. 1.8]

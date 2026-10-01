@@ -4,11 +4,11 @@ COLMAP and RealityScan are COMPLETELY DIFFERENT workflows. This doc
 exists to keep COLMAP material out of the RealityScan fact base while
 tracking the one place the two lines genuinely interact (preprocessing
 scope). Nothing here feeds the active pipeline; CLAUDE.md hard rule:
-do not resurrect `archive/colmap/` into it.
+do not resurrect `archive/colmap/` (deleted 2026-09-30; git history) into it.
 
 ## 1. COLMAP material in this repo (all archived, reference-only)
 
-`archive/colmap/` (see `archive/README.md`):
+`archive/colmap/` (deleted 2026-09-30; in git history with `archive/README.md`):
 
 | File | Purpose |
 |---|---|

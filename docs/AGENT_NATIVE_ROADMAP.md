@@ -136,7 +136,7 @@ items 6, 11 and 12.
 Judgement gates that are already *data*, not prompts — keep and extend:
 `EVALUATION_READY.txt` (`merge_zones.py:1609`), `features.json`
 `"confirmed": true` (`modules/feature_merge.py:99`, enforced only in
-`testing/run_on2026_run2.py:342`), `align_inputs.json` fingerprints
+`testing/run_on2026_run2.py:342`, deleted 2026-09-30), `align_inputs.json` fingerprints
 (`modules/align_fingerprint.py`).
 
 ### 1.5 The manual UI: `wildscan/`
@@ -203,15 +203,15 @@ provenance tags; `STAGE_ORDER` in `modules/workspace_census.py:41`.
 | Item | Size | Verdict | Reason |
 |---|---|---|---|
 | `wildscan/` + its 2 test files | 224 KB | **delete** (after §1.5 extraction) | the manual UI |
-| `testing/run_on2026_{run2,run3,union,wreck}.py`, `run_workbench_night.py`, `run_calib_ladder.py`, `yellow_filter.py`, `probe_cesium_depth.py` | ~3,400 lines | **archive** → `archive/campaign_drivers/` | finished campaign drivers with hardcoded `M:\` paths; `run_on2026_wreck.py` is declared retired |
+| `testing/run_on2026_{run2,run3,union,wreck}.py`, `run_workbench_night.py`, `run_calib_ladder.py`, `yellow_filter.py`, `probe_cesium_depth.py` | ~3,400 lines | **DONE 2026-09-30: deleted** (git history); `probe_cesium_depth.py` kept | finished campaign drivers with hardcoded `M:\` paths; `run_on2026_wreck.py` is declared retired |
 | `testing/results/` (4 files) | 240 KB | **archive** | raw campaign data cited by frozen reports |
-| `RS_CLI/Scripts/Probe*.bat` (7), `GuiWorkbench.bat`, `NightGrow.bat`, `CalibCellAlign.bat`, `ComputeModel.bat` | 11 scripts | **archive** → `archive/probes/` | probes and one-offs; production is 10 scripts (below) |
+| `RS_CLI/Scripts/Probe*.bat` (7), `GuiWorkbench.bat`, `NightGrow.bat`, `CalibCellAlign.bat`, `ComputeModel.bat` | 11 scripts | **DONE 2026-09-30: deleted** (git history) | probes and one-offs; production is 10 scripts (below) |
 | `AlignImagesFromFolder.bat` | | keep while `run_zone9_tests.py` lives | its only caller |
 | `sensorsdb.xml` | 48 KB | **archive** | no code on main reads it |
-| `docs/FRESH_RUN_2026-07-24.md`, `GOAL_VERIFICATION_SESSION.md`, `code-review-2026-07.md`, `MERGE_REWORK_RECOMMENDATIONS.md` | 865 lines | **move** → `docs/history/` | session logs; update `README.md:46` |
+| `docs/FRESH_RUN_2026-07-24.md`, `GOAL_VERIFICATION_SESSION.md` (deleted 2026-09-30), `code-review-2026-07.md`, `MERGE_REWORK_RECOMMENDATIONS.md` | 865 lines | **move** → `docs/history/` | session logs; update `README.md:46` |
 | `docs/COLMAP_CROSSOVER.md`, `COLMAP_FINDINGS_UNIFIED.md` | 588 lines | **move** → `archive/colmap/docs/` | frozen; canonical home is another repo |
 | `HANDOFF.md` | 1,474 lines | **split**: current section stays; dated sections → `docs/handoff/` | CLAUDE.md says read it first — make that cheap |
-| `testing/*.md`, `archive/`, `RS_CLI/Metadata/*.xml`, `flightlogs.xml`, `calibration.xml`, `FINDINGS.md` | | **keep in place** | cited by path from FINDINGS and rs-reference; Metadata and the two format XMLs are live |
+| `testing/*.md`, `archive/` (deleted 2026-09-30 - git history), `RS_CLI/Metadata/*.xml`, `flightlogs.xml`, `calibration.xml`, `FINDINGS.md` | | **keep in place** | cited by path from FINDINGS and rs-reference; Metadata and the two format XMLs are live |
 
 Production workflow scripts after slimming: `startRealityScan`,
 `SetVariables`, `AlignZone`, `MergeZoneComponents`, `GrowZone`,
