@@ -14,9 +14,18 @@ Every case here traces to something found on real data (2026-08-31):
 Hermetic: no network, no RealityScan, no multi-GB fixtures. The geoid tests
 exercise the guard rather than the grid, so they pass with or without
 cdn.proj.org reachable.
+
+Added 2026-10-01: ``plan_placement`` on a PROJECTED export with the grid
+stubbed to a known N. Mutation testing that morning showed the projected
+branch - the one every nav-placed product takes - had no geoid test at all:
+a sign flip of N confined to it, leaving N out, and adding it twice each
+passed this file and test_cesium_geocentric.py.
 """
+import logging
+import math
 import os
 import sys
+import types
 
 import pytest
 
@@ -27,7 +36,8 @@ np = pytest.importorskip("numpy")
 from modules.cesium_placement import (  # noqa: E402
     PlacementError, apply_interpretation, find_rsinfo, geoid_separation,
     msl_to_ellipsoidal, nav_envelope_from_flight_log, parse_rsinfo,
-    read_obj_vertices, resolve_to_global, rewrite_obj_local, to_local_enu)
+    plan_placement, read_obj_vertices, resolve_to_global, rewrite_obj_local,
+    to_local_enu)
 
 # The real NA168 H2080 sidecar matrix, verbatim.
 NA168_MATRIX = ("0 0 1 348355.8364815 1 0 0 396321.994618801 "
@@ -234,6 +244,214 @@ def test_depth_to_ellipsoidal_applies_h_equals_H_plus_N():
     assert height == pytest.approx(-1200.0 + separation)
     # A depth must stay below the ellipsoid at these magnitudes.
     assert height < 0
+
+
+# --------------------------------------------------------------------------
+# vertical datum on a PROJECTED export - the branch a nav-placed product takes
+# --------------------------------------------------------------------------
+
+# What georef_v2.py writes beside a nav-placed NA165/H2060 product: the
+# project CRS, exportCoordinateSystemType 0 and NO transformToModel. The
+# vertices are UTM easting / northing with Z = -depth below the sea surface.
+RSINFO_PROJECTED = (
+    '<Model globalCoordinateSystem="+proj=utm +zone=2 +south +datum=WGS84 '
+    '+units=m +no_defs" '
+    'globalCoordinateSystemName="epsg:32702 - WGS 84 / UTM zone 2S" '
+    'exportCoordinateSystemType="0"/>\n')
+
+# Five vertices at the H2060 site. Their bounding-box midpoint - the anchor -
+# is exactly E 710830, N 8428136, Z -650, which is lon -169.046249,
+# lat -14.210270. Every number is exactly representable in binary, so the
+# assertions below use == rather than a tolerance half an N could hide in.
+PROJECTED_VERTS = [(710825.0, 8428130.0, -652.0),
+                   (710835.0, 8428142.0, -648.0),
+                   (710830.0, 8428136.0, -650.0),
+                   (710825.0, 8428142.0, -649.0),
+                   (710835.0, 8428130.0, -651.0)]
+PROJECTED_ANCHOR = (710830.0, 8428136.0, -650.0)
+PROJECTED_LOCAL = np.array(PROJECTED_VERTS) - np.array(PROJECTED_ANCHOR)
+PROJECTED_LON, PROJECTED_LAT = -169.046249, -14.210270
+STUB_N = 25.25
+
+
+def projected_export(tmp_path, name="m"):
+    write(tmp_path, name + ".obj.rsInfo", RSINFO_PROJECTED)
+    body = "".join("v %.3f %.3f %.3f\n" % v for v in PROJECTED_VERTS)
+    return write(tmp_path, name + ".obj", body + "f 1 2 3\n")
+
+
+def stub_geoid(monkeypatch, value):
+    """Stand a known N in for the grid, and record how it was asked for.
+
+    The arithmetic is what is under test - the sign, and that N is added
+    once - so the grid is not needed and the test is the same on a machine
+    without it."""
+    from modules import cesium_placement as cp
+    calls = []
+
+    def fake(lon, lat, model="EGM2008"):
+        calls.append((lon, lat, model))
+        return value
+
+    monkeypatch.setattr(cp, "geoid_separation", fake)
+    return calls
+
+
+def test_projected_plan_adds_the_geoid_exactly_once(tmp_path, monkeypatch,
+                                                    caplog):
+    """h = H + N with H = Z = -depth: -650 + 25.25 = -624.75. A flipped
+    sign gives -675.25, a forgotten N -650, a doubled one -599.5."""
+    pytest.importorskip("pyproj")
+    calls = stub_geoid(monkeypatch, STUB_N)
+    with caplog.at_level(logging.WARNING, logger="modules.cesium_placement"):
+        plan, _localised = plan_placement([projected_export(tmp_path)])
+
+    assert plan["crs"] == "EPSG:32702"
+    assert not plan.get("geocentric")
+    assert plan["depth_msl_m"] == -650.0
+    assert plan["geoid_n_m"] == STUB_N
+    assert plan["geoid_model"] == "EGM2008"
+    assert plan["height_ellipsoidal_m"] == -650.0 + STUB_N == -624.75
+
+    # N was looked up at the anchor - the real site, not merely the right
+    # hemisphere (1e-4 deg is ~11 m) - and with the model the plan reports.
+    assert calls
+    for lon, lat, model in calls:
+        assert (lon, lat) == (plan["lon"], plan["lat"])
+        assert model == "EGM2008"
+    assert abs(plan["lon"] - PROJECTED_LON) < 1e-4
+    assert abs(plan["lat"] - PROJECTED_LAT) < 1e-4
+    assert "GEOID CORRECTION DISABLED" not in caplog.text
+
+
+def test_projected_no_geoid_keeps_the_depth_and_warns(tmp_path, monkeypatch,
+                                                      caplog):
+    """--no-geoid: the height is the raw Z, the plan says model NONE and
+    N 0, the grid is never consulted, and the operator is told the asset
+    will be wrong by the undulation."""
+    pytest.importorskip("pyproj")
+    from modules import cesium_placement as cp
+
+    def consulted(*_args, **_kwargs):
+        raise AssertionError("the geoid was consulted with apply_geoid=False")
+
+    monkeypatch.setattr(cp, "geoid_separation", consulted)
+    with caplog.at_level(logging.WARNING, logger="modules.cesium_placement"):
+        plan, _localised = plan_placement([projected_export(tmp_path)],
+                                          apply_geoid=False)
+
+    assert plan["height_ellipsoidal_m"] == -650.0
+    assert plan["depth_msl_m"] == -650.0
+    assert plan["geoid_n_m"] == 0.0
+    assert plan["geoid_model"] == "NONE"
+    warned = [r.getMessage() for r in caplog.records
+              if r.levelno >= logging.WARNING]
+    assert any("GEOID CORRECTION DISABLED" in message for message in warned)
+
+
+def test_projected_geoid_moves_the_anchor_and_never_the_mesh(tmp_path,
+                                                             monkeypatch):
+    """The localised mesh is the same with and without the geoid, and is
+    the vertices minus the anchor - no N in it. Only the height in
+    options.position moves, by exactly N. Baking N into the mesh as well
+    would place every vertex 25 m off while the plan still read right."""
+    pytest.importorskip("pyproj")
+    stub_geoid(monkeypatch, STUB_N)
+    obj = projected_export(tmp_path)
+    with_n, loc_n = plan_placement([obj])
+    without, loc_0 = plan_placement([obj], apply_geoid=False)
+
+    assert np.allclose(loc_n[0][1], PROJECTED_LOCAL, atol=1e-9)
+    assert np.allclose(loc_0[0][1], PROJECTED_LOCAL, atol=1e-9)
+    assert loc_n[0][1][:, 2].min() == -2.0 and loc_n[0][1][:, 2].max() == 2.0
+
+    assert (with_n["height_ellipsoidal_m"]
+            - without["height_ellipsoidal_m"]) == STUB_N
+    assert (with_n["lon"], with_n["lat"]) == (without["lon"], without["lat"])
+    assert (with_n["anchor_projected"] == without["anchor_projected"]
+            == list(PROJECTED_ANCHOR))
+    assert with_n["extent_m"] == without["extent_m"] == [10.0, 12.0, 4.0]
+
+
+def test_ion_is_handed_n_in_the_position_and_nowhere_in_the_mesh(tmp_path,
+                                                                 monkeypatch):
+    """End to end as far as the wire: the staged OBJ - the file that is
+    uploaded - holds local metres about the anchor, and the request body's
+    position carries Z + N."""
+    pytest.importorskip("pyproj")
+    from publish_cesium import create_asset, stage
+    stub_geoid(monkeypatch, STUB_N)
+    export = tmp_path / "export"
+    export.mkdir()
+    obj = projected_export(export)
+    plan, localised = plan_placement([obj])
+
+    assert plan.get("enu_rotation") is None       # a translation, no rotation
+    staged = stage(localised, tmp_path / "staging", [obj],
+                   normal_rotation=plan.get("enu_rotation"))
+    (staged_obj,) = [p for p in staged if p.suffix == ".obj"]
+    assert np.allclose(read_obj_vertices(staged_obj), PROJECTED_LOCAL,
+                       atol=1e-6)
+
+    posted = {}
+
+    class Session:
+        def post(self, url, json=None, timeout=None):
+            posted.update(json)
+            return types.SimpleNamespace(status_code=200, json=lambda: {})
+
+    create_asset(Session(), "probe", "", plan, "KTX2", "DRACO")
+    assert posted["options"]["position"] == [plan["lon"], plan["lat"], -624.75]
+    assert "inputCrs" not in posted["options"]
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_a_non_finite_geoid_never_becomes_a_finite_placement(tmp_path,
+                                                             monkeypatch, bad):
+    """BUGS.md B26. With the grid missing, PROJ network on and the CDN
+    unreachable, geoid_separation returns inf, and plan_placement checks
+    the result on neither branch. This does NOT enshrine that: a refusal -
+    the fix - passes, and until it lands the only demand is that the bad
+    value stays visible in the plan instead of being laundered into a
+    height that looks like a placement. Tighten to pytest.raises when the
+    guard exists."""
+    pytest.importorskip("pyproj")
+    stub_geoid(monkeypatch, bad)
+    try:
+        plan, _localised = plan_placement([projected_export(tmp_path)])
+    except PlacementError:
+        return
+    assert not math.isfinite(plan["height_ellipsoidal_m"])
+    assert not math.isfinite(plan["geoid_n_m"])
+
+
+class _FailedLookup:
+    """A PROJ transformer whose vertical came back as ``value`` - what a
+    failed grid lookup looks like from Python (it does not raise)."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def transform(self, lon, lat, z):
+        return lon, lat, self.value
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_failed_grid_lookup_never_returns_a_finite_separation(monkeypatch,
+                                                                bad):
+    """No grid needed: the transformer itself is replaced. NaN is refused
+    today and must stay refused; inf is not (B26), and here too a refusal
+    passes while a finite number in its place would not."""
+    pyproj = pytest.importorskip("pyproj")
+    monkeypatch.setattr(pyproj.Transformer, "from_crs",
+                        staticmethod(lambda *a, **k: _FailedLookup(bad)))
+    try:
+        value = geoid_separation(132.805, 7.5525)
+    except PlacementError as exc:
+        assert "undefined" in str(exc)
+        return
+    assert not math.isnan(bad), "the NaN guard in geoid_separation is gone"
+    assert not math.isfinite(value)
 
 
 # --------------------------------------------------------------------------

@@ -221,6 +221,27 @@ def test_geocentric_geoid_shifts_only_the_anchor(tmp_path, monkeypatch):
     assert (with_n["lon"], with_n["lat"]) == (without["lon"], without["lat"])
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_geocentric_non_finite_geoid_never_becomes_a_finite_placement(
+        tmp_path, monkeypatch, bad):
+    """BUGS.md B26, the geocentric half (the projected twin is in
+    test_cesium_placement.py). geoid_separation returns inf when the grid
+    is missing, PROJ network is on and the CDN is unreachable, and this
+    branch checks only the ECEF conversion. A refusal - the fix - passes;
+    until then the bad value must at least stay visible in the plan rather
+    than turn into a height that looks like a placement."""
+    pytest.importorskip("pyproj")
+    from modules import cesium_placement as cp
+    monkeypatch.setattr(cp, "geoid_separation", lambda lon, lat, model="EGM2008": bad)
+    obj = _geocentric_export(tmp_path)
+    try:
+        plan, _localised = plan_placement([obj])
+    except PlacementError:
+        return
+    assert not math.isfinite(plan["height_ellipsoidal_m"])
+    assert not math.isfinite(plan["geoid_n_m"])
+
+
 def test_mixing_geocentric_and_projected_is_refused(tmp_path):
     pytest.importorskip("pyproj")
     a = _geocentric_export(tmp_path, "one")
