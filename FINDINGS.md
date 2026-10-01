@@ -6204,3 +6204,162 @@ report, the skeptic's reading is what is recorded here.
   the previously persisted cache path at start-up on 30 Sep even with
   RS_CACHE_DIR pinned (a 105 KB stub under the old _agent\model_cache_v2).
   [NA165] (2026-10-01) ESTABLISHED
+
+## [NA165] 2026-10-01 - the sfm header in full, the H2063 restore, the extended ion audit, and nine H2060 exports re-placed by nav
+
+Second entry of the day. Reports:
+`C:\Users\produ\coyotethings\NA168\decision_prep_2026-10-01\reports\`
+(`prep_h2063-*`, `verify_h2063-*`, `repo_audit_ion-extended`, `navplace_*`),
+audit outputs in `...\ion-audit-extended\`. Every item below was re-checked
+by an independent pass; where that pass corrected the first, the corrected
+reading is recorded.
+
+- **The `sfm<k>.dat` header, as far as it is decoded.** Magic `TBSM`,
+  version 19 at byte 4, component GUID at 8-23, ECEF origin (3 doubles) at
+  40, the ENU basis at that origin (9 doubles) at 64, then a similarity:
+  rotation (9 doubles) at 152, translation (3) at 224, scale (1) at 248.
+  Bytes 272-303 behave as a content fingerprint: equal between a zone
+  project's file and its identity-state import in another project in 82 of
+  82 pairs, although the packed bytes differ. The GUID does NOT link a zone
+  project's component to its import (the zone .rsproj uses another id).
+  QUALIFIES the entry above: "local frame = ENU at the origin" is proven only
+  where the similarity block is identity - all 67 files of H2060 Merged_v2
+  and every zone project - and it is NOT identity in H2060's 130 zone
+  .rsalign files, its 75 Merged_v1 files, or the last save of H2063's
+  merged_20260903 (scale 0.26-2.32). What a non-identity block means for
+  export is unresolved. Camera poses are in a packed, high-entropy block
+  (not zlib / gzip / lzma / bz2) and cannot be read without RealityScan.
+  [NA165] (2026-10-01) ESTABLISHED (layout) / OPEN (non-identity semantics)
+
+- **A .rsalign and an imported component DO carry their image membership**,
+  as a UTF-16 `TBRE` table of relative image paths. SUPERSEDES the claim
+  earlier in this file that membership cannot be recovered because `.jpg`
+  occurs zero times: that search was ASCII. Zone-project sfm files carry no
+  such table (51 of 51). [NA165] (2026-10-01) ESTABLISHED
+
+- **H2063: what the owner restored on 2026-10-01 is alignment only.**
+  46,056 files / 102.81 GiB back at `coyotethings\NA165\H2063`, intact
+  against the Recycle Bin's records: nine zone projects of 31 Aug (51
+  components in zones 1-8, zone 9 empty) and ONE pre-v3 40-input merge in
+  two runs on 3 Sep (`merged_20260902` killed 12:30; `merged_20260903`, 25
+  components). No model, depth map or texture. The delivered v3 came from a
+  separate 48-input merge of 8 Sep (`proc\merged_v3` -> `models_v3\scene`),
+  not restored. 16 of the 24 delivered components (c00-c05, c07-c13,
+  c16-c18; 6,982 of 22,766 cameras) are in merged_20260903's last save
+  under the same GUID with the same camera count and a nav mean equal to
+  anchors.json to < 1 mm; their import-state solve is in the zone projects
+  (fingerprint-proven for c02, c10, c17, c18; by name and size for the
+  other 12). Only input alignments survive for c14, c20, c21; c23 91 % and
+  c22 36 % of images; nothing for c06, c15, c19. No .rsproj resolves its
+  images (0 of 38,421): they expect `proc\rs\batched_images_by_zone`, CLAHE
+  copies that never went through the bin. The two restored frame trees are
+  the same 22,770 frames byte for byte (every 30th frame of ProRes clips
+  0005-0030). 71.5 of 82.1 GiB in the two merged projects is superseded
+  save generations no .rsproj names. All 11 .rsproj carry a stale project
+  CRS label (epsg:32653). [NA165] (2026-10-01) ESTABLISHED
+
+- **Where RealityScan's cache path comes from - two more places than B21
+  says.** Every project stores appCacheCustomLocation in its own
+  appConfig*.dat, and loading a project appears to touch THAT path even
+  with RS_CACHE_DIR pinned (it explains the 30 Sep stub under
+  `coyotethings\NA165\H2060\proc\_agent\model_cache_v2`; inferred from an
+  exact path match, not tested). And this PC has two persisted settings
+  stores: reg.exe / PowerShell read one HKCU view (default cache
+  `...\H2063\proc\merged_v2\cache_final`, recent files last written 7 Sep),
+  every Microsoft Store Python process and the venv built on it read
+  another (`Desktop\NA165_H2060\proc\agent_workspace\model_cache_v2`, last
+  written 1 Oct 00:37). Which one a RealityScan start uses depends on what
+  launched it. [HARNESS] (2026-10-01) ESTABLISHED (both views read three
+  ways) / PLAUSIBLE (which launch uses which)
+
+- **`rollback_reorg.py` can no longer complete.** It is os.rename per log
+  entry with no error handling; replayed against the filesystem it performs
+  22 of 258 moves and dies on the 23rd (a one-shot script deleted on
+  30 Sep). Those 22 include moving the four LIVE NA168 NAS links back under
+  `coyotethings\NA168`. Do not run it. [HARNESS] (2026-10-01) ESTABLISHED
+
+- **[CESIUM] ion's boxes, measured on 92 mesh tilesets.** The root box is a
+  padded cube whose side equals the largest extent of the tight box
+  (root.metadata.properties.tightBoundingBox) and whose floor is the tight
+  box's floor (to 0.0013 mm on 72), so its centre sits (cube - U)/2 above
+  the mesh's - and up to 30 m away horizontally. A tight box reproduces the
+  uploaded mesh's extents to a micrometre (H2077 control). Point-cloud
+  tilesets carry no tight box; their root box is a plain bounding box with
+  its floor at the local origin. SUPERSEDES the doubt in the entry above
+  about the --input-crs path: H2063's "recorded model sizes" were the dense
+  cloud's box, not the mesh's; the live H2063 assets are whole, and c22 is
+  3.8 m from the track, not 32. [CESIUM] (2026-10-01) ESTABLISHED
+
+- **[CESIUM] Every NA165 / NA168 tileset on the account needs +N and
+  nothing else.** 114 at 10:24 on 1 Oct (24 H2063, 1 H2077, 47 H2060
+  meshes, 42 H2060 dense clouds). After +N (H2060 +25.22, H2063 +25.19,
+  H2077 +65.86 m; within 2 cm of each asset's own N), 113 have their
+  cameras between the model's floor and 10 m above its top. Upload sessions
+  from `date_added`, local time: H2063 10 Sep 13:58-15:41; H2077 23 Sep
+  17:56; H2060 L-run meshes 27 Sep 07:47-10:33 ("Georegistration corrected
+  2026-09-27", superseding a 21 Sep upload no longer on the account);
+  1 Oct 03:31-04:52 (6 meshes, 43 dense clouds); 1 Oct from 09:32,
+  renumbered duplicates `_NA165_H2060_NN`, 30 by 10:58. All from the
+  owner's other machine (D:\CoyoteThings), none with the geoid. The NAS
+  folder `proc_exports_png_superseded` holds the SOURCE meshes in their
+  pre-27-Sep pose: under the scale and rotation each asset's ion
+  description states, the NAS mesh reproduces the live tight box to
+  <= 0.7 mm on 31 of 32, so a re-upload from it would undo that
+  re-registration. Whether ion's location editor can move a tiled asset is
+  still untested. [CESIUM] (2026-10-01) ESTABLISHED / OPEN (editor)
+
+- **[CESIUM] Grid north is not true north - found and fixed the same day
+  (BUGS B28).** `to_local_enu` on the projected branch handed ion UTM grid
+  axes as East / North. At H2060 (210 km from the central meridian of zone
+  2S) that is a 0.4797 deg turn about the anchor and a horizontal stretch
+  of 1.000251 - the projection's point scale is 1.000149, and a mesh 648 m
+  below the ellipsoid adds another 1.0e-4. Measured: the staged vertices of
+  a projected export equalled the product's minus the anchor to 1.6e-9 m;
+  on C10 the largest vertex displacement is 0.051 m (0.064 m at the corner
+  of its bounding box). The same translation is 17 m out at 78 N and 155 m
+  on a polar stereographic grid, 150 m from the anchor. The fix takes
+  every projected vertex grid -> geodetic -> ECEF -> ENU, the route the
+  geocentric branch already used, and turns the normals; the anchor does
+  not move. Checked against an independent computation at seven sites to
+  the OBJ's rounding (5e-7 m). The other machine's H2060 meshes on ion carry
+  the same turn (measured on zone_1_c0, inferred for the rest); the fix
+  does not reach them. [CESIUM] (2026-10-01) ESTABLISHED, FIXED (B28)
+
+- **Nine H2060 exports re-placed by the cameras-to-nav similarity, without
+  RealityScan** (owner decision: tiered - well and weak tier only; the
+  indeterminate tier and the hovers are held). Tool:
+  `Desktop\NA165_H2060\proc\agent_workspace\navplace_v2.py`; products:
+  `proc\exports_models_v2_georef\NA165_H2060_Cnn_similarity\` (EPSG:32702,
+  Z = -depth; LAS `<stem>_navplaced.las`; textures hard-linked). Checked on
+  EVERY vertex and point by code that shares nothing with the tool:
+  80,444,285 vertices agree to 0.086 mm (the 4-decimal rounding),
+  291,748,806 LAS points to 0.87 mm (the 1 mm quantisation); every non-v /
+  vn line byte-identical to the original; the 584 original files untouched.
+
+      comp  tier  scale    rot vs RS  surface move med / max   plane slope RS -> nav
+      C6    well  1.0109     5.8 deg     0.44 /  1.20 m          2.2 ->  6.6 deg
+      C9    well  0.9276     4.1         1.23 /  2.53           22.7 -> 21.9
+      C10   weak  1.0188     4.6         0.35 /  0.88           16.5 -> 14.8
+      C14   well  1.0893     2.9         0.74 /  1.51           31.0 -> 33.3
+      C15   weak  0.9841    50.3         2.40 /  6.27           35.5 -> 17.1
+      C17   weak  0.9581    21.0         1.18 /  2.87           20.9 ->  9.2
+      C18   well  1.0026     8.2         0.41 /  0.90           23.4 -> 15.3
+      C21   weak  1.0214    24.5         1.63 /  3.60           24.5 ->  5.9
+      C22   well  1.0905    20.9         1.43 /  3.86           49.1 -> 42.8
+
+  Camera depth-residual std falls on all nine, which a least-squares fit
+  does by construction and is not independent evidence; C6 and C14 get
+  STEEPER under the nav fit. The fit uses unique images (last CSV row
+  wins); the morning's tier table was rows-based, which moves C10's scale
+  by 0.006 and C21's rotation by 0.65 deg. C15 is weak only at 25-frame
+  bootstrap blocks (16 deg at 60); C21's nav scale is not pinned (26 %
+  spread), C22's is loose (11 %). The products are provisional.
+  [NA165] (2026-10-01) ESTABLISHED (the arithmetic) / PLAUSIBLE (that the
+  nav placement is the better one on each of the nine)
+
+- **Environment.** `tools\.venv` does not have every requirement: it lacks
+  requests and boto3, so publish_cesium.py and validate_cesium_assets.py
+  need the Microsoft Store python, which lacks textual and rich. Git Bash
+  grep run with the repo as working directory and piped into head crashed
+  three shells on this PC and left a stack dump.
+  [HARNESS] (2026-10-01) ESTABLISHED
