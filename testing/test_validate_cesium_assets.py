@@ -21,6 +21,16 @@ mixes passes; floor and top heights, N on an off-track centre and the link
 from a tileset to its source had to be derived by hand; and the account
 changed under the audit with no way to diff two reports.
 
+The third part (marked "what the second review's mutants walked through")
+is traced to that review, 2026-10-01: seven mutants of a correct validator
+passed all 69 tests - ``extent_m`` taken from the tight box, the first
+flight log instead of the nearest, the radius doubled, the geoid asked at
+(lat, lon), pagination dropped, ``allow_ballpark=True``, assets unsorted -
+and four small defects were left: a malformed ``--compare`` file crashed
+after the whole audit and before the report was written, the endpoint's own
+token was not scrubbed, the report did not state its signs and datums, and
+NaN / Infinity could be written into it.
+
 Hermetic: synthetic tileset JSON, a synthetic flight log, the geoid stubbed
 to a known N, and - for the tests that run ``main()`` - a fake ``requests``
 whose session has ``get`` and nothing else, so a write verb would be an
@@ -337,8 +347,10 @@ def test_best_is_the_tight_box_on_a_mesh(tmp_path):
 
 
 def test_best_is_the_root_box_on_a_point_cloud(tmp_path):
-    """0 of 42 point-cloud tilesets on the live account carry a tight box:
-    their one verdict has to come from the root box, not be "no-tight-box"."""
+    """No tileset tiled from a point cloud carries a tight box (0 of 47 on
+    the live account, 2026-10-01 15:00 UTC; 42 of them the H2060 dense
+    clouds): their one verdict has to come from the root box, not be
+    "no-tight-box"."""
     rec = audit(cloud_tileset(), tmp_path)
     assert rec["tight_verdict"] == "no-tight-box"
     assert rec["best_geometry"] == "root.boundingVolume.box"
@@ -729,11 +741,12 @@ class FakeResponse:
 
 
 def fake_requests(listing, details, tilesets, broken=(), endpoints=None,
-                  http_errors=None):
+                  http_errors=None, tileset_refused=()):
     """A ``requests`` whose Session can GET and do nothing else.
 
     ``endpoints`` replaces an asset's endpoint body; ``http_errors`` makes
-    its tileset GET an HTTP error that still has a JSON body.
+    its tileset GET an HTTP error that still has a JSON body;
+    ``tileset_refused`` makes it raise with BOTH tokens in the message.
     """
     calls = []
     endpoints, http_errors = endpoints or {}, http_errors or {}
@@ -758,6 +771,10 @@ def fake_requests(listing, details, tilesets, broken=(), endpoints=None,
                 return FakeResponse(details[int(url.split("/")[-1])])
             if url.startswith("https://assets.example/"):
                 asset_id = int(url.split("/")[-2])
+                if asset_id in tileset_refused:
+                    raise RuntimeError(
+                        "tileset host refused %s (account %s)"
+                        % (headers["Authorization"], "Bearer " + SECRET))
                 if asset_id in http_errors:
                     return FakeResponse({"code": "NotFound", "message": "gone"},
                                         http_errors[asset_id])
@@ -822,6 +839,8 @@ def test_main_reads_with_get_only_and_never_prints_a_token(
         vca.API + "/v1/assets/23"]
 
     assert report["schema"] == 3
+    # the signs and datums travel with the numbers, not only in a docstring
+    assert report["conventions"] == vca.CONVENTIONS
     # UTC like ion's own dateAdded, with the local time beside it
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", report["generated"])
     assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d[+-]\d{4}",
@@ -988,3 +1007,379 @@ def test_what_is_wrong_locally_stops_the_run_before_any_request(
     monkeypatch.setattr(sys, "argv", ["v", "--flight-log", str(empty)])
     with pytest.raises(SystemExit, match="no nav rows"):
         vca.main()
+
+
+# ------------------------ what the second review's mutants walked through
+
+def test_extent_m_stays_the_root_cube_on_a_tileset_with_a_tight_box(tmp_path):
+    """The unprefixed ``extent_m`` and ``radius_m`` are the ROOT cell's on
+    every row, tight box or not - that is what keeps a report comparable
+    with the 2026-09-30 one. Taking them from the tight box passed the
+    suite (review mutant V17)."""
+    rec = audit(mesh_tileset(), tmp_path)
+    assert rec["has_tight_box"] is True
+    assert rec["extent_m"] == [46.0, 46.0, 46.0]
+    assert rec["radius_m"] == pytest.approx(math.sqrt(3) * 23.0)
+    assert rec["tight_extent_m"] == [10.0, 46.0, 4.0]
+    assert rec["extent_m"] != rec["tight_extent_m"]
+
+
+def lawn(tmp_path, name, east, north, alt, extra=()):
+    """A 9 x 9 lawn of cameras about (east, north), plus ``extra`` rows."""
+    from pyproj import Transformer
+    rows = [(east + 5.0 * i, north + 5.0 * j, alt)
+            for i in range(-4, 5) for j in range(-4, 5)] + list(extra)
+    lines = ["Name;X (East);Y (North);Alt;XA;YA;AA"]
+    lines += ["f%d.jpg;%.3f;%.3f;%.3f;10;10;1" % ((k,) + row)
+              for k, row in enumerate(rows)]
+    path = tmp_path / name
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    crs = vca.utm_epsg(str(path))
+    return {"log": str(path), "crs": crs, "rows": vca.load_nav(str(path)),
+            "fwd": Transformer.from_crs("EPSG:4326", crs, always_xy=True)}
+
+
+@pytest.mark.parametrize("far_first", [True, False])
+def test_the_nearest_flight_log_wins_wherever_it_is_listed(tmp_path,
+                                                           far_first):
+    """Two dives in one zone, 1.5 km apart, inside --max-km of each other:
+    the asset belongs to the one whose track passes over it, not to the
+    first one given. With one log in every test, "the first" passed
+    (review mutant V12)."""
+    near = lawn(tmp_path, "flight_log_NEAR_2L_UTM.txt", SITE_EAST, SITE_NORTH,
+                NAV_ALT)
+    far = lawn(tmp_path, "flight_log_FAR_2L_UTM.txt", SITE_EAST + 1500.0,
+               SITE_NORTH, -300.0)
+    navs = [far, near] if far_first else [near, far]
+    rec = vca.audit_tileset({}, mesh_tileset(), navs, geoid_stub, to_geo(),
+                            30.0, 2.0)
+    for prefix in ("", "tight_", "best_"):
+        assert rec[prefix + "dive_log"] == "flight_log_NEAR_2L_UTM.txt"
+        assert rec[prefix + "distance_to_track_m"] < 1.0
+        assert rec[prefix + "nav_alt_median_m"] == NAV_ALT
+    assert rec["tight_verdict"] == "MISSING-GEOID"
+
+    # ... and the far dive alone is still a match, 1.5 km off its track,
+    # so it was a real candidate and not one --max-km had already excluded
+    alone = vca.audit_tileset({}, mesh_tileset(), [far], geoid_stub, to_geo(),
+                              30.0, 2.0)
+    assert alone["dive_log"] == "flight_log_FAR_2L_UTM.txt"
+    assert alone["verdict"] == "FAULT"
+    assert 1400.0 < alone["distance_to_track_m"] < 1500.0
+
+
+def test_the_radius_is_the_radius(tmp_path):
+    """A camera 29 m from the centre counts and one 31 m away does not:
+    not twice the radius (review mutant V7), not half of it. The lawn alone
+    could not tell - its farthest camera is 28.3 m out."""
+    extra = [(SITE_EAST + 29.0, SITE_NORTH, -640.0),
+             (SITE_EAST + 31.0, SITE_NORTH, -700.0),
+             (SITE_EAST, SITE_NORTH - 58.0, -710.0)]
+    navs = [lawn(tmp_path, "flight_log_R_2L_UTM.txt", SITE_EAST, SITE_NORTH,
+                 NAV_ALT, extra)]
+    rec = vca.audit_tileset({}, cloud_tileset(), navs, geoid_stub, to_geo(),
+                            30.0, 2.0)
+    assert rec["nav_rows_in_radius"] == 82            # the lawn, and 29 m
+    assert rec["nav_alt_max_m"] == -640.0             # 29 m is inside
+    assert rec["nav_alt_min_m"] == NAV_ALT            # 31 m and 58 m are not
+    assert rec["nav_alt_median_m"] == NAV_ALT
+
+    wide = vca.audit_tileset({}, cloud_tileset(), navs, geoid_stub, to_geo(),
+                             32.0, 2.0)
+    assert wide["nav_rows_in_radius"] == 83 and wide["nav_alt_min_m"] == -700.0
+    narrow = vca.audit_tileset({}, cloud_tileset(), navs, geoid_stub,
+                               to_geo(), 12.0, 2.0)
+    # 5 m lawn: the cameras within 12 m of the centre are those with
+    # i^2 + j^2 <= 5 - twenty-one of them
+    assert narrow["nav_rows_in_radius"] == 21
+
+
+def test_the_geoid_is_asked_at_lon_lat_in_that_order(tmp_path):
+    """At this site lon is -169 and lat -14; swapped, EGM2008 would be read
+    at latitude -169, which PROJ answers with inf or with another ocean's
+    N. A stub that ignored its arguments could not tell (review mutant
+    V14)."""
+    asked = []
+
+    def recording(lon, lat):
+        asked.append((lon, lat))
+        return STUB_N
+
+    rec = vca.audit_tileset({}, mesh_tileset(), nav(tmp_path), recording,
+                            to_geo(), 30.0, 2.0)
+    assert len(asked) == 2                     # the root centre, the tight one
+    for lon, lat in asked:
+        assert lon == pytest.approx(SITE_LON, abs=1e-6)
+        assert lat == pytest.approx(SITE_LAT, abs=1e-6)
+    assert asked[0] == (rec["lon"], rec["lat"])
+    assert asked[1] == (rec["tight_lon"], rec["tight_lat"])
+
+
+def test_the_geoid_transform_refuses_a_ballpark(monkeypatch):
+    """Without the grid PROJ offers a "ballpark" vertical transformation
+    that returns Z unchanged: N = 0, every asset "ok". The transformer is
+    EGM2008 -> WGS84 3D, lon / lat order, and built to REFUSE that (review
+    mutant V21: allow_ballpark=True passed)."""
+    import pyproj
+    built = []
+
+    class Grid:
+        def transform(self, lon, lat, z):
+            return lon, lat, STUB_N
+
+    def from_crs(*args, **kwargs):
+        built.append((args, kwargs))
+        return Grid()
+
+    monkeypatch.setattr(pyproj.Transformer, "from_crs", staticmethod(from_crs))
+    assert vca.geoid_lookup()(SITE_LON, SITE_LAT) == STUB_N
+    ((args, kwargs),) = built
+    assert args == ("EPSG:9518", "EPSG:4979")
+    assert kwargs == {"always_xy": True, "allow_ballpark": False}
+
+
+class PagedSession:
+    """An account of ``total`` assets, served a page at a time."""
+
+    def __init__(self, total):
+        self.total = total
+        self.pages = []
+
+    def get(self, url, headers=None, params=None, timeout=None):
+        assert url == vca.API + "/v1/assets"
+        assert headers == {"Authorization": "Bearer " + SECRET}
+        assert params["limit"] == 100
+        self.pages.append(params["page"])
+        first = (params["page"] - 1) * 100
+        items = [{"id": i} for i in range(first, min(first + 100, self.total))]
+        return FakeResponse({"items": items})
+
+
+@pytest.mark.parametrize("total, pages", [
+    (0, [1]), (99, [1]), (100, [1, 2]), (101, [1, 2]), (250, [1, 2, 3]),
+])
+def test_the_listing_is_read_past_its_first_page(total, pages):
+    """The account holds about 420 assets; ion serves 100 a page. Reading
+    page one only passed every test (review mutant V20)."""
+    session = PagedSession(total)
+    items = vca.list_assets(session, SECRET)
+    assert [a["id"] for a in items] == list(range(total))
+    assert session.pages == pages
+
+
+def test_rows_come_out_in_asset_id_order(tmp_path):
+    """ion lists newest first; the report is in id order whatever the
+    listing's (review mutant V23)."""
+    assets = [{"id": i, "name": "a%d" % i, "type": "IMAGERY",
+               "status": "COMPLETE"} for i in (30, 4, 17)]
+    rows = vca.audit_assets(assets, None, nav(tmp_path), geoid_stub, to_geo(),
+                            30.0, 2.0)
+    assert [r["asset_id"] for r in rows] == [4, 17, 30]
+
+
+# ----------------------------- nothing local may cost the audit its report
+
+BAD_COMPARE = {
+    "rows that are numbers": {"assets": [1, 2]},
+    "assets is an object": {"assets": {"a": 1}},
+    "an asset_id that is a list": {"assets": [{"asset_id": [1]}]},
+    "an asset_id that is an object": {"assets": [{"asset_id": 7},
+                                                 {"asset_id": {"x": 1}}]},
+    "assets is null": {"assets": None},
+}
+
+
+@pytest.mark.parametrize("case", sorted(BAD_COMPARE))
+def test_a_malformed_compare_file_is_refused_before_any_request(
+        case, tmp_path, monkeypatch):
+    """Each of these passed the old check (a dict with an "assets" key),
+    then crashed the comparison after 400 GETs and BEFORE the report was
+    written - about a minute of audit, lost."""
+    monkeypatch.setitem(sys.modules, "requests", NoNetwork())
+    monkeypatch.setattr(vca, "geoid_lookup", lambda: geoid_stub)
+    monkeypatch.setenv("CESIUM_ION_TOKEN", SECRET)
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps(BAD_COMPARE[case]), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "v", "--flight-log", nav(tmp_path)[0]["log"],
+        "--compare", str(previous), "--out", str(tmp_path / "audit.json")])
+    with pytest.raises(SystemExit, match="is not an audit report: "):
+        vca.main()
+    assert not (tmp_path / "audit.json").exists()
+
+
+def test_an_out_folder_that_is_not_there_is_refused_before_any_request(
+        tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "requests", NoNetwork())
+    monkeypatch.setattr(vca, "geoid_lookup", lambda: geoid_stub)
+    monkeypatch.setenv("CESIUM_ION_TOKEN", SECRET)
+    log = nav(tmp_path)[0]["log"]
+    monkeypatch.setattr(sys, "argv", [
+        "v", "--flight-log", log,
+        "--out", str(tmp_path / "no_such_folder" / "audit.json")])
+    with pytest.raises(SystemExit, match="--out: the folder .* does not exist"):
+        vca.main()
+    monkeypatch.setattr(sys, "argv", ["v", "--flight-log", log,
+                                      "--out", str(tmp_path)])
+    with pytest.raises(SystemExit, match="is a folder, not a file"):
+        vca.main()
+
+
+COMPARE_LISTING = [{"id": 22, "name": "c2", "type": "3DTILES",
+                    "status": "COMPLETE", "bytes": 5,
+                    "dateAdded": "2026-09-27T03:11:00.000Z"}]
+
+
+def _previous(tmp_path):
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({"schema": 3, "assets": [
+        {"asset_id": 22, "name": "c2", "type": "3DTILES",
+         "status": "COMPLETE", "bytes": 5, "tight_verdict": "ok"}]}),
+        encoding="utf-8")
+    return previous
+
+
+def test_the_report_is_on_disk_before_the_comparison_is_printed(
+        tmp_path, monkeypatch, capsys):
+    """The comparison used to be computed and printed first, so anything
+    wrong with it cost the report. Here printing it blows up: the report,
+    with its ``changes`` block, is already written and the run ends 0."""
+    report_was_written = []
+
+    def explode(changes):
+        report_was_written.append((tmp_path / "audit.json").exists())
+        raise RuntimeError("console gone")
+
+    monkeypatch.setattr(vca, "print_changes", explode)
+    fake, _calls = fake_requests(COMPARE_LISTING, {}, {22: mesh_tileset()})
+    report, printed = run_main(tmp_path, monkeypatch, capsys, fake,
+                               extra=["--compare", str(_previous(tmp_path))])
+    # printed once, and only after the file existed
+    assert report_was_written == [True]
+    assert report["changes"]["changed"][0]["asset_id"] == 22
+    assert ("the comparison could not be printed (RuntimeError: console "
+            "gone)") in printed
+    assert printed.index("report ->") < printed.index("could not be printed")
+
+
+def test_a_comparison_that_fails_is_recorded_and_the_audit_is_kept(
+        tmp_path, monkeypatch, capsys):
+    def explode(previous, rows):
+        raise TypeError("unhashable type: 'list' near Bearer " + SECRET)
+
+    monkeypatch.setattr(vca, "compare_reports", explode)
+    fake, _calls = fake_requests(COMPARE_LISTING, {}, {22: mesh_tileset()})
+    report, printed = run_main(tmp_path, monkeypatch, capsys, fake,
+                               extra=["--compare", str(_previous(tmp_path))])
+    assert "changes" not in report
+    assert report["changes_error"] == (
+        "TypeError: unhashable type: 'list' near Bearer <redacted>")
+    assert report["assets"][0]["tight_verdict"] == "MISSING-GEOID"
+    assert "the comparison with previous.json failed" in printed
+
+
+def test_the_endpoints_own_token_is_scrubbed_too(tmp_path, monkeypatch,
+                                                 capsys):
+    """Only the account token and JWT-shaped strings were removed. The
+    endpoint's token here is neither, and the tileset GET fails with it in
+    the message - it reached ``why`` in the report."""
+    assert not vca._JWT.search(ASSET_TOKEN)
+    listing = [{"id": 9, "name": "refused", "type": "3DTILES",
+                "status": "COMPLETE", "bytes": 1,
+                "dateAdded": "2026-10-01T07:01:00.000Z"}]
+    fake, calls = fake_requests(listing, {}, {}, tileset_refused={9})
+    report, _printed = run_main(tmp_path, monkeypatch, capsys, fake)
+    row = report["assets"][0]
+    assert row["verdict"] == "unreadable"
+    assert row["why"] == ("RuntimeError: tileset host refused Bearer "
+                          "<redacted> (account Bearer <redacted>)")
+    # ... and the token did go where it belongs
+    assert calls[-1][1] == {"Authorization": "Bearer " + ASSET_TOKEN}
+
+
+def _strict(text):
+    """json.loads that refuses the NaN / Infinity tokens Python tolerates."""
+    def refuse(token):
+        raise AssertionError("%s is not JSON" % token)
+    return json.loads(text, parse_constant=refuse)
+
+
+NON_FINITE = {
+    "a NaN in the transform": lambda root: root["transform"].__setitem__(
+        12, float("nan")),
+    "an infinite transform": lambda root: root["transform"].__setitem__(
+        0, float("inf")),
+    "a root box that overflows": lambda root: root["boundingVolume"].update(
+        box=[0.0, 0.0, 0.0] + [1e300] * 9),
+    "a root box centre of NaN": lambda root: root["boundingVolume"].update(
+        box=[float("nan")] + CUBE[1:]),
+    "a tight box that overflows": lambda root: root["metadata"][
+        "properties"].update(tightBoundingBox=[0.0, 0.0, 0.0] + [1e300] * 9),
+}
+
+
+@pytest.mark.filterwarnings("ignore:overflow encountered")
+@pytest.mark.parametrize("case", sorted(NON_FINITE))
+def test_a_non_finite_centre_or_extent_is_unreadable_and_the_report_is_json(
+        case, tmp_path, monkeypatch, capsys):
+    """A degenerate transform or an overflowing box used to become a row of
+    NaN heights and "FAULT" - and bare NaN / Infinity tokens in the report,
+    which a strict JSON parser rejects whole."""
+    with pytest.raises(vca.Unreadable, match="not finite"):
+        vca.decode_tileset(_spoil(NON_FINITE[case]))
+
+    listing = [{"id": 1, "name": "bad", "type": "3DTILES",
+                "status": "COMPLETE", "bytes": 1,
+                "dateAdded": "2026-10-01T07:01:00.000Z"},
+               {"id": 2, "name": "good", "type": "3DTILES",
+                "status": "COMPLETE", "bytes": 1,
+                "dateAdded": "2026-10-01T07:02:00.000Z"}]
+    fake, _calls = fake_requests(
+        listing, {}, {1: _spoil(NON_FINITE[case]), 2: mesh_tileset()})
+    report, _printed = run_main(tmp_path, monkeypatch, capsys, fake)
+    bad, good = report["assets"]
+    assert [bad[key] for key in VERDICTS] == ["unreadable"] * 4
+    assert bad["why"].endswith("is not finite")
+    assert "lon" not in bad and "extent_m" not in bad
+    assert good["tight_verdict"] == "MISSING-GEOID"
+    assert "non_finite_values_nulled" not in report
+    text = (tmp_path / "audit.json").read_text(encoding="utf-8")
+    assert _strict(text) == report
+    assert not re.search(r"\bNaN\b|Infinity", text)
+
+
+def test_a_centre_proj_cannot_convert_is_unreadable_not_a_row_of_inf(tmp_path):
+    """PROJ answers a point it cannot convert with inf, not an exception."""
+    class Lost:
+        def transform(self, x, y, z):
+            return float("inf"), float("inf"), float("inf")
+
+    assets = [{"id": 1, "name": "lost", "type": "3DTILES",
+               "status": "COMPLETE"}]
+    (row,) = vca.audit_assets(assets, lambda i: cloud_tileset(), nav(tmp_path),
+                              geoid_stub, Lost(), 30.0, 2.0)
+    assert [row[key] for key in VERDICTS] == ["unreadable"] * 4
+    assert row["why"] == ("the root box centre does not convert to lon / lat "
+                          "/ height")
+    assert "lon" not in row
+
+
+def test_the_report_writer_never_emits_a_non_finite_token(tmp_path):
+    """The second net: whatever non-finite value reaches the writer some
+    other way is written as null and counted - the audit is not thrown
+    away, and the file is still JSON."""
+    path = tmp_path / "r.json"
+    report = {"schema": 3, "assets": [
+        {"asset_id": 1, "lon": float("nan"), "extent_m": [1.0, float("inf")]},
+        {"asset_id": 2, "lon": -169.0, "nested": {"h": float("-inf")}}]}
+    assert vca.write_report(report, str(path)) == 3
+    written = _strict(path.read_text(encoding="utf-8"))
+    assert written["non_finite_values_nulled"] == 3
+    assert written["assets"][0] == {"asset_id": 1, "lon": None,
+                                    "extent_m": [1.0, None]}
+    assert written["assets"][1] == {"asset_id": 2, "lon": -169.0,
+                                    "nested": {"h": None}}
+
+    clean = {"schema": 3, "assets": [{"asset_id": 2, "lon": -169.0}]}
+    assert vca.write_report(clean, str(path)) == 0
+    assert _strict(path.read_text(encoding="utf-8")) == clean

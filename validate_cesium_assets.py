@@ -38,12 +38,20 @@ report says which one it came from:
               uses (``publish_cesium.tight_bounding_box`` / ``box_extents``).
               Every ``tight_*`` field comes from it. A tileset without the
               property (``has_tight_box`` false) gets ``tight_verdict``
-              "no-tight-box" and the run carries on. Measured on the live
-              account 2026-10-01: every ion-tiled MESH tileset carries it
-              (66 of 66), no POINT-CLOUD tileset does (0 of 42) - and a
-              point cloud's root box is not a padded cube: over 40 H2060
-              pairs its centre sat a median 0.40 m (worst 6.6 m) from the
-              same component's mesh tight centre.
+              "no-tight-box" and the run carries on. Who has one, counted
+              on the live account 2026-10-01 (15:00 UTC report, 419
+              assets, each tileset paired with its source): 118 of the 125
+              tilesets tiled from a MESH collection carry it and 0 of the
+              47 tiled from a POINT-CLOUD collection do. The 7 meshes
+              without it were tiled in 2023-24 (NA156), so for them, as
+              for every point cloud, ``best_*`` is the root box. (This
+              paragraph first said "66 of 66" and "0 of 42" as if of the
+              account: those were the mesh and dense-cloud tilesets
+              matched to NA165/H2060, H2063 and NA168/H2077 that morning,
+              where the pattern has no exception.) A point cloud's root
+              box is not a padded cube: over 40 H2060 pairs its centre sat
+              a median 0.40 m (worst 6.6 m) from the same component's mesh
+              tight centre.
 
   BEST        One column family to read: every ``best_*`` field is the
               tight box's where the tileset has one and the root box's
@@ -135,6 +143,13 @@ skipped source collections included. ``generated`` is UTC too.
 ``--compare <previous report>`` adds a ``changes`` block - assets gone, new
 and changed since that report (either schema) - and prints it.
 
+The report states its own conventions (``conventions``): which heights are
+ellipsoidal and which orthometric, the sign of N and of every difference.
+It is strict JSON - a tileset whose centre or extents are not finite is an
+"unreadable" row, never a NaN in the file - and it is on disk BEFORE the
+``--compare`` listing is printed; the compare file's shape and the ``--out``
+folder are checked before the first request.
+
 Needs requests, pyproj and numpy, and the EGM2008 grid locally or PROJ
 network access; without the grid PROJ would silently return N = 0, so the
 transform is built with allow_ballpark=False and fails instead, and a
@@ -165,7 +180,9 @@ API = "https://api.cesium.com"
 #: listing fields, the box half-axes and the tight-box centre and verdict;
 #: 3 adds floor and top heights, the ``best_*`` family, the bracket test,
 #: the source pairing, ``generated`` in UTC and ``changes``. Every schema-1
-#: and schema-2 field is still written, with the same meaning.
+#: and schema-2 field is still written, with the same meaning. Still 3 with
+#: the top-level ``conventions`` block (and ``changes_error`` /
+#: ``non_finite_values_nulled`` when they apply): the rows did not change.
 SCHEMA = 3
 
 ROOT_BOX = "root.boundingVolume.box"
@@ -226,6 +243,35 @@ FIELDS = {
         "top",
     "local_axes_scale / local_axes_off_enu_deg":
         "root.transform's own axes against East-North-Up at its origin",
+}
+
+#: Signs and vertical datums of the report's numbers. Written into every
+#: report: the module docstring does not travel with the JSON.
+CONVENTIONS = {
+    "heights": "every *_height_ellipsoidal_m (and expected_height_m) is "
+               "metres above the WGS84 ELLIPSOID, positive up - the datum "
+               "Cesium ion places an asset on",
+    "nav_alt": "every nav_alt_* and footprint_nav_alt_* is the flight log's "
+               "Alt: an ORTHOMETRIC height, minus the depth below the sea "
+               "surface, in metres (negative under water). It is not "
+               "ellipsoidal",
+    "geoid_n_m": "the EGM2008 undulation N in metres, positive where the "
+                 "geoid is ABOVE the ellipsoid; ellipsoidal h = orthometric "
+                 "H + N, so expected_height_m = nav_alt_median_m + geoid_n_m",
+    "vertical_vs_cameras_m": "asset height minus expected height "
+                             "(height_ellipsoidal_m - expected_height_m). "
+                             "Negative = the model is BELOW its cameras; an "
+                             "asset placed without the geoid reads about N "
+                             "more negative than a correct one",
+    "cameras_above_floor_m / cameras_above_top_m": "footprint nav median + "
+                                                   "N, minus the box's floor "
+                                                   "/ top height. Positive = "
+                                                   "the cameras are above it",
+    "root_centre_above_tight_centre_m": "positive = the root box centre is "
+                                        "higher than the tight box centre",
+    "extents": "metres; *_extent_enu_m is East x North x Up, extent_m and "
+               "tight_extent_m follow the box's own axes",
+    "lon / lat": "degrees, WGS84, east and north positive",
 }
 
 _JWT = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
@@ -314,11 +360,20 @@ def fetch_tileset(session, tok: str, asset_id: int) -> dict:
                              "tileset for it" % str(kind)[:40])
         raise Unreadable("the endpoint carries no tileset url and access "
                          "token")
-    r = session.get(ep["url"],
-                    headers={"Authorization": "Bearer " + ep["accessToken"]},
-                    timeout=120)
-    r.raise_for_status()
-    return r.json()
+    # The endpoint's own access token is a secret too, and only this
+    # function ever holds it: a failure is scrubbed of BOTH tokens here,
+    # before it can travel anywhere. (ion's are JWT-shaped, which scrub()
+    # removes anyway; a token of another shape would have reached ``why``.)
+    try:
+        r = session.get(
+            ep["url"],
+            headers={"Authorization": "Bearer " + ep["accessToken"]},
+            timeout=120)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:                                   # noqa: BLE001
+        raise Unreadable(
+            explain(exc, (tok, str(ep["accessToken"])))) from None
 
 
 def asset_fields(item: dict) -> dict:
@@ -369,12 +424,22 @@ def tight_box(tileset: dict):
     return values, ""
 
 
+def _all_finite(values) -> bool:
+    """True when every number in a (possibly nested) list is finite."""
+    if isinstance(values, (list, tuple)):
+        return all(_all_finite(v) for v in values)
+    return math.isfinite(values)
+
+
 def decode_tileset(tileset: dict) -> dict:
     """Everything the audit takes from a tileset.json. No network, no PROJ.
 
     ``extent_m``, ``radius_m``, ``has_root_transform`` and ``centre_ecef``
     are the 2026-09-30 audit's own numbers, computed the same way. A body
     that is not a tileset raises; the caller records it as "unreadable".
+    So does one whose centre or extents come out non-finite (a NaN in the
+    transform, a box whose half-axes overflow): a row of NaN verdicts is
+    not an audit, and NaN / Infinity are not JSON.
     """
     if not isinstance(tileset, dict):
         raise Unreadable("the tileset body is a %s, not a JSON object"
@@ -389,8 +454,11 @@ def decode_tileset(tileset: dict) -> dict:
         hx, hy, hz = box[3:6], box[6:9], box[9:12]
         out["extent_m"] = [2 * math.sqrt(sum(c * c for c in v))
                            for v in (hx, hy, hz)]
-        out["radius_m"] = math.sqrt(
-            sum((a + b + c) ** 2 for a, b, c in zip(hx, hy, hz)))
+        try:
+            out["radius_m"] = math.sqrt(
+                sum((a + b + c) ** 2 for a, b, c in zip(hx, hy, hz)))
+        except OverflowError:               # ** raises where * returns inf
+            raise Unreadable(ROOT_BOX + " radius is not finite") from None
         out["root_box_centre_local_m"] = [float(c) for c in box[0:3]]
         out["root_box_half_axes_m"] = [[float(c) for c in v]
                                        for v in (hx, hy, hz)]
@@ -413,6 +481,15 @@ def decode_tileset(tileset: dict) -> dict:
         if tight is not None:
             out["tight_centre_ecef"] = tuple(
                 float(v) for v in carry(m, *tight[0:3]))
+    for key, what in (("transform", "root.transform"),
+                      ("extent_m", ROOT_BOX + " extents"),
+                      ("radius_m", ROOT_BOX + " radius"),
+                      ("root_box_centre_local_m", ROOT_BOX + " centre"),
+                      ("centre_ecef", "the root box centre in ECEF"),
+                      ("tight_extent_m", TIGHT_BOX + " extents"),
+                      ("tight_centre_ecef", "the tight box centre in ECEF")):
+        if out.get(key) is not None and not _all_finite(out[key]):
+            raise Unreadable("%s is not finite" % what)
     return out
 
 
@@ -434,6 +511,8 @@ def local_frame(m, to_geo) -> dict:
     if math.sqrt(sum(c * c for c in origin)) < 6.0e6 or min(scale) <= 0.0:
         return out
     lon, lat, _h = to_geo.transform(*origin)
+    if not (math.isfinite(lon) and math.isfinite(lat)):
+        return out
     enu = ecef_enu_rotation(lon, lat)
     worst = 0.0
     for col, length, row in zip(cols, scale, enu):
@@ -687,6 +766,9 @@ def audit_tileset(rec: dict, tileset: dict, navs: list, geoid_n, to_geo,
             rec["best_geometry"] = rec["verdict_geometry"]
     rec.update(local_frame(m, to_geo))
     lon, lat, h = to_geo.transform(*geo["centre_ecef"])
+    if not _all_finite([lon, lat, h]):
+        raise Unreadable("the root box centre does not convert to lon / lat "
+                         "/ height")
     rec.update(lon=lon, lat=lat, height_ellipsoidal_m=h)
     if "root_box_half_axes_m" in geo:
         rec.update(_floor_and_top(
@@ -696,6 +778,9 @@ def audit_tileset(rec: dict, tileset: dict, navs: list, geoid_n, to_geo,
 
     if has_tight:
         tlon, tlat, th = to_geo.transform(*geo["tight_centre_ecef"])
+        if not _all_finite([tlon, tlat, th]):
+            raise Unreadable("the tight box centre does not convert to lon "
+                             "/ lat / height")
         rec.update(tight_lon=tlon, tight_lat=tlat,
                    tight_height_ellipsoidal_m=th,
                    root_centre_above_tight_centre_m=h - th)
@@ -874,6 +959,79 @@ def compare_reports(previous: dict, rows: list) -> dict:
     }
 
 
+def check_previous_report(previous, path: str) -> None:
+    """Refuse a ``--compare`` file :func:`compare_reports` could not read.
+
+    Called before the first request. The old check was "a dict with an
+    ``assets`` key"; ``{"assets": [1, 2]}`` passed it and then crashed the
+    comparison AFTER the whole audit and BEFORE the report was written.
+    """
+    if not isinstance(previous, dict) or "assets" not in previous:
+        raise SystemExit("%s is not an audit report" % path)
+    rows = previous["assets"]
+    if not isinstance(rows, list):
+        raise SystemExit('%s is not an audit report: "assets" is a %s, not '
+                         'a list' % (path, type(rows).__name__))
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise SystemExit("%s is not an audit report: assets[%d] is a "
+                             "%s, not an object"
+                             % (path, index, type(row).__name__))
+        if isinstance(row.get("asset_id"), (list, dict)):
+            raise SystemExit("%s is not an audit report: assets[%d] has a "
+                             "%s for its asset_id" % (
+                                 path, index,
+                                 type(row["asset_id"]).__name__))
+
+
+def check_out_path(path: str) -> None:
+    """Refuse an ``--out`` that cannot be written, before the first request
+    rather than after the last."""
+    folder = os.path.dirname(os.path.abspath(path))
+    if not os.path.isdir(folder):
+        raise SystemExit("--out: the folder %s does not exist" % folder)
+    if os.path.isdir(path):
+        raise SystemExit("--out: %s is a folder, not a file" % path)
+
+
+def _nulled(value):
+    """(value with every non-finite float replaced by None, how many)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None, 1
+    if isinstance(value, dict):
+        out, total = {}, 0
+        for key, item in value.items():
+            out[key], count = _nulled(item)
+            total += count
+        return out, total
+    if isinstance(value, (list, tuple)):
+        pairs = [_nulled(item) for item in value]
+        return [item for item, _count in pairs], sum(c for _i, c in pairs)
+    return value, 0
+
+
+def write_report(report: dict, path: str) -> int:
+    """Write the report as STRICT JSON; returns how many values were nulled.
+
+    ``json`` writes NaN and Infinity as bare tokens that no strict parser
+    accepts. Nothing non-finite should reach here - a non-finite centre or
+    extent is an "unreadable" row - so the report is encoded with
+    ``allow_nan=False``; if something slips through anyway the audit is not
+    thrown away for it: the value is written as null and counted in
+    ``non_finite_values_nulled``.
+    """
+    nulled = 0
+    try:
+        text = json.dumps(report, indent=2, allow_nan=False)
+    except ValueError:
+        report, nulled = _nulled(report)
+        report["non_finite_values_nulled"] = nulled
+        text = json.dumps(report, indent=2, allow_nan=False)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return nulled
+
+
 def _ascii(value) -> str:
     return str(value).encode("ascii", "replace").decode("ascii")
 
@@ -953,13 +1111,15 @@ def main() -> int:
                          "changed since it")
     args = ap.parse_args()
 
-    # Everything local is read before the first request.
+    # Everything local is read AND checked before the first request: a bad
+    # --compare file or an --out folder that is not there must cost nothing.
     previous = None
     if args.compare:
         with open(args.compare, encoding="utf-8") as fh:
             previous = json.load(fh)
-        if not isinstance(previous, dict) or "assets" not in previous:
-            raise SystemExit("%s is not an audit report" % args.compare)
+        check_previous_report(previous, args.compare)
+    if args.out:
+        check_out_path(args.out)
 
     import requests
     from pyproj import Transformer
@@ -1009,10 +1169,16 @@ def main() -> int:
                        ("bracket  ", "bracket_counts")):
         print(label + "  " + "   ".join(
             "%s: %d" % kv for kv in sorted(counts[key].items(), key=str)))
-    changes = compare_reports(previous, rows) if previous is not None else None
-    if changes is not None:
-        changes["against"] = os.path.basename(args.compare)
-        print_changes(changes)
+    # The comparison is a footnote to the audit and must never cost it: it
+    # is computed under a guard, the report is WRITTEN, and only then is the
+    # listing printed.
+    changes, changes_error = None, None
+    if previous is not None:
+        try:
+            changes = compare_reports(previous, rows)
+            changes["against"] = os.path.basename(args.compare)
+        except Exception as exc:                               # noqa: BLE001
+            changes_error = explain(exc, (tok,))
     if args.out:
         utc = datetime.datetime.now(datetime.timezone.utc)
         report = {
@@ -1025,14 +1191,27 @@ def main() -> int:
                 "above_top_m": args.above_top_m,
                 "flight_logs": [os.path.basename(p) for p in args.flight_log]},
             "fields": FIELDS,
+            "conventions": CONVENTIONS,
         }
         report.update(counts)
         if changes is not None:
             report["changes"] = changes
+        if changes_error is not None:
+            report["changes_error"] = changes_error
         report["assets"] = rows
-        with open(args.out, "w", encoding="utf-8") as fh:
-            json.dump(report, fh, indent=2)
+        nulled = write_report(report, args.out)
         print("report ->", args.out)
+        if nulled:
+            print("  %d non-finite value(s) written as null" % nulled)
+    if changes is not None:
+        try:
+            print_changes(changes)
+        except Exception as exc:                               # noqa: BLE001
+            print("\nthe comparison could not be printed (%s)"
+                  % explain(exc, (tok,)))
+    elif changes_error is not None:
+        print("\nthe comparison with %s failed (%s)"
+              % (_ascii(os.path.basename(args.compare)), changes_error))
     return 0
 
 
