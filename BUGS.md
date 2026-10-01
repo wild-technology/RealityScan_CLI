@@ -1105,3 +1105,56 @@ chi-squared. Orientation priors, control points, or a robust/trimmed variant
 are all candidates. Until that is known, treat a large `-update` correction as
 a flag for inspection rather than a fix — which is what the B19 block in
 AlignZone.bat already says, and now has evidence behind it.
+
+## B21 — An unset RS_CACHE_DIR inherits the PREVIOUS run's cache directory, in another dive
+
+**Kind:** silent cross-tree write. **Severity:** high — it filled a 3.7 TB
+volume and aborted a 10-hour modelling run, and the evidence pointed at the
+wrong dive the whole time. **Status:** OPEN, worked around per-run.
+**Sites:** `RS_CLI/Scripts/startRealityScan.bat` lines 39-56 (the
+`RS_CACHE_DIR` opt-in), and every launcher that leaves it unset.
+
+`startRealityScan.bat` treats `RS_CACHE_DIR` as opt-in and documents the
+unset case as "keeps RealityScan's own default". That is true only on a
+machine where nobody has ever set one. When it IS set, the script issues
+
+    -set "appCacheLocation=Custom" -set "appCacheCustomLocation=%RS_CACHE_DIR%"
+
+and RealityScan PERSISTS both in its own application settings. From then on
+"RealityScan's own default" is the last custom path any run chose. A later
+run that leaves `RS_CACHE_DIR` unset does not get a neutral default — it
+silently writes its cache into whatever tree the previous run named.
+
+### Measured, 2026-09-24
+
+NA165/H2060's modelling launcher set no `RS_CACHE_DIR`. NA168/H2082's merge
+had set one to its own `merged_v1\cache`. The modelling run therefore wrote
+into **H2082's tree**:
+
+    NA168\H2082\proc\merged_v1\cache   631.6 GB total
+      older than 12 h                   80.3 GB   4,994 files  (H2082's merge)
+      last 12 h                        551.3 GB  34,674 files  (H2060 modelling)
+
+The newest file was stamped 10:13:07 — the minute the H2060 run aborted on
+its own 50 GB disk floor. H2060's `merged_v1` had grown to only 136.7 GB
+while the volume lost ~700 GB, and three emergency reclaims (117, 128 and
+180 GB) were all made in H2060's tree, which was never the consumer. The
+run did not need to abort.
+
+`RS_NO_SETTINGS_INHERITANCE=1` was set and is irrelevant here: it governs
+this pipeline's own `SettingsStore` (`module_base/settings_store.py`), not
+RealityScan's persisted application settings. Do not reach for it as the
+fix.
+
+### The fix
+
+Make the cache location explicit rather than inherited. Either
+
+- have `startRealityScan.bat` REFUSE to boot without `RS_CACHE_DIR`, or
+- default it to a path derived from the output tree, so a cache always
+  lands beside the work that creates it,
+
+and in both cases log the resolved location at boot so an operator can see
+which tree is about to absorb hundreds of GB. Until then every launcher
+must set `RS_CACHE_DIR` inside its own dive; a run that omits it is not
+using a default, it is using someone else's.
