@@ -147,3 +147,32 @@ def test_a_zero_candidate_summary_does_not_divide_by_zero():
     s = summarise_models([], [])
     assert s['candidate_cameras'] == 0
     summary_lines(s)      # must not raise
+
+
+# ------------------------------------------------- --continue_on_failure
+
+def test_continuing_past_a_failure_still_counts_it_as_failed():
+    """NA165/H2060 2026-09-23: zone_5_c3 killed the RealityScan instance
+    inside -calculateTexture and the run stopped at component 11 of 75,
+    leaving 87.7% of the dive's cameras unattempted. --continue_on_failure
+    skips the break - it must NOT quietly downgrade the failure."""
+    models = [
+        {'component': 'c0', 'cameras': 50, 'success': True},
+        {'component': 'c1', 'cameras': 89, 'success': False},
+        {'component': 'c2', 'cameras': 600, 'success': True},
+    ]
+    finals = [('z/c0', {'camera_count': 50}), ('z/c1', {'camera_count': 89}),
+              ('z/c2', {'camera_count': 600})]
+    s = summarise_models(models, finals, stop_reason=None)
+    assert s['failed'] == 1 and s['failed_cameras'] == 89
+    assert s['modelled'] == 2
+    # nothing was left unreached, so no stop is reported
+    assert s['stop_reason'] is None
+    assert 'not_reached' not in s['skipped']
+
+
+def test_failure_is_visible_in_the_summary_lines():
+    models = [{'component': 'c1', 'cameras': 89, 'success': False}]
+    finals = [('z/c1', {'camera_count': 89})]
+    lines = summary_lines(summarise_models(models, finals))
+    assert any('FAILED' in ln for ln in lines)

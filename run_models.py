@@ -286,6 +286,15 @@ def main() -> int:
     parser.add_argument('--force', action='store_true',
                         help='workspace mode: re-model components already '
                              'reported successful')
+    parser.add_argument('--continue_on_failure', '--continue-on-failure',
+                        dest='continue_on_failure', action='store_true',
+                        help='workspace mode: keep going after a component '
+                             'fails to model instead of stopping. The '
+                             'failure is still recorded and still counted '
+                             'as FAILED; use when one bad component is '
+                             'blocking the rest of the dive. Off by '
+                             'default: stopping preserves the evidence '
+                             'while the instance state is still fresh.')
     args = parser.parse_args()
 
     if not args.project and (args.component
@@ -437,6 +446,24 @@ def main() -> int:
         logger.info('model %s: success=%s in %.1f min', name, res.success,
                     entry['duration_min'])
         if not res.success:
+            if args.continue_on_failure:
+                # One component that reliably fails should not cost the
+                # other 39. NA165/H2060, 2026-09-23: zone_5_c3 (89 cams)
+                # kills the RealityScan instance inside -calculateTexture,
+                # so the NEXT command cannot be delegated - the visible
+                # error is a failed -renameSelectedModel, which is the
+                # symptom, not the cause. That stopped the run at
+                # component 11 of 75 and left 87.7% of the dive's cameras
+                # unattempted, including its largest component.
+                #
+                # The failure is still written to models_report.json and
+                # still counted as FAILED in the summary; only the break
+                # is skipped. The disk-floor break above is NOT affected -
+                # running a volume to zero is not a per-component fault
+                # and must still stop everything.
+                logger.error('model %s FAILED - continuing (recorded, and '
+                             'still counted as FAILED)', name)
+                continue
             logger.error('model %s FAILED - stopping so evidence survives',
                          name)
             stop_reason = 'stopped after %s failed to model' % name
