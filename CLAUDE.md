@@ -29,11 +29,18 @@ one line what you are about to do:
 
 Baseline before touching anything: `python -m pytest testing -q` with the
 interpreter that has every requirement (`CLAUDE.local.md` names it per box) —
-737 passed, 1 skipped (offline: geoid grid), ~22 s. An interpreter without
-`textual` skips `testing/test_wildscan.py` whole at import (21 tests) and
-reports 716 passed, 2 skipped — that is the same green tree, not a broken one
-(observed 2026-09-04 with the Microsoft Store `python`). Any other result on a
-clean checkout: stop and report — anything built on a broken tree is suspect.
+**868 passed, 1 skipped, ~30 s on the Microsoft Store `python`** — measured
+2026-09-30 after the stale-code cleanup (874 before it: the 3 calibration-sidecar
+tests and 3 run_on2026_run2 driver tests went with the deleted code; the
+EGM2008 grid is installed, so the offline-geoid skip no longer fires).
+That interpreter has no `textual`, so it skips `testing/test_wildscan.py` whole
+at import (21 tests). `C:\Users\produ\coyotethings\tools\.venv\Scripts\python.exe`
+HAS every requirement and runs the full suite: **889 passed, 0 skipped**
+(measured 2026-09-30). (The line previously read 737/716 from
+2026-09-04 and had drifted ~100 tests behind the suite — a stale count is how
+a broken tree gets inherited, so move this in the same change that moves the
+suite.) Any other result on a clean checkout: stop and report — anything built
+on a broken tree is suspect.
 
 ## Ending a session
 

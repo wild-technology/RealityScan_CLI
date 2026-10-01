@@ -5735,3 +5735,472 @@ the absolute nav precision such a rule would need.
   determined by this run. The zone_1/3/4 re-aligns now running use identical
   settings on zones with known first-pass rates, which is the comparison that
   will separate them. [NA165] (2026-09-08) OPEN
+
+## [NA165] 2026-09-28 - H2060 v2 (operator-curated Merged_v2.rsproj): registration census
+
+- **ExportRegistrations.bat works as a read-only census: ~8 s per component,
+  ~22-32 s project load, no -save.** 67 v2 + 75 v1 components exported in
+  8.6 + 9.3 min headless; every CSV opened with `#cameras N` and held N rows
+  (census in `modules/export_registrations.py`). Found by running it on both
+  H2060 assemblies. [NA165] (2026-09-28) ESTABLISHED
+
+- **The v2 components are NOT georeferenced in any frame an export would
+  use, contrary to the hand-over note ("georeferenced and ready").** With
+  `-setProjectCoordinateSystem`/`-setOutputCoordinateSystem epsg:32702`
+  pinned in memory, `-exportRegistration` `$(x),$(y),$(z)` (documented as
+  OUTPUT-CRS coordinates) came back as small local values (+-10s of units)
+  for all 67. Umeyama fits of those positions to the 2L nav give a DIFFERENT
+  rotation per component (1-179 deg; median ~11) with each translation equal
+  to that component's own nav centroid - one local frame per component, not
+  a shared grid-anchored frame. v1's 75 merged components show the same
+  (median fitted rotation 19.6 deg), so the v1 merge's -update did not leave
+  them georeferenced either. Measured with `_agent/registration_census.py`.
+  Consequence: an OBJ exported from either project carries no usable
+  placement; publish_cesium's rsInfo path has nothing to read.
+  [NA165] (2026-09-28) ESTABLISHED for the export frame; whether RealityScan
+  internally holds a georef it does not apply to `$(x)` is OPEN until the
+  pilot OBJ export is inspected.
+
+- **v2 scale is B19 luck again, but now MEASURABLE for every component.**
+  Quantile-ratio (solved/nav) in 0.90-1.10 for 38 of 67 components, 10,533 of
+  15,480 cameras (68%). The registration CSV carries real image names, so the
+  stem-paired oracle and a direct similarity fit also run; all three agree
+  wherever the geometry supports them. A moving-block bootstrap (25-camera
+  blocks, 300 draws) of the similarity scale separates components whose scale
+  is PINNED (CI width <= 0.10: 28 of 67, all >= 138 cams) from coin flips
+  (many < 100 cams, CI width up to 8.6, rotation spread up to 174 deg).
+  Several are confidently OUT of band and therefore correctable, e.g.
+  Component 1 (1,258 cams) 0.839 [0.806-0.868], Component 0 1.335
+  [1.297-1.382], Component 13 0.835 [0.818-0.850]. v1's cluster_0_a35_c0
+  (7,928 rows), refused in v1 as "unmeasured", measures 0.905 this way.
+  [NA165] (2026-09-28) ESTABLISHED
+
+- **v2 vs v1 by camera membership (Jaccard on image-name sets):** every v2
+  component overlaps a v1 one; 19 match a MODELLED v1 component at J >= 0.5
+  (seven at J = 1.00, e.g. Component 17 = zone_8_c4), 8 overlap a modelled
+  one partially, 40 map only onto components v1 refused. The operator split
+  v1's cluster_0_a35_c0 into 16 v2 components (each J 0.01-0.12, fully
+  contained). `_agent/compare/registration_census.{json,md}`.
+  [NA165] (2026-09-28) ESTABLISHED
+
+- **CORRECTION to the entry above: the v2 components ARE placed by
+  RealityScan on export - only `-exportRegistration`'s `$(x)` is local.**
+  Component 10's OBJ (ModelExportParamsOBJ_NiraParts, type 3) came out in
+  ECEF with an identity transformToModel, while its dense PLY (type 0) and
+  its registration CSV share the component's internal frame. `$(x)` stays in
+  that internal frame even with the STOCK `requiresGeoref="1"` format
+  {720A2EC9-...} (identical values; tried 2026-09-28), so no registration
+  export can show RealityScan's placement - it is measurable only from a
+  model export. Measured by ICP (similarity) of the local PLY onto the ECEF
+  OBJ (`_agent/pilot_frame_check.py`): residual 1.8 cm median; RS placement
+  vs the camera-to-nav Umeyama fit: scale ratio 0.978, rotation 3.4 deg,
+  camera offset 0.11 m horizontal / -0.035 m vertical, surfaces 8 cm apart.
+  Whether RS's placement CORRECTS an out-of-band solve scale is not yet known
+  (Component 10 is in band); measure it on the first out-of-band export
+  (Component 13 / 0 / 1). [NA165] (2026-09-28) ESTABLISHED for C10; OPEN for
+  out-of-band components
+
+- **MvsExportMove is ADDED - re-measured, and a dive-wide anchor removes the
+  float32 trap for every component with one preset.** Dense PLY exported
+  geocentric (type 3) with MvsExportMove = -(-6070869, -1174903, -1555610)
+  wrote vertices within 30 m of zero (float32 step 2 um); adding the anchor
+  back in float64 and projecting to UTM 2S put the LAS on the OBJ surface at
+  1.3 mm median / 2.6 mm p90 (15.3 M points). No per-component params file
+  is needed: the site spans ~0.5 km, so one anchor keeps every component
+  under ~1 km (float32 step ~60 um). Preset in `_agent/`, passed through the
+  new `RS_PLY_PARAMS` override of ExportDeliverables.bat.
+  [NA165] (2026-09-28) ESTABLISHED
+
+- **OPEN - vertical datum of geocentric exports.** RealityScan's ECEF
+  heights for H2060 equal the flight log's Alt, i.e. -depth below the sea
+  surface (pilot: mesh -649..-645 m, cameras within 3.5 cm of the nav Alt).
+  publish_cesium's geocentric branch sends that as an ELLIPSOIDAL height with
+  no geoid ("ECEF is already an absolute 3D position"), whereas its projected
+  branch applies h = H + N. If RealityScan simply stored -depth in the
+  ellipsoidal slot, geocentric assets sit N metres off (EGM2008 N at
+  -169.05, -14.21 not yet computed: the grid is not cached and fetching it
+  was not authorised this session). validate_cesium_assets.py cannot see
+  this: it compares the tileset with the uploaded OBJ's own ECEF using a
+  model-radius tolerance, so H2063's "verified vertical" means "not at the
+  surface", not "geoid-correct". [NA165] (2026-09-28) OPEN - owner decision
+  before any H2060 upload; may also apply to H2063 and H2077
+
+- **RealityScan's export placement RESCALES out-of-band solves - but can
+  mis-TILT them.** Component 55 (solve scale 1.133, bootstrap CI
+  1.114-1.160) exported with a placement scale of 0.877 against 0.887 from
+  the camera-to-nav Umeyama fit (1.1% apart; the solve gauge would be 1.0),
+  so the operator's georeferencing is a similarity fit and "georeferenced"
+  was correct. Heading agrees (0.9 deg) but the placement is TILTED 16.7 deg
+  relative to the nav fit, and the camera DEPTHS (the precise channel)
+  arbitrate: RS placement reproduces them with 0.464 m std / 0.71 m median
+  horizontal, the nav fit with 0.085 m / 0.16 m. Component 10: 2.4 deg tilt,
+  0.087 vs 0.075 m - equivalent. Method: `_agent/pilot_frame_check.py`
+  (ICP of a local-frame dense PLY onto the ECEF OBJ, residual 6.9 cm on C55)
+  plus depth residuals. Two components only; being extended automatically
+  to a spread of components. Placement policy is an OWNER decision.
+  [NA165] (2026-09-28) ESTABLISHED for C10/C55; OPEN as a policy
+
+- **CORRECTION (same day) to the C55 entry above - the frame check itself
+  was fragile, and "pinned" needs track geometry, not just a CI.**
+  (1) The ICP matched raw-PLY -> cleaned-OBJ with a free scale; when the OBJ
+  is a SUBSET of the raw cloud (largest connected component only) that
+  shrinks the cloud onto the patch - Component 0 read a spurious 0.50.
+  Matching OBJ -> PLY fixes it (every OBJ point has a raw counterpart).
+  Corrected: C10 RS scale 1.001 (ICP 2.3 cm); C0 0.997 (0.8 cm); C55 0.902
+  vs nav 0.887 (8.8 cm), tilt still 17.3 deg, depth std 0.51 vs 0.085 m.
+  So RS RESCALED C55 but kept the solve gauge on C10 and C0 - no single
+  rule yet. (2) Camera-track geometry decides what positions can pin at all:
+  of 67 components 16 are AREA tracks (7,480 cams), 33 LINES (2nd principal
+  std < 1 m; 6,090 cams) whose roll about the track no position fit can
+  fix, and 18 HOVERS (< 1 m; 1,910 cams) where neither scale nor rotation
+  is recoverable from positions - C0 (181 cams in 0.8 m) had passed the CI
+  test at width 0.085. The depth arbiter only covers along-track pitch on a
+  line. Cross-track roll needs the ORIENTATION priors; not attempted.
+  `_agent/compare/PLACEMENT_EVIDENCE.md` accumulates the evidence.
+  [NA165] (2026-09-28) ESTABLISHED (method); OPEN (policy)
+
+- **Emerging pattern (6 frame checks): RealityScan's placement agrees with
+  the nav fit where the SOLVE was already metric, and departs where it was
+  not.** In-band solves C10 (0.997), C53 (0.986), C4 (1.007): RS/nav scale
+  0.98-1.01, tilt 2.4-3.2 deg, depth residuals within noise of each other.
+  Out-of-band solves C55 (1.133, line) and C13 (0.822, area): RS rescales
+  only PARTLY (C13: RS 1.128 vs nav 1.198) and tilts 17.3 / 35.5 deg away
+  from the depth-consistent fit (camera depth std RS 0.51 / 0.87 m vs nav
+  0.085 / 0.19 m). C13's RS mesh sits 1.17 m median from the nav-fit
+  geometry BEFORE any ICP, so the departure is not an ICP artefact; its
+  exact angle is indicative (ICP residual 13.6 cm). C0 (hover) is
+  uninformative. Remaining queued checks (C48, C1 off-scale; C6, C39 in
+  band) test the pattern. `_agent/compare/PLACEMENT_EVIDENCE.md`.
+  [NA165] (2026-09-29) OPEN
+
+- **New result code: `-calculateHighModel` -> 2236612609 (0x85500001) in 0 s
+  on a degenerate component.** NA165/H2060 v2 Component 42 (55 cameras,
+  quantile scale 2.07, similarity fit rotating 85 deg - an ill-posed solve)
+  failed step [1/8] instantly with this code, not the incidental
+  2147942487. The errors file is cleared by the next boot, so the reason
+  survived only in `models_driver.log` - the driver's error capture is the
+  evidence of record. Reproduced on a retry (same code, 1 min). Cause
+  NOT established: C42 is a hover (track std 9 cm) and I first put it down to
+  missing baseline, but Component 64 - an even stiller hover (4 cm) - then
+  modelled fine (14 min), so track geometry alone does not explain it.
+  [NA165] (2026-09-29) OPEN - retracting the baseline explanation
+
+- **Mode A (op 20562, 0x82000019) recurs on NA165/H2060 v2 and is again
+  transient.** Component 29 (92 cams) failed `-calculateHighModel` after
+  298 s with 2181038105, then modelled cleanly on the next attempt (24 min,
+  2026-09-29 17:51). Fifth instance of the mode across two dives, second
+  confirmed recovery on retry. The v2 queue now runs one automatic retry
+  pass over failures before its largest component
+  (`_agent/model_queue_v2.py`). Contrast Component 42's 0x85500001, which
+  reproduced on three attempts. [NA165] (2026-09-29) ESTABLISHED
+
+## [DATUM] 2026-09-30 - geocentric exports needed the geoid; live assets sit N too deep
+
+- **RESOLVED (code): the geocentric publish path now applies h = H + N.**
+  RealityScan's ECEF heights are the flight log's Alt (-depth below the sea
+  surface) stored in the ellipsoidal slot (measured on H2060 C10,
+  2026-09-28), so `cesium_placement.plan_placement` treats them like the
+  projected path: N from EGM2008 is added to the anchor height; the local
+  ENU mesh is unchanged. EGM2008 grid `us_nga_egm08_25.tif` (80.6 MB)
+  installed 2026-09-30 - on this box the Microsoft Store Python redirects it
+  to `%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.13_*\
+  LocalCache\Local\proj`; transforms run offline with allow_ballpark=False.
+  N at each dive's nav centroid: H2060 +25.22, H2063 +25.19, H2077 +65.85,
+  H2080 +72.67, H2082 +71.03 m. Pilot dry run: -647.36 -> -622.14 m (+25.23).
+  [DATUM] (2026-09-30) ESTABLISHED
+
+- **Read-only audit of every ion asset against the dives' nav
+  (`validate_cesium_assets.py`, rewritten: nav-referenced, datum-aware):
+  the live NA165/H2060 (37), NA165/H2063 v3 (24 tilesets; c22 also sits 32 m off its track) and NA168/H2077 assets all
+  sit about N too deep.** Model bottom vs its own cameras ("apparent
+  stand-off"): H2060 median 29 m (4 m if N is added), H2063 34 m (8.7 m),
+  H2077 84 m (18 m) - only the corrected figures are physical for a lit ROV
+  camera. H2077 5925194: centre -1049.3 m ellipsoidal with cameras at
+  -1046.9 m. The earlier "verified horizontal + vertical" checks compared ion
+  with the uploaded OBJ's own (equally wrong) heights and could not see it.
+  No H2080 asset (5171556) exists on the account any more. Re-placing the
+  live assets is an owner decision (re-upload with the fixed publisher).
+  Report: `Desktop\_reorg_log_2026-09-30\ion_datum_audit_2026-09-30.json`.
+  [DATUM] (2026-09-30) ESTABLISHED
+
+## [NA165] 2026-09-30 - why RealityScan tilts some H2060 v2 components
+
+- **RealityScan's placement of the weak H2060 components is pulled by the
+  orientation priors, not by the nav positions.** Evidence
+  (`Desktop\NA165_H2060\proc\agent_workspace\compare\PLACEMENT_EVIDENCE.md`):
+  (1) where RS disagrees with a pure position fit it fits the DEPTH sensor
+  worse, not better - C13 tilt 35.5 deg, camera depth std 0.87 m vs 0.19 m
+  under the nav fit; C55 17.3 deg, 0.51 vs 0.085 m; C6 5.6 deg, 0.26 vs
+  0.07 m - so positions are not what drives it; (2) the project has no
+  control points (`controlpoints0.dat` is 20 bytes), so the only other
+  georeferencing input is the per-camera orientation prior; (3) the tilted
+  components are also bent: RS's export differs from the component's own
+  solve non-rigidly (ICP residual 0.136 m C13, 0.088 m C55, vs 0.004 m on
+  C39), i.e. a prior-weighted adjustment reshaped them, and both are weak
+  solves (internal scale 0.82 / 1.13 of metric).
+  [NA165] (2026-09-30) ESTABLISHED (mechanism), OPEN (fix not yet tested)
+
+- **Why the orientation priors win: they are scored as independent per
+  camera but their errors are shared.** Each frame contributes its own
+  yaw/pitch/roll prior, so n cameras tighten the component's rotation like
+  sigma/sqrt(n). Cross-track tilt is otherwise fixed only by depth across
+  the track width: alt sigma / (cross-track std * sqrt(n)). H2060's log
+  carries alt 1 m, roll 15 deg, yaw 15 deg, pitch 30 deg, which makes the
+  orientation priors 2-22x tighter than the depth constraint on cross-track
+  tilt in EVERY checked component (C13 3.2x: 0.8 deg vs 2.6 deg) and 3.5-87x
+  on heading; positions win only along-track tilt (0.2-0.5x). But the
+  orientation errors do not average out: the zeuss mount is ASSUMED
+  (`cameras.json`: "zeuss stays 30 - its mount is assumed, not measured";
+  the log's pitch is a near-constant 58.2 deg), and compass/attitude bias is
+  common to the whole dive. A shared bias of a few degrees therefore lands
+  almost whole in the model. Wide, well-conditioned components (C39, 812
+  cams, internal scale 1.005) have enough photogrammetric rigidity to resist;
+  narrow weak ones do not.
+  [NA165] (2026-09-30) PLAUSIBLE - consistent with every measured component;
+  the per-component bias itself is not directly observable (exported CSV
+  angles are in each component's local frame, yaw offsets 57-103 deg)
+
+- **Implications.** (a) The current defaults go the WRONG way for this:
+  PRIOR_ACCURACY_DEFAULTS yaw/roll 5 deg (owner directive 2026-09-08) are 3x
+  tighter than the 15 deg H2060 ran with, while alt stays 1 m though the
+  pressure sensor is good to centimetres relative. Owner decision, not
+  changed. (b) Test before changing anything: re-georeference C13 and C55
+  with alt accuracy 0.1 m and orientation priors loosened (>= 45 deg) or
+  off, then rerun `pilot_frame_check.py`; success = tilt vs nav fit < 3 deg
+  and depth std near the nav fit's. (c) Until then, for narrow/weak
+  components the nav fit (cameras -> nav, Umeyama) is the better placement;
+  the frame check flags which ones (tilt > 5 deg or depth std > 2x nav).
+  (d) Measuring the zeuss mount (e.g. from C39, where RS and nav agree, once
+  the export angle convention is calibrated) would remove the assumed term.
+  [NA165] (2026-09-30) OPEN
+
+- **The H2063 ion leftovers are gone; their one-shot deleter was removed.**
+  `delete_h2063_leftovers.py` (untracked; owner-authorised 2026-09-23)
+  targeted 5853942 (3DTILES with no root.transform), 5853775 (DATA_ERROR)
+  and the probe/source collections 5853739, 5853746, 5853752, 5853754,
+  5853774, 5853941, 5853970. None of the nine is on the account in the
+  2026-09-30 audit, so it was applied; the script was deleted in the
+  stale-code cleanup the same day (with archive/, the ON2026 drivers,
+  the probe .bats and calibration_sidecars.py - all in git history).
+  [NA165] (2026-09-30) ESTABLISHED
+
+## [NA165] 2026-10-01 - the placement test: no prior-accuracy setting makes -update match the nav
+
+The test the 2026-09-30 entry asked for (implication (b)). Harness and
+results: `Desktop\NA165_H2060\proc\agent_workspace\prior_test\`
+(`run_prior_test.py`, `PriorPlacementTest.bat`, `measure_prior_test.py`,
+`PRIOR_TEST_RESULTS.md/json`). Six arms, each on its own scratch copy of the
+pre-modelling Merged_v2 backup, nothing saved; components 13, 55, 6 (tilted)
+and 39, 10 (controls). Per component the SAME preview mesh is exported in
+the local frame and in ECEF, so RealityScan's local->world transform comes
+from direct vertex correspondence, not ICP. tilt = RealityScan's placement
+against the Umeyama fit of the component's cameras to the 2L nav; depth std
+= std of camera depth residuals under that placement (nav fit: C13 0.19 m,
+C55 0.085, C6 0.072, C39 0.058, C10 0.075).
+
+    arm (alt acc / ori acc)        C13 tilt  depth   C55 tilt  depth   C6 tilt  depth   C39 tilt  C10 tilt
+    base (as the project stands)     37.4    0.59     17.0     0.53     5.5     0.26     0.2       2.0
+    -update, priors as imported      72.0    1.10     16.2     0.25     7.1     0.27     1.3       6.1
+    -update, 1 m / 180 deg           80.4    1.03     21.5     0.28     7.6     0.28     1.2       8.0
+    -update, 0.1 m / 45 deg          13.6    0.53     33.4     0.36     3.5     0.61     2.2       2.3
+    -update, 0.1 m / 180 deg         13.7    0.53     34.5     0.36     3.5     0.61     2.2       2.3
+
+- **The success criterion (tilt < 3 deg, depth std near the nav fit's) is met
+  by NO arm on C13 or C55.** Every -update arm also moved the two controls
+  AWAY from the nav fit (C39 0.2 -> 1.2-2.2 deg, C10 2.0 -> 2.3-8.0 deg).
+  [NA165] (2026-10-01) ESTABLISHED for these five components
+
+- **Loosening the orientation priors does not reduce the tilt -update
+  produces; it slightly increases it** (15/30/15 deg -> 180 deg at alt 1 m:
+  C13 72 -> 80, C55 16 -> 21, C10 6 -> 8). The accuracy column is consumed
+  (the results change), and the direction says the orientation priors
+  RESTRAIN the tilt a little rather than cause it. With alt at 0.1 m,
+  45 deg and 180 deg give the same answer to 1 deg. This does NOT support
+  the 2026-09-30 "orientation priors win" mechanism as an explanation of
+  what -update does. It does not test the align-time solve, which is where
+  the `base` placement comes from (next bullet); that part stays PLAUSIBLE
+  and untested. [NA165] (2026-10-01) ESTABLISHED (for -update)
+
+- **What -update does do: scale and horizontal position.** `base` places
+  every component at scale 1.000 (rigid; rs_scale 1.0002-1.0003 on all
+  five), i.e. at the solve gauge - C13 is exported at 0.835x and C55 at
+  1.128x true size (B19, unchanged in the operator's Merged_v2). After
+  -update the scale is within 0.98-1.04 of the nav fit on all five and the
+  camera horizontal residual drops (C55 1.12 -> 0.30 m; C13 1.45 -> 0.29 m
+  with alt 0.1 m). So -update is a real similarity fit in scale and
+  translation and an unreliable one in rotation.
+  [NA165] (2026-10-01) ESTABLISHED
+
+- **The alt accuracy matters a lot, and not monotonically.** 1 m -> 0.1 m
+  took C13 from 72 to 14 deg but C55 from 16 to 34 deg, and DOUBLED C6's
+  camera depth residual (0.27 -> 0.61 m) - a tighter depth constraint gave a
+  worse depth fit. Whatever -update minimises, it is still not the weighted
+  position residual (B19 addendum OPEN item - still open).
+  [NA165] (2026-10-01) ESTABLISHED
+
+- **Controls on the harness.** Re-importing the unmodified log then -update
+  equals -update alone on every reported digit (the project already holds
+  those priors; -update is deterministic). `base` reproduces the live
+  project's full-model frame checks: C55 17.0 vs 17.3 deg, C6 5.5 vs 5.6,
+  C39 0.22 vs 0.22, C13 37.4 vs 35.5.
+  [NA165] (2026-10-01) ESTABLISHED
+
+- **CORRECTION to 2026-09-30 (3) "the tilted components are also bent":
+  RealityScan's export transform is an exact similarity.** The same mesh in
+  the two frames agrees to 0.1-0.5 mm rms on every component in every arm,
+  C13 included. The 0.136 m ICP residual compared two DIFFERENT surfaces
+  (raw dense cloud vs cleaned, simplified mesh), so it measured their
+  difference, not a non-rigid placement. Likewise the "RS scale 1.128" that
+  ICP reported for C13 was the fit absorbing that difference: the placement
+  scale is 1.000. [NA165] (2026-10-01) SUPERSEDES that sentence
+
+- **Caveat on the reference.** The nav fit minimises the position residual by
+  construction, so it wins the depth-std comparison against anything; and on
+  these tracks it is itself weak in rotation ABOUT the track: the nav
+  positions span 8.0 x 1.2 m (C13) and 5.8 x 0.6 m (C55) with fit rms 0.54 /
+  0.21 m of correlated USBL error. What it does establish is the lower
+  bound: RealityScan's placements leave 0.25-1.1 m of camera depth error on
+  a sensor good to centimetres, so they are wrong along the track, not just
+  different. [NA165] (2026-10-01) ESTABLISHED
+
+- **Consequence.** For H2060 there is no accuracy setting that makes
+  RealityScan's own georeference trustworthy on narrow components; placing
+  the export by the camera-to-nav similarity (`georef_v2.py`, which also
+  corrects the scale) remains the better option, with the track-axis roll
+  as its known weak direction. Nothing here argues for changing
+  PRIOR_ACCURACY_DEFAULTS in either direction: orientation accuracy barely
+  moves -update, and alt accuracy moves it unpredictably. Owner decision.
+  A trap for anyone repeating this: the .rsproj names its images relative
+  to its own folder, so a scratch copy must sit at the same depth
+  (two levels below `proc`) or -load hangs headless on a suppressed
+  "locate it manually?" box. [NA165] (2026-10-01) OPEN (decision)
+
+## [NA165] 2026-10-01 - decision prep: the solve frame IS the placement; 111 ion tilesets; verify is blind to the Desktop layout
+
+Read-only pass over the handoff's open decisions: six tracks, the four an
+irreversible decision hangs on each re-checked by an independent skeptic.
+No RealityScan run, no ion write, nothing deleted or committed. Reports,
+tables and scripts: `C:\Users\produ\coyotethings\NA168\decision_prep_2026-10-01\`
+(`reports\prep_*.md`, `verify_*.md`). Where the skeptic overturned the first
+report, the skeptic's reading is what is recorded here.
+
+- **RealityScan's "placement" is the component's own solve frame.** The local
+  frame of each component is an East-North-Up tangent frame at an origin
+  stored in the project: three little-endian doubles (ECEF X, Y, Z) at byte
+  offset 40 of `<project data dir>\sfm<k>.dat`, k = the component's position
+  in the project's component list. Export type 3 is the exact ENU -> ECEF
+  change of frame at that origin (predicts the exported mesh to 3e-9 m,
+  scale 1.0000000000000, on C13 / C39 / C55; all 67 H2060 v2 origins lie in
+  the nav envelope and each matches exactly one component). The tilt is in
+  the solve, not added at export. SUPERSEDES the detail in the entry above
+  ("exact similarity ... 0.1-0.5 mm", "rs_scale 1.0002-1.0003"): those are
+  the UTM grid convergence (-0.48 deg) and point scale at 210 km from the
+  central meridian. The layout is reverse-engineered, not documented - guard
+  any use (RealityScan-placed cameras lie 0.05-3.4 m from nav on all 67).
+  [NA165] (2026-10-01) ESTABLISHED
+
+- **Consequence: an existing ECEF export can be re-placed by arithmetic** -
+  x_local = B^T (x_ecef - o), then any similarity - with no re-export and no
+  RealityScan run (end to end to ~2 cm on C10 and C6, the two exported
+  components that also have a local-frame preview mesh). The LAS files are
+  UTM (EPSG:32702), so they regenerate from the anchor-shifted dense PLYs,
+  not by the same formula. `georef_v2.py` transforms OBJ and PLY -> LAS only
+  from LOCAL-frame input and refuses the ECEF exports (frame check, C30);
+  `ExportDeliverables.bat` has no local-OBJ switch.
+  [NA165] (2026-10-01) ESTABLISHED
+
+- **The cameras-to-nav similarity is a good placement on a minority of
+  components.** Block-bootstrap p90 of the fit's own tilt, 64 modelled v2
+  components: <= 3 deg on about 11, 3-10 deg on 14-16, > 10 deg on 20-22,
+  and 17 hovers (first nav principal axis < 1 m std) where it can scale a
+  model 0.07x-8.9x or turn it over (C78 176 deg). The class boundaries move
+  by 2-3 components with seed and block length. Nav SCALE is tight (< 5 %)
+  on about 15 and uncertain by > 20 % (5-95 %) on 11 non-hovers. Table:
+  `placement\placement_table.md`. SUPERSEDES "place every export by the
+  camera-to-nav similarity" in the Consequence bullet above: right for the
+  well/weak tier only. [NA165] (2026-10-01) ESTABLISHED (approximate tiers)
+
+- **An independent arbiter for 30 components: zone-align XMP rotations
+  against the vehicle pitch/roll in the flight log.** On the 8 well/weak
+  components it covers, the nav fit leaves the cameras a median ~6 deg from
+  the measured attitude and RealityScan's placement 10-18 deg (up to 46).
+  On indeterminate and hover components both are off by medians of 18-34
+  deg. The log's Pitch is MEASURED (56.78-63.01 deg, std 0.65; Roll -3.5 to
+  +4.8), only the 30 deg mount is assumed - SUPERSEDES "the log's pitch is a
+  constant 58.2 deg" in the 2026-09-30 tilt entry. RealityScan's zone-align
+  placement (align + -update under 15/30/15 deg priors) already violated
+  those priors by 17-49 deg on C13, C17, C43, C47, so the placement does not
+  follow the orientation priors at align time either; the open align-time
+  test is expected to fail. The 2026-09-30 figures C13 35.5 deg / 0.87 m and
+  C55 17.3 deg / 0.51 m were ICP artefacts (exact: 37.4 / 0.588, 17.0 /
+  0.527). The registration CSV's yaw/pitch/roll could not be decoded (best
+  of 384 Euler conventions leaves 9.6 deg median).
+  [NA165] (2026-10-01) ESTABLISHED
+
+- **Registration rows are not cameras.** 20 v2 components hold the same image
+  twice at the same pose (C1 949 unique of 1,258 rows, C2 572 of 698, C10
+  150 of 259). Every camera count in the census, the charter and the model
+  queue's disk estimate (0.25 GB x rows + 15) is rows.
+  [NA165] (2026-10-01) ESTABLISHED
+
+- **[DATUM] The geoid fix holds on real data.** +N, once, on the anchor only;
+  staged ENU OBJs are sha256-identical with and without --no-geoid; the mesh
+  sits 2.5 m (H2060 C10) and 6.1 m (H2077) below its own cameras, against
+  27.7 / 71.9 m if the ECEF height were ellipsoidal; package OBJs and
+  sidecars are byte-identical to the exports (81 files), so nothing upstream
+  adds N. Mutation testing: the PROJECTED branch has no geoid test (sign
+  flip, omission and double application all pass both cesium test files);
+  -N inside geoid_separation and removal of allow_ballpark=False also
+  survive. publish_cesium.py: --dry-run makes no ion call and reads no
+  token but rmtree's the staging path and writes a full mesh copy first
+  (default <dir>\_cesium_local; --staging == --dir would delete the export);
+  grid missing + PROJ network on + CDN unreachable returns inf, not an
+  error; --flight-log is a no-op on geocentric exports; a sidecar's
+  settingsAnchor / settingsScale is ignored. H2082's log is zone 52N.
+  [DATUM] (2026-10-01) ESTABLISHED; the gaps are OPEN
+
+- **[CESIUM] The account holds 365 assets (267 on 30 Sep 22:05); 111
+  tilesets sit N too deep, not 62.** The 98 new assets (ids 5969323-5969642)
+  are 6 H2060 mesh and 43 H2060 `_L_dense` point-cloud tilesets with their
+  source collections. The H2060 assets are the "L run" (4 zones, 71
+  components, project under D:\CoyoteThings on another machine), created
+  after H2077's (ids above 5925194), not a 2 Sept upload; nothing on this PC
+  made them, so an uploader without the fix is still active. The audit's
+  `ok` and FAULT verdicts are artefacts of its method (centre of ion's
+  padded root cube vs the median of ALL nav within 30 m): zone_1_c40 sits
+  0.45 m under its own 52 cameras, H2063 c08 3.7 m under its own. ion's
+  root cube equals the uploaded mesh's largest extent on the options.position
+  path (H2077: 1e-8) but is NOT a bound on the --input-crs path (H2063 c10:
+  5.6 m cube, 24.8 m model radius), so it cannot decide whether the NAS
+  folder `proc_exports_png_superseded` is the uploaded H2060 geometry - use
+  root.metadata.properties.tightBoundingBox. Whether ion's location editor
+  can move a tiled asset is untested; the publish-cesium skill says no,
+  Cesium staff on the forum say yes (bottom centre of the bounding box).
+  [CESIUM] (2026-10-01) ESTABLISHED (counts, artefacts) / OPEN (editor, NAS)
+
+- **[HARNESS] `modules.verify` reports a false OK on every Desktop dive.**
+  `--workspace Desktop\NA165_H2060\proc` -> verdict ok, exit 0, 0 zones, 0
+  components: the 2026-09-30 reorganisation renamed the stage folders
+  (images_batched_by_zone, realityscan_align_zones, exports_models_v2) and
+  the census looks for the old names. With the names mapped in-process the
+  nav-provenance ladder passes on real data (H2060 9 zones / 34,877 rows /
+  0 differing). Two defects in the uncommitted nav-provenance change:
+  `workspace_census._locate` also feeds the wildscan planner (with one older
+  subfolder tree, Merge reads the nested tree while Batch+Align write flat);
+  `verify.py:305/321` fails open when the batched tree cannot be located.
+  The suite is not hermetic: test_wildscan_commands_runnable.py rewrites the
+  live rs_settings.json. [HARNESS] (2026-10-01) ESTABLISHED, not yet in BUGS.md
+
+- **Disk facts.** H2060 `_CULL_review\dated_project_copies` is NOT a byte
+  duplicate of Merged_v1: 155.69 of 162.79 GiB is, 6.16 GiB is 75
+  re-serialised sfm files, and it is the pre-retry state.
+  `images_preprocessed_unbatched` is (29,069 of 29,069 by SHA-256). The
+  H2063 ProRes original is on the NAS at the path it was copied from. The
+  queue's real launch gates are 229.5 GiB free (C2) and 369.5 (C1). The 19
+  exports average 4.85 GiB with LAS, not 3.6. Component 42 failed 5 of 5
+  (0x85500001) and has the sparsest solve in the project. The C: Recycle
+  Bin holds four LIVE directory links into Y:\Backups\QNAP\Cruise Data\NA165
+  - never clear it with PowerShell Remove-Item -Recurse. RealityScan touched
+  the previously persisted cache path at start-up on 30 Sep even with
+  RS_CACHE_DIR pinned (a 105 KB stub under the old _agent\model_cache_v2).
+  [NA165] (2026-10-01) ESTABLISHED
