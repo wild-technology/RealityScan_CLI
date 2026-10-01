@@ -29,15 +29,17 @@ one line what you are about to do:
 
 Baseline before touching anything: `python -m pytest testing -q` with the
 interpreters named below (`CLAUDE.local.md` names them per box) —
-**950 passed, 1 skipped, 30-45 s on the Microsoft Store `python`** — measured
+**1015 passed, 1 skipped, 30-45 s on the Microsoft Store `python`** — measured
 2026-10-01 (868 on 2026-09-30 after the stale-code cleanup; +82 on 2026-10-01:
 10 projected-branch and non-finite geoid tests in `test_cesium_placement.py`,
 3 in `test_cesium_geocentric.py`, 69 in the new
-`test_validate_cesium_assets.py`; the EGM2008 grid is installed, so the
-offline-geoid skip does not fire).
+`test_validate_cesium_assets.py`; +65 later the same day with BUGS.md B28:
+36 in the new `test_cesium_projected_enu.py`, 28 more in
+`test_validate_cesium_assets.py`, 1 in `test_cesium_placement.py`; the
+EGM2008 grid is installed, so the offline-geoid skip does not fire).
 That interpreter has no `textual`, so it skips `testing/test_wildscan.py` whole
 at import (21 tests). `C:\Users\produ\coyotethings\tools\.venv\Scripts\python.exe`
-has `textual` and runs the full suite: **971 passed, 0 skipped**
+has `textual` and runs the full suite: **1036 passed, 0 skipped**
 (measured 2026-10-01). Neither has every requirement: the venv lacks
 `requests` and `boto3`, so `publish_cesium.py` and `validate_cesium_assets.py`
 need the Store `python`, which lacks `textual` and `rich`. (The line
