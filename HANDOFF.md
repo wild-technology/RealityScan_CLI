@@ -53,22 +53,24 @@ session executed its Phase 0.
    Science, un-A/B'd by its own message. Preserved as tag
    `agent-native-execution-final`; review on its own.
 3. **D6 — the old checkout** `C:\Users\produ\coyotethings\tools\RealityScan_CLI`
-   sits on the now-deleted `remove-xmp-sidecars`; the five
+   sits on `remove-xmp-sidecars`; the five
    `coyotethings\tools\*.py` staging scripts hardcode that path. Roadmap
    Phase 2 moves them into `modules/staging/`.
 
 ### Branches
 
-Deleted on origin after this push: `remove-xmp-sidecars` (merged),
-`agent-native-execution` (cherry-picked; its head tagged). Left alone:
-`archive/on2026-model-to-final-pre-rebase`.
+`remove-xmp-sidecars` and `agent-native-execution` were deleted on origin
+after the 2026-09-03 push, but both are back (as of 2026-09-30) and each holds
+commits found on no other branch or tag. They are live — do not delete them as
+part of any cleanup. Left alone too: `archive/on2026-model-to-final-pre-rebase`.
 
 `cesium2unreal` no longer lives here. On 2026-09-30 its four commits moved,
 with their history, to
 [`wild-technology/UnrealToolset`](https://github.com/wild-technology/UnrealToolset),
 which is now the live copy. The head of
 `claude/cesium-ion-georeferenced-ue5-vvpoau` is tagged `cesium2unreal-final`,
-and the branch is superseded — delete it on origin. Upstream of it,
+and that branch is superseded: it, and `unrealtoolset-split` once merged,
+are the only branches safe to delete in this cleanup. Upstream of it,
 `publish_cesium.py` and `modules/cesium_placement.py` stay here: they put the
 meshes on ion, and UnrealToolset picks them up from there.
 

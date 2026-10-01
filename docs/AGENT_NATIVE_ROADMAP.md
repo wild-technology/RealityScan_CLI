@@ -74,7 +74,7 @@ files first would turn every later merge into a fight.
 | `main` | `c6123b4` 2026-09-03 | 57 commits since `c9eb222` (08-13) | NA165/H2060 delivered end to end (20/20 models, 91 GB exports); `docs/rs-reference/` manual (14 files); Cesium depth solved (`modules/cesium_placement.py`); 597 tests. |
 | `remove-xmp-sidecars` | `71d6030` 2026-09-03 13:05 | 16 commits since `c9eb222` | The line the old checkout under `tools\` is on. NO-XMP-SIDECARS hard rule (owner directive 2026-08-16); `modules/prior_groups.py`; non-destructive identity CSV; merge resume; NA168 H2080 + NA165 H2063 campaigns. 483 tests. |
 | `agent-native-execution` | `85c556a` 2026-09-01 | 2 commits since `2900c1f` (08-31); **19 behind main** | `.claude/` hooks, settings, 5 skills; `modules/run_charter.py`; `modules/verify.py`; `wildscan/plan.py`; `RS_NO_SETTINGS_INHERITANCE`; `docs/ARCHITECTURE.md`; CLAUDE.md 21.0 → 15.9 KB. 641 tests. |
-| `claude/cesium-ion-georeferenced-ue5-vvpoau` | 2026-08-31 | 4 commits | `cesium2unreal` — separate feature, leave alone. **Moved 2026-09-30** to `wild-technology/UnrealToolset` with its history; head tagged `cesium2unreal-final`. |
+| `claude/cesium-ion-georeferenced-ue5-vvpoau` | 2026-08-31 | 4 commits | `cesium2unreal` — separate feature, superseded. **Moved 2026-09-30** to `wild-technology/UnrealToolset` with its history; head tagged `cesium2unreal-final`. |
 
 `main` and `remove-xmp-sidecars` both touched `realityscan_interface.py`
 (323 lines each side), `AlignZone.bat`, `run_models.py`, `scale_oracle.py`,
