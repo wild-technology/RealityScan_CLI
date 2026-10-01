@@ -323,6 +323,30 @@ def poll_until_done(session, asset_id: int, interval: float = 30.0) -> str:
 # Verification - the census that replaces trusting a status code
 # --------------------------------------------------------------------------
 
+def tight_bounding_box(tileset: dict):
+    """``root.metadata.properties.tightBoundingBox`` of a tileset, or None.
+
+    The geometry's real box, as ion's tiler records it: twelve numbers in
+    the 3D Tiles ``box`` layout (centre, then three half-axis vectors) in
+    the root tile's own frame. Shared with ``validate_cesium_assets.py`` so
+    the audit and ``--verify`` read the same property the same way.
+    """
+    return (tileset.get('root', {}).get('metadata', {})
+            .get('properties', {}).get('tightBoundingBox'))
+
+
+def box_extents(box) -> list[float]:
+    """Full edge lengths of a 3D Tiles ``box``: twice each half-axis length.
+
+    In the order the box lists its axes. ion keeps a mesh uploaded with
+    ``options.position`` in East-North-Up order (depth probe, 2026-08-31),
+    so for those assets this is E x N x U in metres.
+    """
+    import numpy as np
+
+    return [2 * float(np.linalg.norm(box[i:i + 3])) for i in (3, 6, 9)]
+
+
 def read_tileset_placement(session, asset_id: int) -> dict:
     """Where ion ACTUALLY put an asset, from its own tileset.json.
 
@@ -330,15 +354,21 @@ def read_tileset_placement(session, asset_id: int) -> dict:
     origin of the tileset's local frame. Decoding it needs no human and no
     globe.
     """
-    import numpy as np
-    from pyproj import Transformer
-
     endpoint = session.get(f'{API}/v1/assets/{asset_id}/endpoint',
                            timeout=60).json()
     tileset = session.get(
         endpoint['url'],
         headers={'Authorization': f'Bearer {endpoint["accessToken"]}'},
         timeout=120).json()
+    return decode_tileset_placement(tileset)
+
+
+def decode_tileset_placement(tileset: dict) -> dict:
+    """The placement a tileset.json carries - the offline half of
+    :func:`read_tileset_placement`, split out so it can be exercised on
+    synthetic JSON and reused by the account audit."""
+    import numpy as np
+    from pyproj import Transformer
 
     transform = tileset.get('root', {}).get('transform')
     if not transform:
@@ -355,12 +385,10 @@ def read_tileset_placement(session, asset_id: int) -> dict:
     # root.boundingVolume.box - that one is the tiler's padded octree root
     # cell and comes back as a cube regardless of the mesh (verified on the
     # depth probe: a 20 x 8 x 3 m box reported a 20 x 20 x 20 m root cell).
-    tight = (tileset.get('root', {}).get('metadata', {})
-             .get('properties', {}).get('tightBoundingBox'))
+    tight = tight_bounding_box(tileset)
     extents = None
     if tight:
-        extents = [2 * float(np.linalg.norm(tight[i:i + 3]))
-                   for i in (3, 6, 9)]
+        extents = box_extents(tight)
 
     return {
         'georeferenced': True,
