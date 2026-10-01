@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import math
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -104,6 +105,36 @@ class RSInfo:
             'georeferenced, so there is nothing to place it by. Re-export '
             'with a georeferenced model-export preset '
             '(MvsExportIsGeoreferenced=0x1).')
+
+    @property
+    def is_geocentric(self) -> bool:
+        """True when the exported VERTICES are ECEF, not the declared CRS.
+
+        ``exportCoordinateSystemType="3"`` is RealityScan's geocentric
+        mesh export. ``globalCoordinateSystemName`` still names the
+        PROJECT's projected CRS, so reading the vertices as easting /
+        northing / height puts the asset on the far side of the planet:
+        measured 2026-09-23 on NA168/H2077, whose ECEF vertices read as
+        UTM 53N anchored the asset at lon 87.12 lat 30.98 +832 km - over
+        Tibet, in low orbit - when the dive is at 132.8E 7.5N.
+
+        Keying on the type rather than the declared CRS also makes a
+        WRONG label harmless, which matters because they occur: NA165's
+        H2063 shipped c00 labelled epsg:32653, a 53N zone left over from
+        the previous campaign, while c22 of the same dive declared
+        epsg:32702. Both were ECEF; reading the type places both.
+
+        Surveyed across NA168/H2077 and NA165/H2063 (2026-09-23): every
+        type-3 sidecar sits beside ECEF vertices, and the PLY dense
+        exports carry type 0.
+        """
+        return str(self.export_cs_type).strip() == '3'
+
+    @property
+    def vertex_crs(self) -> str:
+        """The CRS the vertices are ACTUALLY in - EPSG:4978 for a
+        geocentric export, otherwise the declared CRS."""
+        return 'EPSG:4978' if self.is_geocentric else self.crs
 
 
 @dataclass(frozen=True)
@@ -322,7 +353,7 @@ def resolve_to_global(vertices, info: RSInfo,
     """
     import numpy as np
 
-    crs = info.crs
+    crs = info.vertex_crs
     if info.transform is None:
         logger.info('%s carries no transformToModel; treating the mesh as '
                     'already in %s', info.path.name, crs)
@@ -491,7 +522,45 @@ def to_local_enu(points_global, anchor_en: tuple[float, float],
     return points_global - offset
 
 
-def rewrite_obj_local(src: Path, dst: Path, local_points) -> int:
+def ecef_enu_rotation(lon_deg: float, lat_deg: float):
+    """Rows East, North, Up at a point - the ECEF -> ENU rotation.
+
+    Right-handed and orthonormal, so it preserves winding and lengths.
+    """
+    import numpy as np
+
+    lon = math.radians(lon_deg)
+    lat = math.radians(lat_deg)
+    sin_lon, cos_lon = math.sin(lon), math.cos(lon)
+    sin_lat, cos_lat = math.sin(lat), math.cos(lat)
+    return np.array([
+        [-sin_lon, cos_lon, 0.0],
+        [-sin_lat * cos_lon, -sin_lat * sin_lon, cos_lat],
+        [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat],
+    ], dtype='float64')
+
+
+def to_local_enu_from_ecef(points_ecef, anchor_ecef, lon_deg: float,
+                           lat_deg: float):
+    """ECEF -> local East-North-Up metres about an ECEF anchor.
+
+    Unlike the projected case this CANNOT be a translation. Subtracting an
+    ECEF anchor leaves a frame parallel to ECEF, which at this site is
+    rotated from ENU by the site's own latitude and longitude - so the
+    model would arrive standing on its side. The rotation is the whole
+    point, and it is why the caller must also rotate the OBJ's ``vn``
+    normals: translation leaves them valid, rotation does not.
+    """
+    import numpy as np
+
+    rot = ecef_enu_rotation(lon_deg, lat_deg)
+    delta = np.asarray(points_ecef, dtype='float64') - np.asarray(
+        anchor_ecef, dtype='float64')
+    return delta @ rot.T, rot
+
+
+def rewrite_obj_local(src: Path, dst: Path, local_points,
+                      normal_rotation=None) -> int:
     """Copy an OBJ, replacing only its ``v`` lines with local coordinates.
 
     Everything else - ``vt``, ``vn``, ``f``, ``mtllib``, ``usemtl``, groups,
@@ -499,8 +568,21 @@ def rewrite_obj_local(src: Path, dst: Path, local_points) -> int:
     texture bindings that ion needs survive untouched. Six decimals is
     millimetre precision once coordinates are local and small, which is finer
     than the survey itself.
+
+    ``normal_rotation`` is the 3x3 ECEF->ENU matrix for a GEOCENTRIC
+    export, and is None for the projected case. The projected localisation
+    is a pure translation, which leaves normals valid; the geocentric one
+    ROTATES, and a rotated mesh carrying unrotated ``vn`` lines is lit from
+    the wrong direction everywhere. Normals are direction vectors, so they
+    take the rotation WITHOUT the translation.
     """
+    import numpy as np
+
+    rot = None if normal_rotation is None else np.asarray(
+        normal_rotation, dtype='float64')
+
     written = 0
+    normals = 0
     dst.parent.mkdir(parents=True, exist_ok=True)
     with src.open('r', encoding='utf-8', errors='replace') as fin, \
             dst.open('w', encoding='utf-8', newline='\n') as fout:
@@ -509,12 +591,21 @@ def rewrite_obj_local(src: Path, dst: Path, local_points) -> int:
                 x, y, z = local_points[written]
                 fout.write(f'v {x:.6f} {y:.6f} {z:.6f}\n')
                 written += 1
+            elif rot is not None and line.startswith('vn '):
+                parts = line.split()
+                vec = np.array([float(parts[1]), float(parts[2]),
+                                float(parts[3])], dtype='float64')
+                nx, ny, nz = rot @ vec
+                fout.write(f'vn {nx:.6f} {ny:.6f} {nz:.6f}\n')
+                normals += 1
             else:
                 fout.write(line)
     if written != len(local_points):
         raise PlacementError(
             f'{src}: rewrote {written} vertices but was given '
             f'{len(local_points)} - the file changed under us')
+    if rot is not None and normals:
+        logger.debug('%s: rotated %d vn normals into ENU', src.name, normals)
     return written
 
 
@@ -563,6 +654,7 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
 
     resolved: list[tuple[Path, object]] = []
     crs_seen: set[str] = set()
+    geocentric_seen: set[bool] = set()
     interpretations: set[str] = set()
 
     for obj in objs:
@@ -573,13 +665,23 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
                 'record of the export coordinate system; without it the mesh '
                 'cannot be placed. Re-export with MvsMeshExportInfoFile=true.')
         info = parse_rsinfo(sidecar)
-        crs_seen.add(info.crs)
+        crs_seen.add(info.vertex_crs)
+        geocentric_seen.add(info.is_geocentric)
         vertices = read_obj_vertices(obj)
         global_points, interpretation = resolve_to_global(
             vertices, info, nav_envelope=nav_envelope)
         interpretations.add(str(interpretation))
         resolved.append((obj, global_points))
 
+    # Checked BEFORE the generic CRS comparison: a geocentric/projected mix
+    # also shows up there, but as "EPSG:4978 vs EPSG:32653", which reads
+    # like two survey zones rather than two kinds of export.
+    if len(geocentric_seen) > 1:
+        raise PlacementError(
+            'the selected meshes mix geocentric and projected exports '
+            '(exportCoordinateSystemType 3 and not-3). They are not in a '
+            'common frame and cannot share one anchor; publish them as '
+            'separate assets.')
     if len(crs_seen) > 1:
         raise PlacementError(
             f'the selected meshes declare different coordinate systems '
@@ -597,6 +699,67 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
     anchor = (low + high) / 2.0
 
     from pyproj import Transformer
+    geocentric = geocentric_seen == {True}
+
+    if geocentric:
+        # The ECEF vertices convert to lon/lat/height directly - but that
+        # height is NOT a true ellipsoidal height in this pipeline. MEASURED
+        # 2026-09-28 (NA165/H2060 Component 10): RealityScan builds its ECEF
+        # placement from the flight log's Alt column, which geoall.py fills
+        # with -depth below the SEA SURFACE, and it puts that number in the
+        # ellipsoidal slot unchanged (mesh -649..-645 m, cameras within
+        # 3.5 cm of the nav Alt). So the ECEF height is an orthometric depth
+        # in disguise and needs exactly the projected branch's correction,
+        # h = H + N. Before this fix the geocentric path applied none and
+        # placed assets N metres too deep - EGM2008 at each dive's nav
+        # centroid: H2060 +25.2, H2063 +25.2, H2077 +65.9, H2080 +72.7,
+        # H2082 +71.0 m.
+        to_geo3 = Transformer.from_crs('EPSG:4978', 'EPSG:4979',
+                                       always_xy=True)
+        lon, lat, ecef_h = to_geo3.transform(
+            float(anchor[0]), float(anchor[1]), float(anchor[2]))
+        if not all(np.isfinite(v) for v in (lon, lat, ecef_h)):
+            raise PlacementError(
+                f'anchor ECEF {anchor} does not convert to lon/lat/height')
+        if apply_geoid:
+            ell_h, separation = msl_to_ellipsoidal(
+                float(ecef_h), float(lon), float(lat), geoid_model)
+            model_used = geoid_model
+        else:
+            ell_h, separation, model_used = float(ecef_h), 0.0, 'NONE'
+            logger.warning(
+                'GEOID CORRECTION DISABLED (--no-geoid) for a geocentric '
+                'export: its height is the flight log\'s -depth, so the '
+                'asset will sit the local geoid undulation too deep.')
+        rot = ecef_enu_rotation(float(lon), float(lat))
+        localised = [(obj, to_local_enu_from_ecef(
+            g, anchor, float(lon), float(lat))[0]) for obj, g in resolved]
+        extent_pts = np.vstack([g for _, g in localised])
+        extent = tuple(float(v) for v in
+                       (extent_pts.max(axis=0) - extent_pts.min(axis=0)))
+        logger.info('geocentric export (exportCoordinateSystemType=3): '
+                    'vertices read as EPSG:4978 and rotated into ENU about '
+                    'the anchor. The declared CRS describes the PROJECT, '
+                    'not these vertices.')
+        plan = {
+            'crs': 'EPSG:4978',
+            'geocentric': True,
+            'enu_rotation': [list(r) for r in rot],
+            'interpretation': interpretations.pop(),
+            'anchor_projected': [float(anchor[0]), float(anchor[1]),
+                                 float(anchor[2])],
+            'lon': float(lon), 'lat': float(lat),
+            'height_ellipsoidal_m': float(ell_h),
+            'ecef_height_m': float(ecef_h),
+            'depth_msl_m': float(ecef_h),
+            'geoid_n_m': float(separation),
+            'geoid_model': model_used,
+            'extent_m': list(extent),
+            'vertex_count': int(sum(len(g) for _, g in resolved)),
+            'files': [str(o) for o, _ in resolved],
+        }
+        return plan, localised
+
     to_geo = Transformer.from_crs(crs, 'EPSG:4326', always_xy=True)
     lon, lat = to_geo.transform(float(anchor[0]), float(anchor[1]))
     if not (np.isfinite(lon) and np.isfinite(lat)):
@@ -616,8 +779,9 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
             'below the SEA SURFACE but ion will read it as a height above the '
             'WGS84 ELLIPSOID. The asset will be wrong by the local geoid '
             'undulation - measured at +4.5 m at Papahanaumokuakea, +15.9 m at '
-            'Oahu, -27.1 m in the Gulf of Mexico and +72.7 m at this repo''s '
-            'NA168 site. Use this only for a deliberately local-frame asset.')
+            'Oahu, -27.1 m in the Gulf of Mexico, +25.2 m at NA165/H2060 and '
+            '+72.7 m at NA168/H2080. Use this only for a deliberately '
+            'local-frame asset.')
 
     localised = [(obj, to_local_enu(g, (float(anchor[0]), float(anchor[1])),
                                     depth_msl))

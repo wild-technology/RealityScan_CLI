@@ -195,8 +195,15 @@ def referenced_companions(objs: list[Path]) -> list[Path]:
     return wanted
 
 
-def stage(localised, staging: Path, sources: list[Path]) -> list[Path]:
-    """Write local-frame OBJs plus the materials and textures they name."""
+def stage(localised, staging: Path, sources: list[Path],
+          normal_rotation=None) -> list[Path]:
+    """Write local-frame OBJs plus the materials and textures they name.
+
+    ``normal_rotation`` is the plan's ECEF->ENU matrix for a geocentric
+    export and None otherwise; it reaches rewrite_obj_local so the ``vn``
+    normals are rotated with the geometry rather than left pointing the
+    old way.
+    """
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
@@ -204,7 +211,8 @@ def stage(localised, staging: Path, sources: list[Path]) -> list[Path]:
     staged: list[Path] = []
     for obj, local_points in localised:
         target = staging / obj.name
-        rewrite_obj_local(obj, target, local_points)
+        rewrite_obj_local(obj, target, local_points,
+                          normal_rotation=normal_rotation)
         staged.append(target)
 
     companions = referenced_companions(sources)
@@ -221,6 +229,39 @@ def stage(localised, staging: Path, sources: list[Path]) -> list[Path]:
 # --------------------------------------------------------------------------
 # ion REST
 # --------------------------------------------------------------------------
+
+def ion_token_from_environment() -> str | None:
+    """The ion token from the process environment, else the USER
+    environment in the registry.
+
+    ``setx CESIUM_ION_TOKEN ...`` writes to HKCU\\Environment. Windows
+    builds a process's environment block from its PARENT, not from the
+    registry, so every shell open at the time of the setx - and every
+    child of one - is blind to it. That is not a misconfiguration the
+    operator can see: the variable is plainly set in System Properties,
+    and the upload still fails with "no token" (measured 2026-09-23).
+    upload_all.py carried this fallback; the publisher did not.
+
+    The value is returned, never logged. Nothing here prints it, and the
+    caller puts it straight into an Authorization header.
+    """
+    token = os.environ.get('CESIUM_ION_TOKEN')
+    if token:
+        return token
+    if os.name != 'nt':
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment') as key:
+            value = winreg.QueryValueEx(key, 'CESIUM_ION_TOKEN')[0]
+    except (ImportError, OSError):
+        return None
+    value = (value or '').strip()
+    if value:
+        logger.info('ion token read from the USER environment (this process '
+                    'did not inherit it)')
+    return value or None
+
 
 def create_asset(session, name: str, description: str, plan: dict,
                  texture_format: str, geometry_compression: str) -> dict:
@@ -474,10 +515,18 @@ def main() -> int:
                                      apply_geoid=not args.no_geoid)
     logger.info('CRS %s, transformToModel read as %s',
                 plan['crs'], plan['interpretation'])
-    logger.info('anchor lon=%.6f lat=%.6f  depth %.2f m + geoid N %+.2f m '
-                '= ellipsoidal h %.2f m',
-                plan['lon'], plan['lat'], plan['depth_msl_m'],
-                plan['geoid_n_m'], plan['height_ellipsoidal_m'])
+    if plan.get('geocentric'):
+        logger.info('anchor lon=%.6f lat=%.6f  ECEF height %.2f m (the flight '
+                    'log\'s -depth, as RealityScan stores it) + geoid N %+.2f m '
+                    '(%s) = ellipsoidal h %.2f m',
+                    plan['lon'], plan['lat'], plan['ecef_height_m'],
+                    plan['geoid_n_m'], plan['geoid_model'],
+                    plan['height_ellipsoidal_m'])
+    else:
+        logger.info('anchor lon=%.6f lat=%.6f  depth %.2f m + geoid N %+.2f m '
+                    '= ellipsoidal h %.2f m',
+                    plan['lon'], plan['lat'], plan['depth_msl_m'],
+                    plan['geoid_n_m'], plan['height_ellipsoidal_m'])
     logger.info('extent %.1f x %.1f x %.1f m over %d vertices',
                 *plan['extent_m'], plan['vertex_count'])
 
@@ -486,7 +535,8 @@ def main() -> int:
                                         encoding='utf-8')
 
     staging = Path(args.staging) if args.staging else root / '_cesium_local'
-    staged = stage(localised, staging, objs)
+    staged = stage(localised, staging, objs,
+                   normal_rotation=plan.get('enu_rotation'))
     total_mb = sum(p.stat().st_size for p in staged) / 1024 ** 2
     logger.info('staged %d file(s), %.1f MB in %s',
                 len(staged), total_mb, staging)
@@ -508,9 +558,11 @@ def main() -> int:
     require_deps()
     import requests
 
-    token = args.token or os.environ.get('CESIUM_ION_TOKEN')
+    token = args.token or ion_token_from_environment()
     if not token:
-        raise SystemExit('no token: pass --token or set CESIUM_ION_TOKEN')
+        raise SystemExit(
+            'no token: pass --token, or set CESIUM_ION_TOKEN with setx and '
+            'run from a process started afterwards')
 
     session = requests.Session()
     session.headers['Authorization'] = f'Bearer {token}'
