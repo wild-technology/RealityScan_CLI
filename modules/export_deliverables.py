@@ -64,9 +64,12 @@ def expected_kinds() -> tuple[str, ...]:
     Deliberately env-driven and narrow - the census keeps its teeth for every
     format the run DID ask for.
     """
+    kinds = EXPORT_KINDS
     if os.environ.get('RS_EXPORT_SKIP_PLY'):
-        return tuple(k for k in EXPORT_KINDS if k != 'ply')
-    return EXPORT_KINDS
+        kinds = tuple(k for k in kinds if k != 'ply')
+    if os.environ.get('RS_EXPORT_SKIP_FBX'):
+        kinds = tuple(k for k in kinds if k != 'fbx')
+    return kinds
 
 
 def read_component_names(names_file: str) -> list[str]:

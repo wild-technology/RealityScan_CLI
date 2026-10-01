@@ -37,6 +37,12 @@ set "MetadataDir=%Metadata%"
 set "ObjParams=%MetadataDir%\ModelExportParamsOBJ_NiraParts.xml"
 set "FbxParams=%MetadataDir%\ModelExportParamsFBX_Parts.xml"
 set "PlyParams=%MetadataDir%\ModelExportParamsPLY_DensePoints.xml"
+:: RS_PLY_PARAMS overrides the dense-PLY preset - e.g. a geocentric export
+:: shifted by a site anchor (MvsExportMove*), so float32 vertices keep
+:: sub-millimetre precision instead of the ~0.7 m step at ECEF magnitude
+:: (NA165 handoff 3.3). The anchor is added back in float64 downstream.
+if defined RS_PLY_PARAMS if not "%RS_PLY_PARAMS%" == "" set "PlyParams=%RS_PLY_PARAMS%"
+if not exist "%PlyParams%" ( echo ERROR: PLY export params not found: %PlyParams% & exit /b 1 )
 
 set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
 set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
@@ -84,6 +90,12 @@ if defined RS_PROJECT_CRS if not "%RS_PROJECT_CRS%" == "" (
     call :run -setOutputCoordinateSystem %RS_PROJECT_CRS% || goto :fail
 )
 
+:: RS_EXPORT_READ_ONLY=1 skips the sweep AND its save, so the project on
+:: disk is never modified - for exporting from a baseline kept only for
+:: comparison (NA165/H2060's v1 assembly, protected in the v2 charter). The
+:: sweep is housekeeping, not a precondition: every export below names its
+:: model explicitly.
+if defined RS_EXPORT_READ_ONLY goto :skipSweep
 echo Sweeping default-named residual models
 for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7" "Model 8" "Model 9") do (
     call :try_delete_model %%M
@@ -91,6 +103,10 @@ for %%M in ("Model 1" "Model 2" "Model 3" "Model 4" "Model 5" "Model 6" "Model 7
 
 echo Saving project - residuals removed, before any in-memory coloring
 call :run -save "%scene_path%" || goto :fail
+goto :sweepDone
+:skipSweep
+echo RS_EXPORT_READ_ONLY set - no residual sweep, project NOT saved
+:sweepDone
 
 :: Output CRS. WITHOUT this the export inherits whatever coordinate system
 :: the application last held, and nothing in the pipeline ever set one:
@@ -153,8 +169,18 @@ call :run -selectComponent "%comp%" || exit /b 1
 echo   OBJ (Nira, by parts)
 call :run -exportModel "%comp%_Simplified_Textured" "%out_dir%\%comp%\obj\%comp%.obj" "%ObjParams%" || exit /b 1
 
+:: RS_EXPORT_SKIP_FBX: comparison-only exports (a baseline's OBJ is all a
+:: mesh-quality comparison reads) need no FBX, which duplicates every
+:: texture page on disk.
+:: goto, not an if/else block: an `exit /b` inside a parenthesised block is
+:: the trap test_boot_gate_does_not_exit_from_inside_a_block guards against.
+if defined RS_EXPORT_SKIP_FBX goto :skipFbx
 echo   FBX (by parts)
 call :run -exportModel "%comp%_Simplified_Textured" "%out_dir%\%comp%\fbx\%comp%.fbx" "%FbxParams%" || exit /b 1
+goto :fbxDone
+:skipFbx
+echo   FBX SKIPPED (RS_EXPORT_SKIP_FBX set)
+:fbxDone
 
 :: DENSE PLY. Still skippable via RS_EXPORT_SKIP_PLY=1 as an escape hatch,
 :: but it is NOT expected to fail: <comp>_HighPoly_Raw is present for every
