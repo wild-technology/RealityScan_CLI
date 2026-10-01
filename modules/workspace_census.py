@@ -129,32 +129,92 @@ def _records(report: dict, *keys: str) -> list[dict]:
     return []
 
 
+#: Results-root children that never hold a stage tree, so the one-level
+#: locator below never descends into them. ``archive`` and ``superseded``
+#: hold retired copies, which would answer "where is the batched tree"
+#: with the WRONG tree.
+_LOCATOR_SKIP = {"raw_images", "preprocessed_images", "batched_images_by_zone",
+                 "aligned_components", "exports", "logs", "nav", "archive",
+                 "superseded", "assembly", "__pycache__"}
+
+
 class Workspace:
     """A results root as the pipeline understands it."""
 
     def __init__(self, root: str | Path):
         self.root = Path(root)
+        self._located: dict[str, dict] = {}
 
     # ------------------------------------------------------------ locations
+    def _locate(self, name: str) -> Path:
+        """Where this stage tree actually is: flat, else one level down.
+
+        Every real dive on this machine puts the stage trees under a
+        working subfolder (``proc\\rs\\``) while the flight log stays at
+        the results root, so the flat-only assumption reported batch
+        "pending" and ``batch_fingerprint: null`` on H2060, H2063 and
+        H2082 alike - and, worse, made _detect_align's "batched but not
+        aligned" test vacuous, because a batched tree it cannot see
+        yields no zones to miss (measured 2026-09-19).
+
+        Bounded on purpose: flat wins outright, the search goes exactly
+        one level down, never into a retired copy, and two candidates
+        REFUSE rather than pick. H2080 carries both an ``rs\\`` and an
+        ``rs_cinup\\`` aligned tree; silently choosing one is how a census
+        reports on components nobody asked about.
+        """
+        cached = self._located.get(name)
+        if cached is None:
+            flat = self.root / name
+            record = {"path": flat, "how": "flat", "candidates": []}
+            if not flat.is_dir() and self.root.is_dir():
+                try:
+                    children = sorted(p for p in self.root.iterdir()
+                                      if p.is_dir()
+                                      and p.name.lower() not in _LOCATOR_SKIP
+                                      and not p.name.startswith("."))
+                except OSError:
+                    children = []
+                hits = [c / name for c in children if (c / name).is_dir()]
+                record["candidates"] = [str(h) for h in hits]
+                if len(hits) == 1:
+                    record.update({"path": hits[0], "how": "nested"})
+                elif len(hits) > 1:
+                    record["how"] = "ambiguous"
+                else:
+                    record["how"] = "absent"
+            cached = self._located[name] = record
+        return cached["path"]
+
+    def layout(self) -> dict:
+        """How each stage tree was resolved - published so a reader can see
+        WHICH tree a verdict is about, and can see a refusal to choose."""
+        for name in ("preprocessed_images", "batched_images_by_zone",
+                     "aligned_components", "exports"):
+            self._locate(name)
+        return {name: {"path": str(rec["path"]), "how": rec["how"],
+                       "candidates": rec["candidates"]}
+                for name, rec in sorted(self._located.items())}
+
     @property
     def raw_images(self) -> Path:
         return self.root / "raw_images"
 
     @property
     def preprocessed(self) -> Path:
-        return self.root / "preprocessed_images"
+        return self._locate("preprocessed_images")
 
     @property
     def batched(self) -> Path:
-        return self.root / "batched_images_by_zone"
+        return self._locate("batched_images_by_zone")
 
     @property
     def aligned(self) -> Path:
-        return self.root / "aligned_components"
+        return self._locate("aligned_components")
 
     @property
     def exports(self) -> Path:
-        return self.root / "exports"
+        return self._locate("exports")
 
     def merge_dirs(self) -> list[Path]:
         """Merge outputs, newest report last. Any directory carrying a
