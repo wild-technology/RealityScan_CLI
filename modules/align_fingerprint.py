@@ -64,6 +64,44 @@ def _file_identity(path: str | None) -> dict | None:
             "bytes": os.path.getsize(path)}
 
 
+#: The workflow scripts that actually produce an aligned zone. B20: the
+#: fingerprint hashed AlignmentParams.xml but not the code that applies it, so
+#: two zones aligned either side of a .bat edit compared as IDENTICAL. Observed
+#: 2026-09-09: zone_3 was re-aligned immediately after AlignZone.bat gained the
+#: B19 -update step - a change that alters the geometry of every component it
+#: touches - and the run announced "Re-run with IDENTICAL inputs".
+#:
+#: repo_sha is deliberately NOT promoted to material: it changes on every
+#: commit, including ones that cannot affect a zone (docs, tests, unrelated
+#: modules), and a metrology warning that fires constantly is one operators
+#: learn to ignore. Hashing the scripts that run is the targeted form of the
+#: same check - of the three options recorded in BUGS.md B20, this is the third.
+WORKFLOW_SCRIPTS = (
+    'AlignZone.bat',
+    'MergeZoneComponents.bat',
+    'SetVariables.bat',
+    'startRealityScan.bat',
+)
+
+
+def _workflow_identity() -> dict | None:
+    """sha256 of each workflow script that shapes an aligned zone.
+
+    Keyed by bare filename so the dict compares cleanly across checkouts at
+    different paths; a missing script records None rather than raising, because
+    a fingerprint must still be buildable on a partial tree.
+    """
+    scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               'realityscan_interface', 'RS_CLI', 'Scripts')
+    if not os.path.isdir(scripts_dir):
+        return None
+    out = {}
+    for name in WORKFLOW_SCRIPTS:
+        path = os.path.join(scripts_dir, name)
+        out[name] = sha256_file(path) if os.path.isfile(path) else None
+    return out
+
+
 def build_fingerprint(flight_log: str | None,
                       flight_log_params: str | None,
                       align_settings_xml: str | None,
@@ -86,6 +124,7 @@ def build_fingerprint(flight_log: str | None,
         "align_settings": _file_identity(align_settings_xml),
         "min_component_size": int(min_component_size),
         "repo_sha": _repo_sha(),
+        "workflow_scripts": _workflow_identity(),
     }
     if rs_executable and os.path.isfile(rs_executable):
         st = os.stat(rs_executable)
@@ -130,6 +169,20 @@ def diff_fingerprints(old: dict | None, new: dict) -> list[str]:
             f"min_component_size changed: {old.get('min_component_size')} -> "
             f"{new.get('min_component_size')} (export threshold; small "
             "pockets appear/disappear)")
+    # B20: the workflow scripts, per script, so the message names WHICH one.
+    # A fingerprint written before this field existed has no 'workflow_scripts'
+    # key; that is treated as "unknown, not changed" rather than as a change,
+    # so upgrading the code does not retroactively invalidate every zone on
+    # disk - which would be a false alarm about data that is in fact fine.
+    old_ws, new_ws = old.get("workflow_scripts"), new.get("workflow_scripts")
+    if isinstance(old_ws, dict) and isinstance(new_ws, dict):
+        for name in sorted(set(old_ws) | set(new_ws)):
+            o, n = old_ws.get(name), new_ws.get(name)
+            if o != n:
+                changes.append(
+                    f"workflow script {name} CHANGED: {o or 'absent'} -> "
+                    f"{n or 'absent'} - the code that produced the alignment "
+                    "is not the code running now")
     return changes
 
 

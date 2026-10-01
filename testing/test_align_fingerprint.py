@@ -104,3 +104,63 @@ def test_write_is_atomic_shaped(tmp_path):
     assert os.path.basename(p) == FINGERPRINT_NAME
     assert not os.path.exists(p + ".tmp")
     json.load(open(p, encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# B20 - a workflow-script change must be MATERIAL
+# ---------------------------------------------------------------------------
+# The fingerprint hashed AlignmentParams.xml but not the code that applies it.
+# Observed 2026-09-09: zone_3 was re-aligned immediately after AlignZone.bat
+# gained the B19 -update step - which alters the geometry of every component it
+# touches - and the run announced "Re-run with IDENTICAL inputs". Two zones
+# aligned either side of a .bat edit compared as the same run.
+#
+# repo_sha is deliberately still NOT material: it moves on every commit,
+# including docs and tests, and a metrology warning that fires constantly is
+# one operators learn to ignore.
+
+def test_workflow_scripts_are_fingerprinted(tmp_path):
+    nav, flp, ap = _inputs(tmp_path)
+    fp = build_fingerprint(nav, flp, ap, 50)
+    ws = fp.get("workflow_scripts")
+    assert isinstance(ws, dict) and ws, "workflow scripts not fingerprinted"
+    # AlignZone.bat is the one that actually produces a zone.
+    assert ws.get("AlignZone.bat"), "AlignZone.bat not hashed"
+
+
+def test_a_changed_workflow_script_is_material_and_named(tmp_path):
+    """The whole point of B20: the diff must fire, and say WHICH script."""
+    import copy
+    nav, flp, ap = _inputs(tmp_path)
+    new = build_fingerprint(nav, flp, ap, 50)
+    old = copy.deepcopy(new)
+    old["workflow_scripts"]["AlignZone.bat"] = "0" * 64
+    changes = diff_fingerprints(old, new)
+    assert changes, "a .bat edit compared as identical - B20 is back"
+    assert any("AlignZone.bat" in c for c in changes), changes
+
+
+def test_legacy_fingerprint_without_the_field_is_not_a_change(tmp_path):
+    """Upgrading the code must not retroactively invalidate zones on disk.
+
+    A fingerprint written before this field existed has no 'workflow_scripts'
+    key. Treating that absence as a change would declare every previously
+    aligned zone incomparable - a false alarm about data that is fine, and the
+    fastest way to make the whole check get ignored.
+    """
+    import copy
+    nav, flp, ap = _inputs(tmp_path)
+    new = build_fingerprint(nav, flp, ap, 50)
+    legacy = copy.deepcopy(new)
+    legacy.pop("workflow_scripts")
+    assert diff_fingerprints(legacy, new) == []
+
+
+def test_repo_sha_alone_is_still_not_material(tmp_path):
+    """Recorded, not compared - unchanged by the B20 fix."""
+    import copy
+    nav, flp, ap = _inputs(tmp_path)
+    new = build_fingerprint(nav, flp, ap, 50)
+    old = copy.deepcopy(new)
+    old["repo_sha"] = "a" * 40
+    assert diff_fingerprints(old, new) == []

@@ -5933,3 +5933,69 @@ Same day, from the delivered tree (read-only): RealityScan writes an export's
 01:11:33.27. One `.rsInfo` on disk is therefore not "the export finished";
 `modules/export_remaining.py` compares the part-index sets of
 obj/mtl/obj.rsInfo/fbx/fbx.rsInfo instead.
+
+
+## [NA165] 2026-09-27 - GenerateModel can stall indefinitely when the GPU's memory is oversubscribed; the signature is readable from outside ESTABLISHED
+
+Recovery modelling on the NA165/H2060 box (RTX 4080, 16 GB): `zone_1_c37`
+and `zone_1_c34` modelled in 17 and 13 min and `zone_2_c14` in 11, but
+`zone_1_c28` sat in "Generating high model" at `-getStatus`
+`id:0x5052 progress:66.7%` for over 90 minutes (runtime 14,159 s when stopped),
+and `zone_4_c2` stalled the same way at 65.7%. During the stall:
+
+- `nvidia-smi dmon`: SM 100%, memory controller 0-1%, power 73 W at 39 C
+  (a real load on this card draws 250-320 W), PCIe 3-5 GB/s in BOTH
+  directions, continuously;
+- the process: ~5 cores busy, private bytes flat, zero disk I/O, cache not
+  written for over an hour;
+- `\GPU Process Memory(*)\Dedicated Usage`: RealityScan 11.0 GB, plus an
+  Unreal Editor 4.1 GB dedicated + 1.9 GB shared and dwm 2.0 GB.
+
+That is the pattern of GPU memory being paged over PCIe, not of computing.
+`endEstimation` in `-getStatus` is only runtime extrapolated from `progress`
+and says nothing about a stall. What the owner can do: close other
+GPU-memory users (here the Unreal Editor) before modelling.
+
+`-abortInstance <name>` was NOT honoured during the stall (48 min on c28,
+3 min on c4_2): the abort seems to be checked between work units, and the
+stalled unit never ends. Force-stopping the instance process (the one the
+workflow started) left no `<project>\.lock` and no `errors_<inst>.txt`, and
+the project on disk was intact as of its last `-save` (GenerateModel's
+`:fail` path never saves). The workflow's own persistence check then
+stopped the stage cleanly ("<comp>_Simplified_Textured is NOT in the saved
+project").
+
+## [NA165] 2026-09-27 - exporting dense PLYs from the 208 GB assembly grew the cache to 90 GB; `-clearCache` after saving an empty scene empties it ESTABLISHED
+
+The PLY pass (`-selectModel <comp>_HighPoly_Raw`, `-calculateVertexColors`,
+`-exportModel ... PLY`) for 22 components of the loaded NA165/H2060
+assembly grew `RS_CACHE_DIR` from ~0 to 90.4 GB (the OBJ/FBX passes of the
+same components had not), and the instance's commit charge reached 117 GB.
+The export driver's 80 GB disk floor stopped the next pass. Epic's rule is
+never to delete cache files by hand; the sanctioned route worked:
+start the instance, `-newScene`, `-save <scratch>.rsproj` (`-clearCache`
+refuses without a saved project), `-clearCache`, `-quit` -> 90.37 GB to 0 GB
+in about a minute (`_agent/plan/clear_cache.bat`). Budget cache growth for
+PLY passes, and clear between passes when the disk is tight.
+
+## [NA165] 2026-09-27 - RealityScan 2.2's JPG texture export is q90 4:2:0, and the unwrap layer stays PNG ESTABLISHED
+
+With the `_JPG` presets (`MvsMeshExportTexImgFormat_Color8_0` /
+`_Normal_0` = jpg, 24bppBGR), every diffuse and normal page RealityScan 2.2
+wrote was baseline JPEG, 4:2:0, luma/chroma tables of IJG quality 90, JFIF
+only (8192 x 8192) - there is no quality key. The third layer, the
+"unwrap" checkerboard, has no per-layer format key in these presets and is
+still written as `<stem>_u1_v1_unwrap.png`; nothing references it (neither
+the MTL nor the FBX). 4:2:0 mixes the X/Y channels of a normal map, so the
+NA165/H2060 delivery re-encodes every page at q95 4:4:4 from the lossless
+PNG export (`_agent/plan/tools/texture`).
+
+## [NA165] 2026-09-27 - the exact-target export path works end to end on a real instance ESTABLISHED
+
+`ExportDeliverables.bat` with `RS_EXPORT_TARGET_LOG` / `_PARAMS` and
+`RS_EXPORT_REGISTRATION_DIR` (commit e218490), first on the fixture (G3)
+and then on the full NA165/H2060 delivery: every exported component's
+cameras were on their targets to 0.00000 m (37 components, 10,247
+cameras, OBJ/FBX and PLY passes alike); on the fixture the new OBJ lay
+within 1.1 mm (NN median) of the 2026-09-21 OBJ moved by the decided
+similarity, against 1.71 m unmoved. The assembly was loaded and never saved.

@@ -1019,7 +1019,7 @@ information worth keeping, not hiding.
 ## B20 — The align fingerprint records the repo SHA but never compares it
 
 **Kind:** silent comparability. **Severity:** low, but it undermines an
-invariant this pipeline takes seriously. **Status:** OPEN.
+invariant this pipeline takes seriously. **Status:** FIXED 2026-10-01.
 **Sites:** `modules/align_fingerprint.py` — `build_fingerprint` writes
 `repo_sha`, `diff_fingerprints` never reads it.
 
@@ -1053,6 +1053,29 @@ on every commit, which is noisy but correct for a metrology pipeline);
 or as INFORMATIONAL, printed but not blocking; or hash the workflow `.bat`
 files into `_COMPARED` so only changes to the scripts that actually run are
 material. The third is the most targeted and the least noisy.
+
+### Fixed, 2026-10-01 — option 3, the workflow scripts are hashed
+
+`build_fingerprint` now records `workflow_scripts`: the sha256 of
+`AlignZone.bat`, `MergeZoneComponents.bat`, `SetVariables.bat` and
+`startRealityScan.bat`, keyed by bare filename so two checkouts at different
+paths still compare. `diff_fingerprints` compares them per script and names
+which one moved: *"workflow script AlignZone.bat CHANGED: ... - the code that
+produced the alignment is not the code running now"*.
+
+`repo_sha` is deliberately still recorded and NOT compared. It moves on every
+commit, including docs, tests and unrelated modules; a metrology warning that
+fires constantly is one operators learn to ignore. Hashing the scripts that
+actually run is the same check without the noise.
+
+A fingerprint written before this field existed has no `workflow_scripts` key,
+and that absence is treated as "unknown, not changed". Treating it as a change
+would declare every previously aligned zone incomparable — a false alarm about
+data that is fine, and the fastest route to the whole check being disregarded.
+
+Covered by `testing/test_align_fingerprint.py`: the field exists and includes
+AlignZone.bat; an edited script is material AND named; a legacy fingerprint is
+not a change; `repo_sha` alone is still not material.
 
 ### B19 addendum, 2026-09-09 — `-update` is not reliably corrective
 
@@ -1189,3 +1212,27 @@ FINDINGS rule - one log per RealityScan workflow; never
 NA165 re-export drivers go through Python instead (`RealityScanCLI`, verified
 shutdown, a fresh log per attempt). The status above stays OPEN until the
 mechanism is seen on a real instance.
+
+### B21 containment hardened, 2026-10-01 — one log per attempt
+
+The candidate mechanism above was not re-tested on a live instance; instead the
+condition it needs was removed. `_agent\export\export_h2060.bat` no longer does
+`call ExportDeliverables.bat >> sharedLog`. Each attempt writes to its own
+`export_attempt_<pass>_<n>.log`, which is deleted immediately before the call
+and concatenated into the shared log afterwards. A per-attempt file cannot be
+held open by an instance still shutting down from an earlier attempt, so the
+contention the mechanism describes cannot arise.
+
+Two consequences worth noting:
+
+- the "was it entered" size check becomes exact rather than a delta — the
+  attempt log is zero by construction, so ANY bytes mean the batch ran;
+- the supervisor's own stderr is captured by the launcher (`> log 2>&1`), so if
+  a "file in use" line ever does appear it is on disk rather than discarded,
+  which is what made the original two occurrences so opaque.
+
+The mechanism remains unconfirmed on a real instance, and the status above
+stays OPEN for that reason — this is containment that makes the failure
+unreachable from this driver, not a proof of cause. The repo-side drivers
+already route through Python (`RealityScanCLI`, verified shutdown, fresh log
+per attempt) and were never exposed.
