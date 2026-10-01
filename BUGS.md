@@ -1158,3 +1158,437 @@ and in both cases log the resolved location at boot so an operator can see
 which tree is about to absorb hundreds of GB. Until then every launcher
 must set `RS_CACHE_DIR` inside its own dive; a run that omits it is not
 using a default, it is using someone else's.
+
+---
+
+**B22 to B27 — found in review, 2026-10-01, all OPEN.** Raised by the
+read-only review of the work since committed as the eight commits ending at
+`35e3ca6` (branch `h2060-rerun`), then re-established one by one from the
+code and reproduced on synthetic fixtures in a scratch folder. **None is
+fixed here**; each entry states the proposed fix. Line numbers are as at
+`35e3ca6`; in `publish_cesium.py` every cited line above `:326` sits 28
+lines lower from the decoder refactor committed alongside these entries
+(the `stage()` call `:538` is then `:566`, the dry-run gate `:550-556` is
+`:578-584`). Nothing below needed RealityScan, and no reproduction wrote to a
+dive folder or to Cesium ion (B24 and B27's sidecar census READ the dive
+folders; nothing else touches them).
+
+## B22 — The nested-tree locator also steers the planner: one plan writes flat and merges from an older subfolder
+
+**Kind:** silent shadow — a path the plan implies is quietly replaced by
+another tree. **Severity:** high when it bites (Merge runs to completion on a
+previous attempt's components and exits 0), but it needs a particular
+results root and nothing running today has one. **Status:** OPEN.
+**Sites:** `modules/workspace_census.py:149-187` (`_locate`), `:203-217` (the
+four properties it now backs). Consumers: `wildscan/session.py:646-647`
+(Merge `--components_root` / `--images_root`), `:693-700` (Export
+`--exports` / `--names`), `:829-830` (`export_names_file`: mkdir + write),
+`wildscan/app.py:416`, `run_models.py:200`, `:545`.
+
+Commit `315de32` taught `Workspace` to find a stage tree one level down
+(`proc\rs\batched_images_by_zone`), because every real dive on this machine
+kept its trees under a working subfolder and the flat-only census called
+them "pending". The change was made inside the four `Workspace` properties
+— `preprocessed`, `batched`, `aligned`, `exports` — which until then were
+`self.root / "<name>"`, always.
+
+Those properties are not only the census's eyes. `build_commands`, the pure
+planner, builds command lines from them. The Batch + Align command does
+not: `session.py:610-612` passes `--output_dir <results_root>` and the chain
+creates its trees flat under it (the canonical layout,
+`workspace_census.py:11-25`). So on a results root with no flat tree yet and
+exactly one subfolder holding stage trees, a single plan disagrees with
+itself.
+
+### Measured, 2026-10-01 (planner only, nothing launched)
+
+Results root holding only
+`previous_attempt\{aligned_components,batched_images_by_zone,exports}\zone_1`;
+enabled = batch, align, merge, export:
+
+    Batch Directory + RealityScan Alignment
+        --output_dir       <root>
+    Merge Components
+        --components_root  <root>\previous_attempt\aligned_components
+        --images_root      <root>\previous_attempt\batched_images_by_zone
+        --output           <root>\merged
+    Export Deliverables
+        --exports          <root>\previous_attempt\exports
+        --names            <root>\previous_attempt\exports\components.names
+
+Controls: an empty results root plans every path flat; so does the same
+older tree placed under `archive\` (in `_LOCATOR_SKIP`).
+
+The plan is built once, before anything runs (`wildscan/app.py:395`,
+`wildscan/plan.py:136`); only the export command is re-resolved at launch
+(`app.py:398-429`). By the time Merge starts, Batch + Align have written
+the flat tree and the locator would now answer "flat" — re-planning the
+same root after creating `<root>\aligned_components` does give the flat
+paths — but the Merge command in hand still names the old one. Merge then
+fuses the previous attempt's components against the previous attempt's
+images into `<root>\merged` and reports success. Export is aimed INTO the
+previous attempt's `exports\`, a deliverable tree this run did not create
+(driving mandate 3).
+
+The census side is honest about it: `provenance.layout` publishes which
+tree was read and how it was found. The planner prints its command too —
+but nobody reads twenty arguments looking for a folder name they did not
+type.
+
+### The fix (proposed)
+
+The locator is a READ convenience for the oracle. A planner must not let it
+choose where a stage reads when an earlier stage of the same plan writes
+that tree. Either
+
+- give `Workspace` a second, flat-only view (`root / name`) and have
+  `build_commands`, `export_names_file` and `run_models.py` use it, leaving
+  `_locate` to the census — this restores the pre-`315de32` behaviour for
+  everything that executes; or
+- keep one view and make `build_commands` stop and ask when
+  `layout()[tree]["how"]` is `nested` for a tree a stage in the same plan is
+  about to create flat.
+
+Either way add the test that is missing: `build_commands` on the fixture
+above must name one tree, not two.
+
+---
+
+## B23 — verify's cut-short-slice guard switches itself off when it cannot find the zone's images
+
+**Kind:** fail-open. **Severity:** high — it is the guard that stops a
+truncated flight-log slice proving itself, and it goes quiet exactly where a
+layout is unusual, which on this machine is every dive. Masked today by B24
+(the oracle sees no zones there at all). **Status:** OPEN.
+**Sites:** `modules/verify.py:305-306` (imagery looked up at
+`ws.batched / zone`), `:321` (`if img_keys:`), `:329-330` (coverage by bare
+basename); `modules/nav_provenance.py:251-252` (`zone_image_keys` returns
+`None, "unknown"` for a folder that is not there).
+
+`check_nav_unanimity` proves one navigation table behind the per-zone flight
+logs. A slice whose rows all match is "contained" in the table — and so is
+a slice cut down to one row. The module says so itself (`verify.py:184-186`:
+"every slice reconciled against the imagery its zone holds so a truncated
+slice cannot prove itself vacuously"; `:199`: "Absence of evidence is never
+agreement"). The reconciliation is `:321-341`: of the zone's images with no
+row in the slice, how many does the TABLE have a row for?
+
+It reads the zone's imagery from `ws.batched / zone` — the census locator's
+answer — not from the folder the slice under test sits in. When the locator
+has no answer (`how` is `absent` or `ambiguous`; both leave `path` at the
+non-existent flat folder, `workspace_census.py:169`, `:182-185`),
+`zone_image_keys` returns `None`, `:306` records `"images": null`, `:321`
+is false, the block is skipped, nothing is added to `findings` or
+`nav["unavailable"]`, and `:350-353` computes `proven = True`. An empty set
+— the folder is there, the images are not — leaves by the same door.
+
+### Measured, 2026-10-01 (the suite's own fixture)
+
+The fixture of `test_a_slice_cut_short_of_its_own_source_blocks`: zone_2
+holds images 2, 3 and 4; its slice is rewritten to row 2 alone and the
+fingerprint re-pointed at it. Only the location of the batched tree varies.
+
+| batched tree | located as | verdict | nav `proven` | zone_2 `images` | `omitted_rows_the_table_has` |
+|---|---|---|---|---|---|
+| `proc\rs\` (control) | nested | **blocked**, exit 2 | False | 3 | 2 |
+| `proc\a\b\` (two levels down) | absent | **ok**, exit 0 | True | null | not computed |
+| `proc\rs\` plus an empty `proc\rs_cinup\batched_images_by_zone` | ambiguous | **ok**, exit 0 | True | null | not computed |
+| `proc\rs\images_batched_by_zone` (the Desktop name, B24) | absent | **ok**, exit 0 | True | null | not computed |
+| `proc\rs\`, zone_2's images removed | nested | incomplete, exit 1 — from the batch census, not the nav check | True | 0 | not computed |
+
+In the three "ok" rows the blocking list is empty and `provenance.nav.method`
+is `slices`: the report reads as a positive proof. The `rs` + `rs_cinup`
+pair is not exotic — it is the layout `_locate`'s own docstring cites
+(H2080) as the reason it refuses to choose.
+
+### The related reduction, `verify.py:329-330`
+
+    covered = {k[-1] for k, _tail in slice_log["rows"] if k}
+    uncovered = sorted(k for k in img_keys if k[-1] not in covered)
+
+Coverage is decided on the bare filename. In pool layout a zone's imagelist
+carries full paths and two pools can hold the same basename —
+`nav_provenance.match_key` exists because of that, and
+`test_two_pool_folders_sharing_a_basename_do_not_collide` pins it for ROWS.
+Measured: zone_2's imagelist holds `poolA\wca\D1.JPG` and
+`poolB\wca\D1.JPG`, its slice has a row for poolA's only, the table has a
+row for each. Result: `images_without_a_row: 0`,
+`omitted_rows_the_table_has: 0`, nav proven True. The truth is 1 and 1.
+
+### The fix (proposed)
+
+- Reconcile against the folder the slice is IN (`Path(paths[zone]).parent`;
+  `:247-256` has already established it is named for the zone and that all
+  slices share one batched root). The slice and its imagery cannot then be
+  looked up in two different trees.
+- Make "could not measure" a finding: `img_keys is None`, or an empty set
+  beside a slice that has rows, goes to `nav["unavailable"]` ("zone_2: the
+  images its flight log covers could not be found, so the slice cannot be
+  shown to be whole"). `proven` stays False and the byte-comparison guard
+  speaks, as it does for every other way of failing to measure.
+- Decide coverage with the key matching the rows use (`match_key` on the
+  full key), not `k[-1]`.
+- Tests: the two-levels and ambiguous fixtures must block; the pool fixture
+  must report 1 and 1.
+
+---
+
+## B24 — The oracle is blind to the reorganised Desktop layout, and says OK
+
+**Kind:** fail-open — a census that finds nothing returns the verdict of a
+census that finds everything in order. **Severity:** blocker for anything
+that takes `modules.verify` exit 0 as evidence; CLAUDE.md calls it "the
+census/verify oracle" and the `drive-run` and `status` skills run it with
+no `--require`. **Status:** OPEN.
+**Sites:** `modules/workspace_census.py:189-217` (the four stage-tree names,
+fixed strings), `:292-294`, `:331-333`, `:418-420` (an unseen tree is
+"pending"); `modules/verify.py:491-492` (default `required` = every stage
+that is not pending), `:192-193` (no aligned zones: nothing to check, no
+finding), `:515-520` (the verdict).
+
+The 2026-09-30 reorganisation of the dive folders renamed the stage trees:
+
+| the code looks for | the dives now hold |
+|---|---|
+| `batched_images_by_zone` | `images_batched_by_zone` |
+| `aligned_components` | `realityscan_align_zones` |
+| `exports` | `exports_models`, `exports_models_v2`, `exports_las_v2` |
+| `preprocessed_images` | `images_preprocessed` |
+
+None is found, flat or one level down. Every stage from batch on is
+therefore "pending"; the default requirement is "finish what you started",
+so only extract and georeference are required, and both are done. There are
+no aligned zones, so the provenance, frame, nav and scale checks have
+nothing to run on and raise nothing. Verdict `ok`, exit 0.
+
+### Measured, 2026-10-01 — `python -m modules.verify --workspace <dive>\proc --json` (it only reads)
+
+| workspace | exit | verdict | required | zones_aligned | components | what is on disk (counted separately) |
+|---|---|---|---|---|---|---|
+| `Desktop\NA165_H2060\proc` | 0 | ok | extract, georeference | 0 | 0 | 9 zone folders, 130 `.rsalign`, 9 `align_inputs.json` in `realityscan_align_zones`; 9 zones in `images_batched_by_zone` |
+| `Desktop\NA168_H2082\proc` | 0 | ok | extract, georeference | 0 | 0 | 2 zone folders, 13 `.rsalign`, 2 `align_inputs.json` |
+| `Desktop\NA168_H2077\proc` | 0 | ok | extract, georeference | 0 | 0 | 1 batched zone, model exports, a published package |
+| `Desktop\NA168_H2080\proc` | 0 | ok | extract, georeference | 0 | 0 | `images_preprocessed`, RealityScan projects |
+| `Desktop\NA165_H2063\proc` | 2 | blocked | extract, georeference, merge | 0 | 19 | blocked on two out-of-band scales read from `deliverable_records\merge_report.json`; still 0 zones seen |
+
+`provenance.layout` is `absent` for all four trees in all five workspaces
+and `provenance.nav.method` is `no_aligned_zones`. With `--require align`
+H2060 reads `incomplete`, exit 1 ("no aligned_components/") — wrong the
+other way, but not a false pass. On H2060 the georeference stage also
+reports `flight_log_u_alt01_ori180_2L_UTM.txt`, from
+`agent_workspace\prior_test\logs\`: the alphabetically first
+`flight_log*_UTM.txt` anywhere under the root (`workspace_census.py:93`,
+`:255-260`), a prior-accuracy test variant, not `nav\`'s master.
+
+So the nav-provenance ladder of `315de32` has never run on a dive as it is
+laid out today (which is also why B23 cannot currently be reached there),
+and four of five dives return the oracle's best verdict with nothing
+verified.
+
+### The fix (proposed)
+
+Two parts; the first matters more.
+
+1. **A census that located nothing past georeference must not say `ok`
+   when the root plainly holds work.** A bounded look for stage evidence
+   under names the census does not know — any `*.rsalign`,
+   `align_inputs.json`, `batch_inputs.json` or `*.rsproj` within two or
+   three levels — and, where there is some while the matching tree is
+   `absent`, a BLOCKING finding: "stage artifacts exist under folders this
+   census does not recognise (`realityscan_align_zones\zone_1\...`);
+   nothing past georeference was verified". A genuinely fresh dive has none
+   and still reads `ok`.
+2. Teach the locator the layout as DATA rather than a second list of magic
+   names: a `workspace_layout.json` at the results root naming each stage
+   tree's folder (the reorganisation's `move_log.jsonl` holds the
+   information), read by `_locate` before the built-in names. `exports`
+   needs care — three candidate folders is the "refuse rather than pick"
+   case.
+
+Until then: a verify "ok" on a Desktop dive is evidence of nothing past
+georeference. Read `counts.zones_aligned` and `provenance.layout` first.
+
+---
+
+## B25 — publish_cesium deletes whatever `--staging` names, before the `--dry-run` gate
+
+**Kind:** unguarded destructive default. **Severity:** high — one mistyped
+argument deletes a source export, or a dive, that may exist nowhere else,
+on the very invocation whose purpose is to change nothing. **Status:** OPEN.
+**Sites:** `publish_cesium.py:207-209` (`stage()`:
+`if staging.exists(): shutil.rmtree(staging)`), `:537` (default staging
+`<dir>/_cesium_local`), `:538` (the call), `:550-556` (the dry-run gate,
+AFTER it), `:472-474` (`--staging`); `publish_batch.py:151-153` (passes no
+`--staging`).
+
+`stage()` writes the local-frame copy of the mesh that gets uploaded. It
+begins by removing the staging directory if one exists, with no test of
+what that directory is. `main()` calls it at `:538`; `--dry-run` returns at
+`:556`. The help for `--dry-run` says "plan and stage ... upload nothing",
+so staging on a dry run is intended. Deleting an arbitrary existing
+directory is mentioned nowhere.
+
+### Measured, 2026-10-01 (synthetic export in scratch, `--dry-run --no-geoid`)
+
+| invocation | before | after | exit |
+|---|---|---|---|
+| default staging, `<dir>\_cesium_local\note_from_last_week.txt` already there | the note, `m.obj`, its sidecar | the note is gone; `_cesium_local\m.obj` written inside the export folder | 0 |
+| `--staging <dir>` (equal to `--dir`) | `m.obj`, `m.mtl`, `m.obj.rsInfo`, `unrelated_deliverable.las` | **folder empty** | 1, `FileNotFoundError` traceback |
+| `--staging <dive>` (a parent of `--dir`) | `exports\c10\obj\{m.obj, m.obj.rsInfo}`, `nav\flight_log.txt` | **folder empty** — the sibling `nav\` went too | 1, `FileNotFoundError` traceback |
+
+In the last two rows the vertices are already in memory, so the placement
+is planned and logged first; the crash comes when `rewrite_obj_local`
+reopens a source that no longer exists.
+
+The default is a milder form of the same fault: it writes into the export
+folder, i.e. into the deliverable tree (a default-staging run would put a
+1.2 GB copy beside H2060 C10 and a 10.8 GB copy inside the H2077 package;
+the review's dry runs avoided that only by passing `--staging` to a scratch
+folder), and `publish_batch.py` does so for every component.
+
+### The fix (proposed)
+
+- Refuse a staging path that, after `resolve()`, is the source directory or
+  an ancestor of it.
+- Only ever remove a directory this tool made: `stage()` drops a marker
+  file and removes an existing directory only when the marker is there or
+  the directory is empty; anything else is a refusal naming the path.
+- Move the default out of the export folder (a sibling, or a temp
+  directory).
+- One test per row above, on `tmp_path`.
+
+Until then: always pass `--staging <a folder you can lose>`, never an export
+or package folder.
+
+---
+
+## B26 — A geoid grid that cannot be fetched comes back as `inf`, and nothing checks it
+
+**Kind:** fail-open — the guard built against a silent ZERO does not cover
+a silent INFINITY. **Severity:** medium. A live run dies at request
+encoding before any asset exists, which is an accident of the JSON encoder
+and not a guard; a `--dry-run` exits 0 and prints `Infinity` as the height.
+**Status:** OPEN.
+**Sites:** `modules/cesium_placement.py:475-479` (`geoid_separation`: a
+NaN-only guard), `:501-502` (`msl_to_ellipsoidal`), `:724-727` and
+`:771-774` (`plan_placement`, both branches; `:721-723` checks the ECEF
+conversion, not the height that leaves), `publish_cesium.py:502-503` (PROJ
+network enabled unless `--no-geoid` or `--no-proj-network`).
+
+`geoid_separation` builds its transformer with `allow_ballpark=False`, so
+with PROJ network OFF a missing grid raises instead of returning 0. With
+network ON the transformer builds — the grid is expected from the CDN —
+and the failure moves to `transform()`, which does not raise: it returns
+`inf`. The guard at `:476` is `separation is None or separation !=
+separation`, a NaN test. `inf` passes it.
+
+### Measured, 2026-10-01 (PROJ user directory redirected to an empty scratch folder; `PROJ_NETWORK_ENDPOINT=http://127.0.0.1:9`, a closed local port)
+
+    grid hidden, network OFF   PlacementError: no EGM2008 geoid transformation is available ...
+    grid hidden, network ON    geoid_separation returned inf
+                               msl_to_ellipsoidal(-650.0, ...) -> (inf, inf)
+
+`publish_cesium.py --dry-run` with DEFAULT flags on a synthetic projected
+export, same environment — exit 0:
+
+    INFO anchor lon=-169.046249 lat=-14.210270  depth -650.00 m + geoid N +inf m = ellipsoidal h inf m
+    "position": [ -169.0462491714334, -14.21027017872663, Infinity ]
+
+A live run would hand that body to `requests` (`publish_cesium.py:285`,
+`json=body`), whose encoder refuses it: `InvalidJSONError: Out of range
+float values are not JSON compliant` (encoder exercised offline, nothing
+sent). So no asset is created — by luck. The failure is an uncaught
+traceback after the whole staging pass, not a `PlacementError`; and
+`--plan-json` (`:533-535`) writes `Infinity` to disk through the standard
+`json` module without complaint.
+
+This machine has the grid installed for both interpreters in use, so it
+does not bite here today. It bites on a fresh machine, another interpreter,
+or a ship with no route to cdn.proj.org — which is where this pipeline
+runs.
+
+Pinned, not fixed: `test_a_non_finite_geoid_never_becomes_a_finite_placement`
+(projected), `test_geocentric_non_finite_geoid_never_becomes_a_finite_placement`
+and `test_a_failed_grid_lookup_never_returns_a_finite_separation` accept a
+refusal and otherwise require the bad value to stay visible. None of them
+enshrines the `inf`; the last also pins the NaN guard that does exist.
+`validate_cesium_assets.py` has its own guard (a non-finite N stops the
+audit).
+
+### The fix (proposed)
+
+- `geoid_separation`: refuse anything not finite
+  (`separation is None or not math.isfinite(separation)`), with the
+  missing-grid remedy text plus "PROJ network is on but the grid could not
+  be fetched".
+- `plan_placement`: check the final height is finite on both branches
+  before returning a plan — a second net, since a future geoid source can
+  bypass the first.
+- Then tighten the three tests to `pytest.raises(PlacementError)`.
+- `publish_batch.py:151-153` passes no `--no-proj-network`; once the grid
+  is a declared prerequisite it should. Until then pass it by hand.
+
+---
+
+## B27 — Two guards the publisher describes but does not have: the flight log is not consulted, and a shifted export is not noticed
+
+**Kind:** missing guard — the check is documented, wired to an argument,
+and never reached. **Severity:** medium, latent: no OBJ on this machine
+triggers it, and when one does the asset lands kilometres to megametres
+away with `--verify` confirming it (verify compares ion against the plan,
+and the plan is what is wrong). **Status:** OPEN.
+**Sites:** `modules/cesium_placement.py:357-366` (`resolve_to_global`
+returns before `nav_envelope` is first used at `:386-387`), `:704-761` (the
+geocentric branch; `isfinite` at `:721-723` is its only check), `:171-218`
+(`parse_rsinfo` reads `<Model>` only), `:74-83` (`RSInfo` has no field for
+the export settings); `publish_cesium.py:452-455`, `:508-515`;
+`wildscan/session.py:709-719`.
+
+**1. `--flight-log` is a no-op on every export with no matrix to
+interpret.** Its help calls the nav envelope "a second, independent check
+on the transformToModel reading", and that is all it is: `resolve_to_global`
+returns the vertices untouched when the sidecar has no `transformToModel`
+(`:357-360`) or an identity one (`:362-366`), and the envelope is only ever
+compared inside the candidate-scoring loop further down. That covers every
+geocentric export (identity) and every `georef_v2.py` product (no matrix)
+— everything this campaign publishes. Measured, geoid stubbed: an
+H2077-site ECEF mesh and an H2060-site UTM mesh, each planned with a nav
+envelope from another ocean (E 500000-500100, N 100000-100100, alt -10..0),
+are both accepted without a word. The wildscan planner pins `--flight-log`
+"as the INDEPENDENT nav check" (`session.py:709-719`); on these exports it
+checks nothing.
+
+**2. A shifted or scaled export is not noticed.** RealityScan records an
+export's anchor, rotation and scale in the sidecar's `<ModelExport
+settingsAnchor=... settingsRotation=... settingsScale=...>`; `parse_rsinfo`
+reads only `<Model>`. Sidecar census of this machine, 2026-10-01 (389
+files under the Desktop dives' export and package folders, read-only): all
+241 OBJ and 128 FBX sidecars carry anchor `0 0 0` and scale `1 1 1`, or —
+the 16 written by `georef_v2.py` — no `<ModelExport>` at all; but **19 PLY
+sidecars carry `settingsAnchor="6070869 1174903 1555610"`**, the H2060
+dense-PLY preset's float32 shift. Shifted exports therefore exist in the
+same trees, and are off the Cesium route only because `select_objs` takes
+`*.obj`. `test_export_preset_applies_no_hidden_shift_or_scale` pins the
+three stock presets at zero shift; nothing pins what a sidecar actually
+says. Measured: a type-3 OBJ whose vertices are the mesh minus its ECEF
+anchor, with a sidecar saying so (`settingsAnchor` = that anchor,
+`settingsScale="0.5 0.5 0.5"`). `parse_rsinfo` keeps neither value and the
+plan is accepted at lat 90.0000, ellipsoidal height -6,356,727 m — the
+centre of the Earth — for a mesh whose site is 132.8053 E 7.5525 N at
+-1,048 m.
+
+### The fix (proposed)
+
+- Run the nav check on the RESOLVED points whatever the transform was: for
+  a projected export, the fraction of vertices inside the envelope
+  (`_nav_score` exists) with a stated margin; for a geocentric one, project
+  the anchor into the flight log's zone (its EPSG is in the filename, as
+  `validate_cesium_assets.utm_epsg` reads it) and compare. A flight log
+  that was passed and could not be used is an error, not silence.
+- Give the geocentric branch a plausibility test of its own for runs with
+  no log: height within about 12 km of the ellipsoid, anchor inside the
+  declared project CRS's area of use.
+- Parse `<ModelExport>` and refuse anything but anchor `0 0 0`, rotation
+  `0 0 0`, scale `1 1 1`. Refusing is right; applying them would be a
+  guess, for the same reason the `transformToModel` candidates are scored
+  rather than assumed.
