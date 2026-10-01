@@ -12,10 +12,12 @@ c00 labelled epsg:32653, a 53N zone left over from the previous campaign,
 alongside c22 labelled epsg:32702, and BOTH were ECEF. Keying on the
 export type is what makes a wrong label harmless.
 
-The geocentric localisation is a ROTATION, not the projected case's
-translation, so these also pin that ``vn`` normals rotate with the
-geometry - a rotated mesh carrying unrotated normals is lit from the wrong
-direction everywhere.
+The geocentric localisation is a ROTATION, so these also pin that ``vn``
+normals rotate with the geometry - a rotated mesh carrying unrotated
+normals is lit from the wrong direction everywhere. (The projected route
+was a translation until 2026-10-01 and is a rotation too since BUGS.md B28;
+its tests are in test_cesium_projected_enu.py, including the one that puts
+the same geometry through both routes.)
 """
 import math
 import os
@@ -151,7 +153,10 @@ def test_normals_rotate_with_the_geometry(tmp_path):
 
 
 def test_normals_untouched_without_a_rotation(tmp_path):
-    """The projected path is a translation; rotating there would be a bug."""
+    """No rotation given, none applied: the ``vn`` lines pass through as
+    they are. (Until B28 this was what the projected route did. It now
+    hands over its own grid -> ENU rotation; this pins only that
+    rewrite_obj_local invents none.)"""
     src = _obj(tmp_path, "p", [(1.0, 2.0, 3.0)], normals=[(0.0, 0.0, 1.0)])
     dst = tmp_path / "out.obj"
     rewrite_obj_local(src, dst, np.array([[0.0, 0.0, 0.0]]))

@@ -1171,7 +1171,12 @@ lines lower from the decoder refactor committed alongside these entries
 (the `stage()` call `:538` is then `:566`, the dry-run gate `:550-556` is
 `:578-584`). Nothing below needed RealityScan, and no reproduction wrote to a
 dive folder or to Cesium ion (B24 and B27's sidecar census READ the dive
-folders; nothing else touches them).
+folders; nothing else touches them). B28's fix, further down, moved the
+Cesium cites once more: in `modules/cesium_placement.py` every cited line
+up to `:502` sits 11 lower, the geocentric branch `:704-761` is
+`:960-1017` and `:771-774` is `:1028-1031`; in `publish_cesium.py` every
+cited line sits 3 lower again (the `stage()` call is `:569`, the dry-run
+gate `:581-587`).
 
 ## B22 — The nested-tree locator also steers the planner: one plan writes flat and merges from an older subfolder
 
@@ -1592,3 +1597,137 @@ centre of the Earth — for a mesh whose site is 132.8053 E 7.5525 N at
   `0 0 0`, scale `1 1 1`. Refusing is right; applying them would be a
   guess, for the same reason the `transformToModel` candidates are scored
   rather than assumed.
+
+---
+
+## B28 — The projected route localised by translation: every projected upload turned by the grid convergence
+
+**Kind:** silent wrong result — an approximation written down as a fact
+and never measured. **Severity:** medium. Centimetres to decimetres per
+component, nothing beside a 25 m geoid error, but the whole budget once
+components are meant to sit beside each other — and it is the route every
+nav-placed product takes. **Status:** FIXED in this change (found
+2026-10-01, fixed the same day).
+**Sites:** as at `8e52d8b`, `modules/cesium_placement.py:509-522`
+(`to_local_enu`) and `:786-788` (its call in `plan_placement`). After the
+fix: `check_projected_crs` `:527`, `ProjectedFrame` `:627`,
+`projected_frame` `:679`, `to_local_enu_from_projected` `:737`, the
+projected branch of `plan_placement` `:1019-1084`; `publish_cesium.py:569-570`
+(already passed `plan.get('enu_rotation')` to `stage()`; unchanged).
+
+`plan_placement` has two routes into ion. The GEOCENTRIC one (export type
+3) turns ECEF vertices into a true East-North-Up frame at the anchor — a
+rotation of the positions and of the `vn` normals. The PROJECTED one (type
+0, e.g. EPSG:32702 with Z = -depth) subtracted the anchor and stopped.
+`to_local_enu` said why: a projected CRS "is already metric and
+axis-aligned with ENU to well within a metre over a site a few hundred
+metres across, so this is a translation". It is neither. Grid north is
+turned from true north by the meridian convergence, and a grid metre is
+not a true metre.
+
+### Measured, 2026-10-01
+
+    NA165/H2060, 210 km from the central meridian of UTM zone 2S
+    (PROJ factors at the Component 10 anchor, lon -169.046992 lat -14.212356)
+      meridian convergence     -0.4797 deg
+      projection scale k        1.000149
+      with the mesh at -648 m   1.000251 grid metres per true metre
+                                (k / (1 + h / R): a mesh at depth is
+                                smaller than its footprint on the ellipsoid)
+
+- The defect: the staged vertices of a projected export equalled the
+  product's vertices minus the anchor to 1.6e-9 m (first 200,000 vertices
+  of the nav-placed Component 10, `navplace_verify_numerics_r2`). So every
+  projected upload was turned 0.48 deg about its anchor and 0.025 % too
+  large: 0.064 m at the far corner of Component 10's box (7.65 m), and
+  0.24 m on Component 9 by the product builder's figure.
+- It bites the nine nav-placed H2060 products
+  (`proc\exports_models_v2_georef\NA165_H2060_Cnn_similarity\obj`, type 0,
+  EPSG:32702), and any other type-0 / type-2 export. The same site's
+  geocentric exports were never affected.
+- Old and new staging of the real Component 10 (4,376,149 vertices, dry
+  run, staging in scratch): the vertices differ by up to 0.051 m, median
+  0.025 m; no vertex sits in the corner of the box, where it would be
+  0.064 m.
+
+### The fix
+
+Both routes now give ion the same local mesh for the same geometry. A
+projected vertex takes the reference route, nothing approximate in it:
+(E, N) -> lon / lat by PROJ; its Z as the height, exactly as RealityScan
+puts the flight log's -depth into the ellipsoidal slot of an ECEF export
+(so the mesh is the same with and without the geoid, which goes on the
+anchor height alone); geodetic -> ECEF; then the geocentric route's own
+`to_local_enu_from_ecef`. Chunked, a million vertices per PROJ call, so a
+24-million-vertex component costs its input and output arrays and no more
+(3 million vertices take half a second).
+
+- **The anchor does not move.** It is still the midpoint of the bounding
+  box in the export's own CRS, converted by the same transformer. Component
+  10: `[-169.0469921768, -14.2123555946, -622.3303]` before and after.
+- **Normals.** The plan carries `enu_rotation` on this route too: the
+  rotation nearest the Jacobian of the reference route at the anchor,
+  measured by differencing it a metre each way. For a conformal grid that
+  is a turn about Up by the convergence. `publish_cesium.stage` hands it to
+  `rewrite_obj_local`, which already rotated `vn` lines for the geocentric
+  route.
+- **`extent_m`** is now East x North x Up of the mesh that is uploaded —
+  what ion's tight box reports and `--verify` compares — not the grid's.
+- **Which CRS kinds.** Axis order and unit are read from the CRS
+  (`check_projected_crs`), before the vertices are. Localised: one
+  projected CRS whose first axis is its easting and second its northing,
+  in metres — any UTM zone in either hemisphere, a transverse Mercator on
+  its own meridian, a polar stereographic grid (EPSG:3031). Refused with a
+  `PlacementError` that quotes the axes: a geographic CRS; a geocentric
+  one on an export that is not type 3; a compound CRS; a northing-first
+  grid (EPSG:2193, EPSG:32661) or a westing / southing one (EPSG:2053); a
+  grid in feet (EPSG:2227). No RealityScan export in any of those exists
+  here to check the column order or the unit of Z against, so each would
+  be a guess.
+
+Measured after the fix, on all 4,376,149 vertices and normals of the
+nav-placed Component 10, against a computation that imports nothing from
+the repo (PROJ for the grid, closed forms for ECEF and the ENU basis):
+staged vertices equal the reference to 8.6e-7 m (the six-decimal OBJ);
+they equal `R(convergence) * (grid - anchor)` with East and North divided
+by 1.000251 (Z is not scaled) to 4.9e-6 m, and with the projection scale
+alone (1.000149) to 0.63 mm; staged normals
+equal the turned product normals to 5.0e-7 and are unit to 1.4e-6. A
+geocentric export (H2060 Component 30) stages byte for byte what it did
+before, with an identical plan.
+
+Tests: `testing/test_cesium_projected_enu.py` (new), and three tests in
+`test_cesium_placement.py` that had pinned the translation
+(`enu_rotation is None`, staged mesh == vertices minus anchor, extents
+[10, 12, 4]) now pin the true frame. Mutants on a scratch copy — the old
+translation, the turn with the wrong sign, the scale left out, the height
+factor left out, normals not turned, the anchor moved — each fail.
+
+### What it does NOT fix
+
+- **Assets already on ion.** The 47 H2060 mesh tilesets uploaded from the
+  owner's other machine are in UTM grid axes about their own box centre
+  and carry the same 0.48 deg turn: measured on `zone_1_c0` (its live
+  tight box equals the NAS mesh's box in EPSG:32702 grid axes; its ENU box
+  differs by 3.5 cm / 15.1 cm), inferred for the other 46 from the shared
+  route (`repo_audit_ion-extended`). Which tool that machine used was not
+  seen. Nothing here changes an existing asset: correcting one means
+  publishing it again, which makes a new asset id.
+- **The H2063 and H2077 uploads did not take this route** (their tight
+  boxes are not centred on the local origin: 0 of 24, and not H2077), so
+  nothing here says they are turned and nothing here says they are not.
+- **A normal is turned, not re-derived.** The grid is larger horizontally
+  than vertically, which tilts a true surface normal by at most half the
+  scale excess at the site: 1.3e-4 rad at H2060 (0.025 %), about 6e-4 at a
+  UTM zone edge, 4.6e-3 rad (0.26 deg) measured on a polar stereographic
+  grid. Below anything a renderer shows at H2060; not negligible on a
+  polar grid.
+- **No test covers the hand-off of the plan's rotation from
+  `publish_cesium.main()` to `stage()`** (the tests call `stage()`
+  directly): replacing `normal_rotation=plan.get('enu_rotation')` with
+  `None` passes the suite. Found in review 2026-10-01, OPEN.
+- **The product's own vertical.** A nav-placed product is one isotropic
+  similarity fitted in grid coordinates, so its heights carry the grid
+  scale too: 0.025 % of the vertical extent, 1 mm on Component 10's 3.6 m.
+  Z is taken as true metres here.
+- B25, B26 and B27 are untouched and still OPEN.

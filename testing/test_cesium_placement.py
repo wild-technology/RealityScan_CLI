@@ -20,6 +20,14 @@ stubbed to a known N. Mutation testing that morning showed the projected
 branch - the one every nav-placed product takes - had no geoid test at all:
 a sign flip of N confined to it, leaving N out, and adding it twice each
 passed this file and test_cesium_geocentric.py.
+
+Changed the same day (BUGS.md B28): the projected branch no longer
+localises by subtracting the anchor. A UTM grid is turned from East / North
+by the meridian convergence - 0.48 deg at NA165/H2060 - so the mesh goes to
+true East-North-Up, as the geocentric branch's always did. Three tests here
+pinned the translation and now pin the true frame instead
+(``projected_local`` below; ``test_cesium_projected_enu.py`` holds the tests
+of the frame itself). The geoid invariants are what they were.
 """
 import logging
 import math
@@ -36,8 +44,8 @@ np = pytest.importorskip("numpy")
 from modules.cesium_placement import (  # noqa: E402
     PlacementError, apply_interpretation, find_rsinfo, geoid_separation,
     msl_to_ellipsoidal, nav_envelope_from_flight_log, parse_rsinfo,
-    plan_placement, read_obj_vertices, resolve_to_global, rewrite_obj_local,
-    to_local_enu)
+    plan_placement, projected_frame, read_obj_vertices, resolve_to_global,
+    rewrite_obj_local, to_local_enu_from_projected)
 
 # The real NA168 H2080 sidecar matrix, verbatim.
 NA168_MATRIX = ("0 0 1 348355.8364815 1 0 0 396321.994618801 "
@@ -269,9 +277,42 @@ PROJECTED_VERTS = [(710825.0, 8428130.0, -652.0),
                    (710825.0, 8428142.0, -649.0),
                    (710835.0, 8428130.0, -651.0)]
 PROJECTED_ANCHOR = (710830.0, 8428136.0, -650.0)
-PROJECTED_LOCAL = np.array(PROJECTED_VERTS) - np.array(PROJECTED_ANCHOR)
+# What the mesh was before B28: the vertices minus the anchor. Kept to show
+# the localised mesh is NOT this any more, and by how much.
+PROJECTED_TRANSLATED = np.array(PROJECTED_VERTS) - np.array(PROJECTED_ANCHOR)
 PROJECTED_LON, PROJECTED_LAT = -169.046249, -14.210270
 STUB_N = 25.25
+
+
+def true_enu(verts, anchor, crs):
+    """(E, N, Z) rows in TRUE East-North-Up about an (E, N, Z) anchor.
+
+    Derived with PROJ and three lines of trigonometry, not with the module:
+    grid -> lon / lat, the Z as the height (so no geoid is in it), -> ECEF,
+    and the East / North / Up directions at the anchor."""
+    from pyproj import Transformer
+    to_geo = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+    to_ecef = Transformer.from_crs("EPSG:4979", "EPSG:4978", always_xy=True)
+    verts = np.asarray(verts, dtype="float64")
+    lon, lat = to_geo.transform(verts[:, 0], verts[:, 1])
+    ecef = np.c_[to_ecef.transform(lon, lat, verts[:, 2])]
+    lon0, lat0 = to_geo.transform(anchor[0], anchor[1])
+    origin = np.array(to_ecef.transform(lon0, lat0, anchor[2]))
+    lam, phi = math.radians(lon0), math.radians(lat0)
+    basis = np.array([
+        [-math.sin(lam), math.cos(lam), 0.0],
+        [-math.sin(phi) * math.cos(lam), -math.sin(phi) * math.sin(lam),
+         math.cos(phi)],
+        [math.cos(phi) * math.cos(lam), math.cos(phi) * math.sin(lam),
+         math.sin(phi)]])
+    return (ecef - origin) @ basis.T
+
+
+def projected_local():
+    """Where PROJECTED_VERTS belong in the frame ion is given. Grid north
+    is 0.48 deg from true north at this anchor, so the corners sit up to
+    5.4 cm from where the old translation put them."""
+    return true_enu(PROJECTED_VERTS, PROJECTED_ANCHOR, "EPSG:32702")
 
 
 def projected_export(tmp_path, name="m"):
@@ -297,21 +338,30 @@ def stub_geoid(monkeypatch, value):
     return calls
 
 
+@pytest.mark.parametrize("undulation, height", [
+    (STUB_N, -624.75),      # NA165/H2060: the geoid is above the ellipsoid
+    (-27.0, -677.0),        # Gulf of Mexico: it is below, and N is negative
+])
 def test_projected_plan_adds_the_geoid_exactly_once(tmp_path, monkeypatch,
-                                                    caplog):
+                                                    caplog, undulation,
+                                                    height):
     """h = H + N with H = Z = -depth: -650 + 25.25 = -624.75. A flipped
-    sign gives -675.25, a forgotten N -650, a doubled one -599.5."""
+    sign gives -675.25, a forgotten N -650, a doubled one -599.5.
+
+    And with N = -27: -677. While only a positive N was stubbed,
+    ``depth + abs(N)`` passed (review mutant R6, 2026-10-01); it gives
+    -623 here."""
     pytest.importorskip("pyproj")
-    calls = stub_geoid(monkeypatch, STUB_N)
+    calls = stub_geoid(monkeypatch, undulation)
     with caplog.at_level(logging.WARNING, logger="modules.cesium_placement"):
         plan, _localised = plan_placement([projected_export(tmp_path)])
 
     assert plan["crs"] == "EPSG:32702"
     assert not plan.get("geocentric")
     assert plan["depth_msl_m"] == -650.0
-    assert plan["geoid_n_m"] == STUB_N
+    assert plan["geoid_n_m"] == undulation
     assert plan["geoid_model"] == "EGM2008"
-    assert plan["height_ellipsoidal_m"] == -650.0 + STUB_N == -624.75
+    assert plan["height_ellipsoidal_m"] == -650.0 + undulation == height
 
     # N was looked up at the anchor - the real site, not merely the right
     # hemisphere (1e-4 deg is ~11 m) - and with the model the plan reports.
@@ -352,33 +402,56 @@ def test_projected_no_geoid_keeps_the_depth_and_warns(tmp_path, monkeypatch,
 def test_projected_geoid_moves_the_anchor_and_never_the_mesh(tmp_path,
                                                              monkeypatch):
     """The localised mesh is the same with and without the geoid, and is
-    the vertices minus the anchor - no N in it. Only the height in
-    options.position moves, by exactly N. Baking N into the mesh as well
-    would place every vertex 25 m off while the plan still read right."""
+    the vertices in true East-North-Up about the anchor - no N in it. Only
+    the height in options.position moves, by exactly N. Baking N into the
+    mesh as well would place every vertex 25 m off while the plan still
+    read right.
+
+    Changed for B28: this asserted the mesh was the vertices MINUS the
+    anchor, to 1e-9, with extents [10, 12, 4] - the translation that left
+    every projected upload turned by the grid convergence. The frame is now
+    the true one; that the geoid stays out of it is asserted more strictly
+    than before (the two meshes are equal, not merely close)."""
     pytest.importorskip("pyproj")
     stub_geoid(monkeypatch, STUB_N)
     obj = projected_export(tmp_path)
     with_n, loc_n = plan_placement([obj])
     without, loc_0 = plan_placement([obj], apply_geoid=False)
 
-    assert np.allclose(loc_n[0][1], PROJECTED_LOCAL, atol=1e-9)
-    assert np.allclose(loc_0[0][1], PROJECTED_LOCAL, atol=1e-9)
-    assert loc_n[0][1][:, 2].min() == -2.0 and loc_n[0][1][:, 2].max() == 2.0
+    expected = projected_local()
+    assert np.array_equal(loc_n[0][1], loc_0[0][1])
+    assert np.allclose(loc_n[0][1], expected, atol=1e-6)
+    # Up is the vertices' own Z about the anchor: no undulation in it
+    assert loc_n[0][1][:, 2].min() == pytest.approx(-2.0, abs=1e-4)
+    assert loc_n[0][1][:, 2].max() == pytest.approx(2.0, abs=1e-4)
+    # ... and it is not the translation: the corners are 5.4 cm away
+    moved = np.abs(loc_n[0][1] - PROJECTED_TRANSLATED).max()
+    assert 0.04 < moved < 0.06
 
     assert (with_n["height_ellipsoidal_m"]
             - without["height_ellipsoidal_m"]) == STUB_N
     assert (with_n["lon"], with_n["lat"]) == (without["lon"], without["lat"])
     assert (with_n["anchor_projected"] == without["anchor_projected"]
             == list(PROJECTED_ANCHOR))
-    assert with_n["extent_m"] == without["extent_m"] == [10.0, 12.0, 4.0]
+    # East x North x Up of the mesh that is uploaded - what ion's tight box
+    # reports and --verify compares - not the grid's [10, 12, 4]
+    assert with_n["extent_m"] == without["extent_m"]
+    assert with_n["extent_m"] == pytest.approx(
+        list(expected.max(axis=0) - expected.min(axis=0)), abs=1e-6)
+    assert with_n["extent_m"] == pytest.approx([10.097, 12.080, 4.0],
+                                               abs=1e-3)
 
 
 def test_ion_is_handed_n_in_the_position_and_nowhere_in_the_mesh(tmp_path,
                                                                  monkeypatch):
     """End to end as far as the wire: the staged OBJ - the file that is
-    uploaded - holds local metres about the anchor, and the request body's
-    position carries Z + N."""
-    pytest.importorskip("pyproj")
+    uploaded - holds true East-North-Up metres about the anchor, and the
+    request body's position carries Z + N.
+
+    Changed for B28: this asserted ``enu_rotation is None`` ("a
+    translation, no rotation") and a staged mesh equal to the vertices
+    minus the anchor - the defect, pinned."""
+    pyproj = pytest.importorskip("pyproj")
     from publish_cesium import create_asset, stage
     stub_geoid(monkeypatch, STUB_N)
     export = tmp_path / "export"
@@ -386,12 +459,23 @@ def test_ion_is_handed_n_in_the_position_and_nowhere_in_the_mesh(tmp_path,
     obj = projected_export(export)
     plan, localised = plan_placement([obj])
 
-    assert plan.get("enu_rotation") is None       # a translation, no rotation
+    # the turn from grid axes to East-North-Up: about Up, by PROJ's own
+    # meridian convergence at the anchor, and not nothing
+    rotation = np.array(plan["enu_rotation"])
+    assert np.allclose(rotation @ rotation.T, np.eye(3), atol=1e-12)
+    assert np.allclose(rotation[2], [0.0, 0.0, 1.0], atol=1e-9)
+    gamma = pyproj.Proj("EPSG:32702").get_factors(
+        plan["lon"], plan["lat"]).meridian_convergence
+    assert gamma == pytest.approx(-0.48, abs=0.005)
+    assert rotation[0][1] == pytest.approx(math.sin(math.radians(gamma)),
+                                           abs=1e-8)
     staged = stage(localised, tmp_path / "staging", [obj],
                    normal_rotation=plan.get("enu_rotation"))
     (staged_obj,) = [p for p in staged if p.suffix == ".obj"]
-    assert np.allclose(read_obj_vertices(staged_obj), PROJECTED_LOCAL,
+    assert np.allclose(read_obj_vertices(staged_obj), projected_local(),
                        atol=1e-6)
+    assert not np.allclose(read_obj_vertices(staged_obj),
+                           PROJECTED_TRANSLATED, atol=0.04)
 
     posted = {}
 
@@ -458,14 +542,41 @@ def test_a_failed_grid_lookup_never_returns_a_finite_separation(monkeypatch,
 # local frame
 # --------------------------------------------------------------------------
 
-def test_to_local_enu_is_a_pure_translation():
+def test_the_projected_localisation_is_true_enu_not_a_translation():
+    """Replaces ``test_to_local_enu_is_a_pure_translation``, which pinned
+    the defect (BUGS.md B28): ``to_local_enu`` subtracted the anchor and
+    called grid axes East / North. Same two NA168/H2080 points. The site is
+    152 km west of the central meridian of zone 53N, where the grid is
+    turned only 0.085 deg - so the old answer, [5, 5, 10], was 7 mm out
+    here; at NA165/H2060 the same code was 0.48 deg out."""
+    pyproj = pytest.importorskip("pyproj")
     points = np.array([[348360.0, 396325.0, -580.0],
                        [348350.0, 396315.0, -600.0]])
-    local = to_local_enu(points, (348355.0, 396320.0), -590.0)
-    assert np.allclose(local, [[5.0, 5.0, 10.0], [-5.0, -5.0, -10.0]])
-    # Shape-preserving: pairwise distances survive unchanged.
+    anchor = (348355.0, 396320.0, -590.0)
+    frame = projected_frame("EPSG:32653", anchor)
+    local = to_local_enu_from_projected(points, frame)
+
+    assert np.allclose(local, true_enu(points, anchor, "EPSG:32653"),
+                       atol=1e-6)
+    assert np.allclose(local[0], -local[1], atol=1e-5)
+    assert local[0][2] == pytest.approx(10.0, abs=1e-4)      # Up is Z
+    # turned by PROJ's own convergence at the anchor, clockwise-positive
+    gamma = pyproj.Proj("EPSG:32653").get_factors(
+        frame.lon, frame.lat).meridian_convergence
+    assert gamma == pytest.approx(-0.0855, abs=1e-3)
+    assert frame.convergence_deg == pytest.approx(gamma, abs=1e-6)
+    bearing = math.degrees(math.atan2(local[0][0], local[0][1]))
+    assert bearing == pytest.approx(45.0 + gamma, abs=1e-4)
+    assert 0.005 < np.abs(local[0][:2] - [5.0, 5.0]).max() < 0.010
+    # Metric: the two are as far apart as the straight line between them.
+    to_geo = pyproj.Transformer.from_crs("EPSG:32653", "EPSG:4326",
+                                         always_xy=True)
+    to_ecef = pyproj.Transformer.from_crs("EPSG:4979", "EPSG:4978",
+                                          always_xy=True)
+    lon, lat = to_geo.transform(points[:, 0], points[:, 1])
+    ecef = np.c_[to_ecef.transform(lon, lat, points[:, 2])]
     assert np.linalg.norm(local[0] - local[1]) == pytest.approx(
-        np.linalg.norm(points[0] - points[1]))
+        np.linalg.norm(ecef[0] - ecef[1]), abs=1e-6)
 
 
 # --------------------------------------------------------------------------

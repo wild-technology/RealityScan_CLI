@@ -12,7 +12,7 @@ Oahu, -27.1 m in the Gulf of Mexico, **+70.4 m in the Solomon Sea** - the very
 UTM zone the shared ``FlightLogParams.xml`` template carries. The conversion
 is ``h = H + N`` with ``H = -depth``.
 
-Two further traps, both found the expensive way and both guarded here:
+Three further traps, each found the expensive way and each guarded here:
 
 1. **PROJ applies a SILENT ZERO correction when the geoid grid is missing.**
    ``Transformer.from_crs('EPSG:9518', 'EPSG:4979')`` succeeds offline and
@@ -29,6 +29,17 @@ Two further traps, both found the expensive way and both guarded here:
    the one whose output lands inside the declared CRS's area of use (and
    inside the nav envelope, when a flight log is supplied). Zero or more than
    one survivor is an error, never a default.
+
+3. **A projected grid is not East-North-Up.** Grid north is turned from true
+   north by the meridian convergence and a grid metre is not a true metre:
+   at NA165/H2060, 210 km from the central meridian of UTM zone 2S, by
+   -0.4797 deg and 1.000149 (1.000251 with the mesh 650 m below the
+   ellipsoid). Subtracting the anchor from eastings and northings and
+   calling the result East / North - what this module did until 2026-10-01,
+   BUGS.md B28 - turns every projected upload about its anchor by the
+   convergence. A projected export is now taken to the SAME true local frame
+   the geocentric one gets: grid -> geodetic -> ECEF -> ENU at the anchor,
+   its ``vn`` normals turned with it.
 
 Cesium ion wants photogrammetry uploaded in LOCAL coordinates centred on the
 origin, with placement supplied as ``options.position = [lon, lat, height]``
@@ -506,20 +517,256 @@ def msl_to_ellipsoidal(depth_msl: float, lon: float, lat: float,
 # Local ENU frame
 # --------------------------------------------------------------------------
 
-def to_local_enu(points_global, anchor_en: tuple[float, float],
-                 anchor_z: float):
-    """Global (E, N, Z) -> local East-North-Up metres about an anchor.
+#: Vertices handed to PROJ per call on the projected route. It bounds the
+#: temporaries (a handful of float64 columns of this length) whatever the
+#: mesh size, so a 24-million-vertex component costs its input and output
+#: arrays and nothing else that grows with it.
+ENU_CHUNK = 1 << 20
 
-    A projected CRS is already metric and axis-aligned with ENU to well
-    within a metre over a site a few hundred metres across, so this is a
-    translation. Keeping it a pure translation matters: it leaves normals,
-    winding and texture coordinates untouched, so only the ``v`` lines of the
-    OBJ change.
+
+def check_projected_crs(crs: str) -> str:
+    """The name of a CRS a non-geocentric export can be localised from -
+    or a refusal that says what the CRS itself declares.
+
+    Supported: ONE projected CRS whose first axis is its easting and second
+    its northing, both in metres (and a third, if it has one, up in metres).
+    That is every UTM zone in either hemisphere, and equally a transverse
+    Mercator on its own meridian or a polar stereographic grid; the
+    projection itself is PROJ's business, exactly, whatever it is.
+
+    Refused, because the columns of the OBJ could only be guessed at:
+
+    - a geographic CRS (X / Y in degrees) or a geocentric one on an export
+      that is not type 3;
+    - a compound CRS - it names a vertical datum, and this module derives
+      the vertical itself (Z is -depth below the sea surface, + N);
+    - axes that are not easting-then-northing (a northing-first national
+      grid, a westing / southing one). This module reads an OBJ's first
+      column as the easting. Every RealityScan export seen so far is in a
+      CRS that says the same; none exists in a CRS that says otherwise to
+      check the column order against;
+    - a unit that is not the metre. PROJ would convert the eastings and
+      northings, but nothing in the sidecar says what unit Z is in.
+
+    Axis order and unit are READ from the CRS, never assumed.
+    """
+    from pyproj import CRS
+    from pyproj.exceptions import CRSError
+
+    try:
+        parsed = CRS.from_user_input(crs)
+    except CRSError as exc:
+        raise PlacementError(
+            f'the export CRS {crs!r} cannot be read by PROJ: {exc}') from exc
+    label = f'{crs} ({parsed.name})' if parsed.name not in crs else crs
+
+    if parsed.is_compound:
+        raise PlacementError(
+            f'{label} is a compound CRS: it names a vertical datum of its '
+            'own. This module derives the vertical itself (Z is read as '
+            '-depth below the sea surface and the geoid undulation is added '
+            'to the anchor) and has never been checked against a compound '
+            'export. Refusing rather than ignoring what the CRS declares; '
+            're-export in the projected CRS alone.')
+    if parsed.is_geographic:
+        raise PlacementError(
+            f'{label} is a geographic CRS, so the vertices would be degrees '
+            'of longitude and latitude. No RealityScan export seen so far is '
+            'in one and the order of its two columns cannot be checked. '
+            'Re-export in a projected CRS in metres, or as a geocentric '
+            'model (exportCoordinateSystemType 3).')
+    if parsed.is_geocentric:
+        raise PlacementError(
+            f'{label} is a geocentric CRS but the export is not marked '
+            'geocentric (exportCoordinateSystemType is not 3). The sidecar '
+            'contradicts itself; refusing to choose a reading.')
+    if not parsed.is_projected:
+        raise PlacementError(
+            f'{label} is a {parsed.type_name}, not a projected CRS; there is '
+            'no easting / northing to place the mesh by.')
+
+    axes = parsed.axis_info
+    described = ', '.join(
+        f'{axis.name} [{axis.direction}, {axis.unit_name}]' for axis in axes)
+    if len(axes) < 2:
+        raise PlacementError(
+            f'{label} declares {len(axes)} axis(es) ({described}); an '
+            'easting and a northing are needed.')
+    first, second = axes[0], axes[1]
+    east_north = (first.direction, second.direction) == ('east', 'north')
+    # A polar grid's axes both run along meridians ("north" or "south"), so
+    # there the names decide.
+    named = ((first.name or '').strip().lower(),
+             (second.name or '').strip().lower()) == ('easting', 'northing')
+    polar = first.direction == second.direction and first.direction in (
+        'north', 'south')
+    if not (east_north or (named and polar)):
+        raise PlacementError(
+            f'{label} lists its axes as {described}. This module reads an '
+            'OBJ\'s first column as the easting and its second as the '
+            'northing, and has no RealityScan export in a CRS with another '
+            'axis order to check the columns against. Refusing rather than '
+            'guessing which column is which.')
+    for axis in axes[:2]:
+        if abs(axis.unit_conversion_factor - 1.0) > 1e-12:
+            raise PlacementError(
+                f'{label} is in {axis.unit_name} ({described}), not metres. '
+                'PROJ could convert the eastings and northings, but the '
+                'sidecar does not say what unit Z is in and the depth -> '
+                'height arithmetic here assumes metres. Re-export in a '
+                'metric CRS.')
+    if len(axes) > 2 and (axes[2].direction != 'up' or abs(
+            axes[2].unit_conversion_factor - 1.0) > 1e-12):
+        raise PlacementError(
+            f'{label} has a third axis that is not a height in metres '
+            f'({described}). Z is read here as metres UP (-depth).')
+    return parsed.name
+
+
+@dataclass(frozen=True)
+class ProjectedFrame:
+    """The true East-North-Up frame at a projected export's anchor."""
+
+    crs: str
+    anchor: tuple[float, float, float]        # E, N, Z in the CRS
+    lon: float
+    lat: float
+    anchor_ecef: tuple[float, float, float]
+    # Grid axes -> ENU at the anchor: a proper rotation (about Up, for a
+    # conformal grid). What the ``vn`` normals are turned by.
+    rotation: tuple[tuple[float, float, float], ...]
+    # Azimuth of grid north, clockwise from true north - PROJ's meridian
+    # convergence, same sign.
+    convergence_deg: float
+    # Grid metres per true horizontal metre at the anchor: the projection's
+    # scale factor k, divided by (1 + h / R) for a mesh h above the
+    # ellipsoid (a mesh at depth is smaller on the ground than on the grid).
+    grid_per_true_metre: float
+
+
+def _projected_transformers(crs: str):
+    """(grid -> lon / lat, lon / lat / h -> ECEF) for a projected CRS.
+
+    The first is built exactly as the anchor's own lon / lat is, so the
+    local frame is centred on the plan position by construction.
+    """
+    from pyproj import Transformer
+
+    return (Transformer.from_crs(crs, WGS84_2D, always_xy=True),
+            Transformer.from_crs(WGS84_3D, 'EPSG:4978', always_xy=True))
+
+
+def _projected_block_to_enu(block, transformers, anchor_ecef, lon: float,
+                            lat: float):
+    """One block of (E, N, Z) rows -> local ENU, by the reference route:
+    grid -> geodetic by PROJ, Z as the height, geodetic -> ECEF, and then
+    the geocentric route's own ECEF -> ENU."""
+    import numpy as np
+
+    # PROJ's point shortcut takes a ONE-element array through float(),
+    # which NumPy is retiring (a DeprecationWarning since 1.25). A lone
+    # vertex is sent twice instead, so every block goes the array way.
+    rows = len(block)
+    if rows == 1:
+        block = np.vstack((block, block))
+    to_geo, to_ecef = transformers
+    lons, lats = to_geo.transform(block[:, 0], block[:, 1])
+    x, y, z = to_ecef.transform(lons, lats, block[:, 2])
+    return to_local_enu_from_ecef(np.column_stack((x, y, z)), anchor_ecef,
+                                  lon, lat)[0][:rows]
+
+
+def projected_frame(crs: str, anchor) -> ProjectedFrame:
+    """The local frame a projected export is taken to, and how far the grid
+    is from it at the anchor.
+
+    ``anchor`` is (E, N, Z) in ``crs``. Its Z goes into the ELLIPSOIDAL
+    slot unchanged, as RealityScan puts the flight log's -depth into an
+    ECEF export, so the mesh is the same with and without the geoid; N is
+    added to the height ion is given and to nothing else.
+
+    The rotation is MEASURED, not looked up: the reference route is
+    differenced one metre each way along every grid axis and the turn is
+    the rotation nearest that Jacobian (its polar factor). It therefore
+    describes what the vertices actually undergo, for any projection.
     """
     import numpy as np
 
-    offset = np.array([anchor_en[0], anchor_en[1], anchor_z], dtype='float64')
-    return points_global - offset
+    east, north, height = (float(v) for v in anchor)
+    transformers = _projected_transformers(crs)
+    lon, lat = transformers[0].transform(east, north)
+    if not (np.isfinite(lon) and np.isfinite(lat)):
+        raise PlacementError(
+            f'anchor easting/northing {(east, north)} does not convert to '
+            f'lon/lat under {crs}')
+    anchor_ecef = transformers[1].transform(lon, lat, height)
+    if not all(np.isfinite(v) for v in anchor_ecef):
+        raise PlacementError(
+            f'anchor lon={lon} lat={lat} h={height} does not convert to ECEF')
+
+    step = 1.0
+    probes = np.array([[east, north, height]] * 6, dtype='float64')
+    for axis in range(3):
+        probes[2 * axis, axis] += step
+        probes[2 * axis + 1, axis] -= step
+    local = _projected_block_to_enu(probes, transformers, anchor_ecef,
+                                    float(lon), float(lat))
+    jacobian = ((local[0::2] - local[1::2]) / (2.0 * step)).T
+    if not np.isfinite(jacobian).all():
+        raise PlacementError(
+            f'{crs} is not differentiable at the anchor {(east, north)}: '
+            'the mesh sits on the edge of the projection.')
+    u, _singular, vt = np.linalg.svd(jacobian)
+    rotation = u @ vt
+    horizontal = float(np.linalg.det(jacobian[:2, :2]))
+    if np.linalg.det(rotation) <= 0.0 or horizontal <= 0.0:
+        raise PlacementError(
+            f'{crs} mirrors the ground at the anchor {(east, north)} '
+            '(left-handed axes); a mesh in it cannot be rotated into '
+            'East-North-Up.')
+    return ProjectedFrame(
+        crs=crs, anchor=(east, north, height),
+        lon=float(lon), lat=float(lat),
+        anchor_ecef=tuple(float(v) for v in anchor_ecef),
+        rotation=tuple(tuple(float(v) for v in row) for row in rotation),
+        convergence_deg=math.degrees(
+            math.atan2(rotation[0, 1], rotation[1, 1])),
+        grid_per_true_metre=1.0 / math.sqrt(horizontal))
+
+
+def to_local_enu_from_projected(points_global, frame: ProjectedFrame,
+                                chunk: int = ENU_CHUNK):
+    """Projected (E, N, Z) -> TRUE local East-North-Up metres about the
+    frame's anchor.
+
+    NOT a translation. Grid axes are turned from East / North by the
+    meridian convergence and a grid metre is not a true metre, so
+    ``points - anchor`` is a mesh rotated about its anchor and mis-scaled
+    (BUGS.md B28: 0.48 deg and 0.025 % at NA165/H2060). Every vertex takes
+    the reference route instead - grid -> lon / lat by PROJ, its Z as the
+    height, geodetic -> ECEF, then the same ECEF -> ENU the geocentric
+    route uses - so the two routes hand ion the same mesh for the same
+    geometry. Exact for any projection PROJ knows; no small-site
+    approximation is involved.
+
+    Chunked: the temporaries are a few columns of ``chunk`` rows.
+    """
+    import numpy as np
+
+    points = np.asarray(points_global, dtype='float64')
+    transformers = _projected_transformers(frame.crs)
+    out = np.empty((len(points), 3), dtype='float64')
+    for start in range(0, len(points), chunk):
+        out[start:start + chunk] = _projected_block_to_enu(
+            points[start:start + chunk], transformers, frame.anchor_ecef,
+            frame.lon, frame.lat)
+    if not np.isfinite(out).all():
+        bad = int((~np.isfinite(out).all(axis=1)).sum())
+        raise PlacementError(
+            f'{bad} of {len(points)} vertices do not convert from '
+            f'{frame.crs} to a position on the globe; the mesh is not '
+            'inside the projection it declares.')
+    return out
 
 
 def ecef_enu_rotation(lon_deg: float, lat_deg: float):
@@ -544,12 +791,14 @@ def to_local_enu_from_ecef(points_ecef, anchor_ecef, lon_deg: float,
                            lat_deg: float):
     """ECEF -> local East-North-Up metres about an ECEF anchor.
 
-    Unlike the projected case this CANNOT be a translation. Subtracting an
-    ECEF anchor leaves a frame parallel to ECEF, which at this site is
-    rotated from ENU by the site's own latitude and longitude - so the
-    model would arrive standing on its side. The rotation is the whole
-    point, and it is why the caller must also rotate the OBJ's ``vn``
-    normals: translation leaves them valid, rotation does not.
+    This CANNOT be a translation. Subtracting an ECEF anchor leaves a frame
+    parallel to ECEF, which at this site is rotated from ENU by the site's
+    own latitude and longitude - so the model would arrive standing on its
+    side. The rotation is the whole point, and it is why the caller must
+    also rotate the OBJ's ``vn`` normals: translation leaves them valid,
+    rotation does not. The projected route ends here too
+    (:func:`to_local_enu_from_projected`), which is what makes the two
+    routes agree.
     """
     import numpy as np
 
@@ -569,12 +818,15 @@ def rewrite_obj_local(src: Path, dst: Path, local_points,
     millimetre precision once coordinates are local and small, which is finer
     than the survey itself.
 
-    ``normal_rotation`` is the 3x3 ECEF->ENU matrix for a GEOCENTRIC
-    export, and is None for the projected case. The projected localisation
-    is a pure translation, which leaves normals valid; the geocentric one
-    ROTATES, and a rotated mesh carrying unrotated ``vn`` lines is lit from
-    the wrong direction everywhere. Normals are direction vectors, so they
-    take the rotation WITHOUT the translation.
+    ``normal_rotation`` is the plan's ``enu_rotation``: the 3x3 that takes
+    the export's own axes into ENU at the anchor - ECEF -> ENU for a
+    GEOCENTRIC export, grid -> ENU (a turn about Up by the meridian
+    convergence) for a PROJECTED one. Both localisations ROTATE, and a
+    rotated mesh carrying unrotated ``vn`` lines is lit from the wrong
+    direction everywhere. Normals are direction vectors, so they take the
+    rotation WITHOUT the translation - and without the grid scale: a
+    rotation keeps them unit length. With None the ``vn`` lines pass
+    through untouched.
     """
     import numpy as np
 
@@ -665,6 +917,10 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
                 'record of the export coordinate system; without it the mesh '
                 'cannot be placed. Re-export with MvsMeshExportInfoFile=true.')
         info = parse_rsinfo(sidecar)
+        # Refused BEFORE the vertices are read: a CRS this module cannot
+        # localise from should not cost a 24-million-line parse first.
+        if not info.is_geocentric and info.vertex_crs not in crs_seen:
+            check_projected_crs(info.vertex_crs)
         crs_seen.add(info.vertex_crs)
         geocentric_seen.add(info.is_geocentric)
         vertices = read_obj_vertices(obj)
@@ -760,14 +1016,15 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
         }
         return plan, localised
 
-    to_geo = Transformer.from_crs(crs, 'EPSG:4326', always_xy=True)
-    lon, lat = to_geo.transform(float(anchor[0]), float(anchor[1]))
-    if not (np.isfinite(lon) and np.isfinite(lat)):
-        raise PlacementError(
-            f'anchor easting/northing {anchor[:2]} does not convert to '
-            f'lon/lat under {crs}')
-
+    # The anchor is what it always was - the midpoint of the mesh's bounding
+    # box in the export's own CRS, converted by the same transformer - so
+    # the position ion is given does not move. What changed (B28) is the
+    # mesh handed over with it.
     depth_msl = float(anchor[2])
+    frame = projected_frame(crs, (float(anchor[0]), float(anchor[1]),
+                                  depth_msl))
+    lon, lat = frame.lon, frame.lat
+
     if apply_geoid:
         height, separation = msl_to_ellipsoidal(
             depth_msl, float(lon), float(lat), geoid_model)
@@ -783,14 +1040,37 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
             '+72.7 m at NA168/H2080. Use this only for a deliberately '
             'local-frame asset.')
 
-    localised = [(obj, to_local_enu(g, (float(anchor[0]), float(anchor[1])),
-                                    depth_msl))
-                 for obj, g in resolved]
-    extent = tuple(float(v) for v in (high - low))
+    # Each part goes to true ENU about the shared anchor and its grid copy is
+    # dropped as soon as it has, so the component is never held in both
+    # frames at once - only the part in hand is.
+    vertex_count = int(sum(len(g) for _, g in resolved))
+    files = [str(o) for o, _ in resolved]
+    localised = []
+    local_low = local_high = None
+    for index, (obj, global_points) in enumerate(resolved):
+        local = to_local_enu_from_projected(global_points, frame)
+        resolved[index] = (obj, None)
+        localised.append((obj, local))
+        part_low, part_high = local.min(axis=0), local.max(axis=0)
+        local_low = part_low if local_low is None else np.minimum(
+            local_low, part_low)
+        local_high = part_high if local_high is None else np.maximum(
+            local_high, part_high)
+    # East x North x Up of what is uploaded - the axes ion's tight box is
+    # in, which is what --verify compares this against.
+    extent = tuple(float(v) for v in (local_high - local_low))
+    logger.info('projected export: vertices taken %s -> geodetic -> ECEF '
+                'and rotated into true ENU about the anchor. Grid north is '
+                '%+.4f deg from true north there and a true metre is %.6f '
+                'grid metres.', crs, frame.convergence_deg,
+                frame.grid_per_true_metre)
 
     plan = {
         'crs': crs,
         'interpretation': interpretations.pop(),
+        'enu_rotation': [list(row) for row in frame.rotation],
+        'grid_convergence_deg': frame.convergence_deg,
+        'grid_per_true_metre': frame.grid_per_true_metre,
         'anchor_projected': [float(anchor[0]), float(anchor[1]), depth_msl],
         'lon': float(lon), 'lat': float(lat),
         'height_ellipsoidal_m': float(height),
@@ -798,7 +1078,7 @@ def plan_placement(objs: list[Path], nav_envelope: dict | None = None,
         'geoid_n_m': float(separation),
         'geoid_model': model_used,
         'extent_m': list(extent),
-        'vertex_count': int(sum(len(g) for _, g in resolved)),
-        'files': [str(o) for o, _ in resolved],
+        'vertex_count': vertex_count,
+        'files': files,
     }
     return plan, localised

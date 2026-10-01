@@ -16,6 +16,8 @@ This script is the scripted equivalent that does place them properly:
     2. resolve the mesh into that global CRS (auto-detected, then validated)
     3. anchor it, convert the anchor's SEA-SURFACE depth to an ELLIPSOIDAL
        height through the EGM2008 geoid, and rewrite the mesh local to it
+       in TRUE East-North-Up (a projected grid is turned from that by the
+       meridian convergence; a geocentric export by the site's lon / lat)
     4. POST /v1/assets with sourceType=3D_CAPTURE and options.position
     5. upload to the returned S3 location, replay the onComplete notification
     6. poll, then VERIFY by reading the finished tileset's own transform back
@@ -199,10 +201,11 @@ def stage(localised, staging: Path, sources: list[Path],
           normal_rotation=None) -> list[Path]:
     """Write local-frame OBJs plus the materials and textures they name.
 
-    ``normal_rotation`` is the plan's ECEF->ENU matrix for a geocentric
-    export and None otherwise; it reaches rewrite_obj_local so the ``vn``
-    normals are rotated with the geometry rather than left pointing the
-    old way.
+    ``normal_rotation`` is the plan's ``enu_rotation`` - ECEF -> ENU for a
+    geocentric export, grid -> ENU (the meridian-convergence turn) for a
+    projected one; both kinds of plan carry it since BUGS.md B28. It
+    reaches rewrite_obj_local so the ``vn`` normals are rotated with the
+    geometry rather than left pointing the old way.
     """
     if staging.exists():
         shutil.rmtree(staging)
