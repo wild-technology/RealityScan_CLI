@@ -28,18 +28,22 @@ one line what you are about to do:
    sources too.
 
 Baseline before touching anything: `python -m pytest testing -q` with the
-interpreter that has every requirement (`CLAUDE.local.md` names it per box) —
-**868 passed, 1 skipped, ~30 s on the Microsoft Store `python`** — measured
-2026-09-30 after the stale-code cleanup (874 before it: the 3 calibration-sidecar
-tests and 3 run_on2026_run2 driver tests went with the deleted code; the
-EGM2008 grid is installed, so the offline-geoid skip no longer fires).
+interpreters named below (`CLAUDE.local.md` names them per box) —
+**950 passed, 1 skipped, 30-45 s on the Microsoft Store `python`** — measured
+2026-10-01 (868 on 2026-09-30 after the stale-code cleanup; +82 on 2026-10-01:
+10 projected-branch and non-finite geoid tests in `test_cesium_placement.py`,
+3 in `test_cesium_geocentric.py`, 69 in the new
+`test_validate_cesium_assets.py`; the EGM2008 grid is installed, so the
+offline-geoid skip does not fire).
 That interpreter has no `textual`, so it skips `testing/test_wildscan.py` whole
 at import (21 tests). `C:\Users\produ\coyotethings\tools\.venv\Scripts\python.exe`
-HAS every requirement and runs the full suite: **889 passed, 0 skipped**
-(measured 2026-09-30). (The line previously read 737/716 from
-2026-09-04 and had drifted ~100 tests behind the suite — a stale count is how
-a broken tree gets inherited, so move this in the same change that moves the
-suite.) Any other result on a clean checkout: stop and report — anything built
+has `textual` and runs the full suite: **971 passed, 0 skipped**
+(measured 2026-10-01). Neither has every requirement: the venv lacks
+`requests` and `boto3`, so `publish_cesium.py` and `validate_cesium_assets.py`
+need the Store `python`, which lacks `textual` and `rich`. (The line
+previously read 737/716 from 2026-09-04 and had drifted ~100 tests behind the
+suite — a stale count is how a broken tree gets inherited, so move this in the
+same change that moves the suite.) Any other result on a clean checkout: stop and report — anything built
 on a broken tree is suspect.
 
 ## Ending a session
